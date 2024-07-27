@@ -1,0 +1,10 @@
+[package]
+name = "propo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+camino = "1.1.7"
+git_cmd = "0.6.9"
+inquire = "0.7.5"
+tracing = "0.1.40"
