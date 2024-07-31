@@ -11,9 +11,14 @@ fn main() {
         .prompt()
         .unwrap();
 
-    run_cmd("git-town", ["hack", &branch_name]);
+    let staged_files = get_staged_files();
+    if staged_files.is_empty() {
+        run_git_add(changed_files());
+    } else {
+        run_git_add(staged_files);
+    }
 
-    run_git_add(changed_files());
+    run_cmd("git-town", ["hack", &branch_name]);
 
     let output = run_cmd("git", ["commit", "-m", &commit_message]);
     if output.stdout.contains("nothing to commit") {
@@ -21,6 +26,11 @@ fn main() {
     }
 
     run_cmd("git-town", ["propose"]);
+}
+
+fn get_staged_files() -> Vec<Utf8PathBuf> {
+    let output = run_cmd("git", ["diff", "--name-only", "--cached"]);
+    output.stdout.lines().map(Utf8PathBuf::from).collect()
 }
 
 fn changed_files() -> Vec<Utf8PathBuf> {
@@ -40,12 +50,12 @@ fn run_git_add(changed_files: Vec<Utf8PathBuf>) {
     git_add_args.extend(changed_files);
 
     run_cmd("git", &git_add_args);
-    run_cmd("git", ["add", "."]);
 }
 
 fn branch_name_from_commit_message(commit_message: &str) -> String {
-    let commit_message = commit_message.split(':').last().unwrap();
-    let commit_message = commit_message.replace('`', "");
+    let commit_message = commit_message
+        .replace(['`', ':', ')'], "")
+        .replace('(', "-");
     let trimmed = commit_message.trim().to_lowercase();
     trimmed.replace(" ", "-")
 }
