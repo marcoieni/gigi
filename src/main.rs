@@ -12,13 +12,14 @@ fn main() {
         .unwrap();
 
     let staged_files = get_staged_files();
+    println!("ℹ️ Staged files: {:?}", staged_files);
+    run_cmd("git-town", ["hack", &branch_name]);
+
     if staged_files.is_empty() {
         run_git_add(changed_files());
     } else {
         run_git_add(staged_files);
     }
-
-    run_cmd("git-town", ["hack", &branch_name]);
 
     let output = run_cmd("git", ["commit", "-m", &commit_message]);
     if output.stdout.contains("nothing to commit") {
@@ -45,6 +46,7 @@ fn changed_files() -> Vec<Utf8PathBuf> {
 }
 
 fn run_git_add(changed_files: Vec<Utf8PathBuf>) {
+    assert!(!changed_files.is_empty(), "No files to add");
     let mut git_add_args = vec!["add".to_string()];
     let changed_files: Vec<String> = changed_files.iter().map(|f| f.to_string()).collect();
     git_add_args.extend(changed_files);
