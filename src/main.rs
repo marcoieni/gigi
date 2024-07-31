@@ -72,8 +72,8 @@ where
     let output_stdout = String::from_utf8(output.stdout).unwrap();
     let output_stderr = String::from_utf8(output.stderr).unwrap();
 
-    debug!("cargo stderr: {}", output_stderr);
-    debug!("cargo stdout: {}", output_stdout);
+    debug!("{cmd_name} stderr: {}", output_stderr);
+    debug!("{cmd_name} stdout: {}", output_stdout);
     assert!(output.status.success());
 
     CmdOutput {
