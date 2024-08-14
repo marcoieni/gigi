@@ -1,7 +1,6 @@
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
 
 use camino::Utf8PathBuf;
-use tracing::debug;
 
 fn main() {
     let commit_message = inquire::Text::new("Commit message").prompt().unwrap();
@@ -78,14 +77,19 @@ where
         .map(|arg| arg.as_ref().to_string())
         .collect();
     println!("🚀 {} {}", cmd_name, args.join(" "));
-    let child = Command::new(cmd_name).args(args).spawn().unwrap();
+    let child = Command::new(cmd_name)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .args(args)
+        .spawn()
+        .unwrap();
     let output = child.wait_with_output().unwrap();
 
     let output_stdout = String::from_utf8(output.stdout).unwrap();
     let output_stderr = String::from_utf8(output.stderr).unwrap();
 
-    debug!("{cmd_name} stderr: {}", output_stderr);
-    debug!("{cmd_name} stdout: {}", output_stdout);
+    println!("{}", output_stderr);
+    println!("{}", output_stdout);
     assert!(output.status.success());
 
     CmdOutput {
