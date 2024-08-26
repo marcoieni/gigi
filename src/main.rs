@@ -56,7 +56,7 @@ fn run_git_add(changed_files: Vec<Utf8PathBuf>) {
 fn branch_name_from_commit_message(commit_message: &str) -> String {
     let commit_message = commit_message
         .replace(['`', ':', ')', '"'], "")
-        .replace('(', "-");
+        .replace(['(', '/'], "-");
     let trimmed = commit_message.trim().to_lowercase();
     trimmed.replace(" ", "-")
 }
