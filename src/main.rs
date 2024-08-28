@@ -2,8 +2,15 @@ use std::process::{Command, ExitStatus, Stdio};
 
 use camino::Utf8PathBuf;
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let commit_message = inquire::Text::new("Commit message").prompt().unwrap();
+    anyhow::ensure!(
+        !commit_message.is_empty() && commit_message.len() < 71,
+        format!(
+            "Commit message size should be between 1 and 70 characters. Current size: {}",
+            commit_message.len()
+        )
+    );
     let default_branch_name = branch_name_from_commit_message(&commit_message);
     let branch_name = inquire::Text::new("Branch name")
         .with_default(&default_branch_name)
@@ -26,6 +33,7 @@ fn main() {
     }
 
     run_cmd("git-town", ["propose"]);
+    Ok(())
 }
 
 fn get_staged_files() -> Vec<Utf8PathBuf> {
