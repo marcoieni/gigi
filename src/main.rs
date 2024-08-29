@@ -1,4 +1,4 @@
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus};
 
 use camino::Utf8PathBuf;
 
@@ -85,12 +85,7 @@ where
         .map(|arg| arg.as_ref().to_string())
         .collect();
     println!("🚀 {} {}", cmd_name, args.join(" "));
-    let child = Command::new(cmd_name)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .args(args)
-        .spawn()
-        .unwrap();
+    let child = Command::new(cmd_name).args(args).spawn().unwrap();
     let output = child.wait_with_output().unwrap();
 
     let output_stdout = String::from_utf8(output.stdout).unwrap();
