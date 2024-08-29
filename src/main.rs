@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
         run_git_add(staged_files);
     }
 
-    let output = run_cmd("git", ["commit", "-m", &commit_message]);
+    let output = run_cmd("git", ["commit", "-s", "-m", &commit_message]);
     if output.stdout.contains("nothing to commit") {
         panic!("❌ Nothing to commit");
     }
