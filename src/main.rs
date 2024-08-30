@@ -7,6 +7,11 @@ use git_cmd::Repo;
 fn main() -> anyhow::Result<()> {
     let repo_root = repo_root();
     let repo = Repo::new(repo_root.clone()).unwrap();
+    open_pr(repo_root, repo)?;
+    Ok(())
+}
+
+fn open_pr(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
     let commit_message = inquire::Text::new("Commit message").prompt().unwrap();
     anyhow::ensure!(
         !commit_message.is_empty() && commit_message.len() < 71,
