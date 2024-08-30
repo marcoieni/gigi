@@ -1,13 +1,42 @@
+mod args;
 mod cmd;
 
+use args::CliArgs;
 use camino::{Utf8Path, Utf8PathBuf};
+use clap::Parser as _;
 use cmd::Cmd;
 use git_cmd::Repo;
 
 fn main() -> anyhow::Result<()> {
     let repo_root = repo_root();
     let repo = Repo::new(repo_root.clone()).unwrap();
-    open_pr(repo_root, repo)?;
+    let args = CliArgs::parse();
+    match args.command {
+        args::Command::OpenPr => open_pr(repo_root, repo),
+        args::Command::Squash => squash(repo_root, repo),
+    }?;
+    Ok(())
+}
+
+fn squash(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
+    let current_branch = repo.original_branch();
+    anyhow::ensure!(
+        current_branch != "master" && current_branch != "main",
+        "❌ You are on the main branch. Switch to a feature branch to squash"
+    );
+    let current_commit_message = repo.current_commit_message().unwrap();
+    Cmd::new("git", ["squash"])
+        .with_current_dir(&repo_root)
+        .run();
+    Cmd::new("git", ["add", "."])
+        .with_current_dir(&repo_root)
+        .run();
+    Cmd::new("git", ["commit", "-m", &current_commit_message])
+        .with_current_dir(&repo_root)
+        .run();
+    Cmd::new("git", ["push", "--force-with-lease"])
+        .with_current_dir(&repo_root)
+        .run();
     Ok(())
 }
 

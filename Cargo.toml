@@ -10,3 +10,4 @@ git_cmd = "0.6.11"
 inquire = "0.7.5"
 tracing = "0.1.40"
 secrecy = "0.8.0"
+clap = { version = "4.5.16", features = ["derive"] }
