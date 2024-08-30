@@ -1,7 +1,5 @@
 mod cmd;
 
-use std::process::{Command, ExitStatus};
-
 use camino::Utf8PathBuf;
 use cmd::Cmd;
 use git_cmd::Repo;
