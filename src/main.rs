@@ -18,20 +18,27 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn pr_title() -> String {
+    Cmd::new("gh", ["pr", "view", "--json", "title", "-q", ".title"])
+        .run()
+        .stdout()
+        .to_string()
+}
+
 fn squash(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
     let current_branch = repo.original_branch();
+    let pr_title = pr_title();
     anyhow::ensure!(
         current_branch != "master" && current_branch != "main",
         "❌ You are on the main branch. Switch to a feature branch to squash"
     );
-    let current_commit_message = repo.current_commit_message().unwrap();
     Cmd::new("git", ["squash"])
         .with_current_dir(&repo_root)
         .run();
     Cmd::new("git", ["add", "."])
         .with_current_dir(&repo_root)
         .run();
-    Cmd::new("git", ["commit", "-m", &current_commit_message])
+    Cmd::new("git", ["commit", "-m", &pr_title])
         .with_current_dir(&repo_root)
         .run();
     Cmd::new("git", ["push", "--force-with-lease"])
