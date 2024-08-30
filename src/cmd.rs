@@ -22,11 +22,11 @@ impl CmdOutput {
     }
 
     pub fn stdout(&self) -> &str {
-        &self.stdout
+        self.stdout.trim()
     }
 
     pub fn stderr(&self) -> &str {
-        &self.stderr
+        self.stderr.trim()
     }
 }
 
