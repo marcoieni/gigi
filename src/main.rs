@@ -1,8 +1,13 @@
+mod cmd;
+
 use std::process::{Command, ExitStatus};
 
 use camino::Utf8PathBuf;
+use cmd::Cmd;
+use git_cmd::Repo;
 
 fn main() -> anyhow::Result<()> {
+    let repo = get_repo();
     let commit_message = inquire::Text::new("Commit message").prompt().unwrap();
     anyhow::ensure!(
         !commit_message.is_empty() && commit_message.len() < 71,
@@ -19,37 +24,40 @@ fn main() -> anyhow::Result<()> {
 
     let staged_files = get_staged_files();
     println!("ℹ️ Staged files: {:?}", staged_files);
-    run_cmd("git-town", ["hack", &branch_name]);
+    Cmd::new("git-town", ["hack", &branch_name]).run();
 
     if staged_files.is_empty() {
-        run_git_add(changed_files());
+        run_git_add(changed_files(&repo));
     } else {
         run_git_add(staged_files);
     }
 
-    let output = run_cmd("git", ["commit", "-m", &commit_message]);
-    if output.stdout.contains("nothing to commit") {
+    let output = Cmd::new("git", ["commit", "-m", &commit_message]).run();
+    if output.stdout().contains("nothing to commit") {
         panic!("❌ Nothing to commit");
     }
 
-    run_cmd("git-town", ["propose"]);
+    Cmd::new("git-town", ["propose"]).run();
     Ok(())
 }
 
 fn get_staged_files() -> Vec<Utf8PathBuf> {
-    let output = run_cmd("git", ["diff", "--name-only", "--cached"]);
-    output.stdout.lines().map(Utf8PathBuf::from).collect()
+    let output = Cmd::new("git", ["diff", "--name-only", "--cached"]).run();
+    output.stdout().lines().map(Utf8PathBuf::from).collect()
 }
 
-fn changed_files() -> Vec<Utf8PathBuf> {
-    let current_dir = std::env::current_dir().unwrap();
-    let current_dir = camino::Utf8PathBuf::from_path_buf(current_dir).unwrap();
-    let repo = git_cmd::Repo::new(current_dir).unwrap();
+fn changed_files(repo: &Repo) -> Vec<Utf8PathBuf> {
     let git_root = repo.git(&["rev-parse", "--show-toplevel"]).unwrap();
     let git_root = camino::Utf8Path::new(&git_root);
     let changed_files = repo.changes_except_typechanges().unwrap();
     assert!(!changed_files.is_empty(), "Run git add first");
     changed_files.iter().map(|f| git_root.join(f)).collect()
+}
+
+fn get_repo() -> git_cmd::Repo {
+    let current_dir = std::env::current_dir().unwrap();
+    let current_dir = camino::Utf8PathBuf::from_path_buf(current_dir).unwrap();
+    git_cmd::Repo::new(current_dir).unwrap()
 }
 
 fn run_git_add(changed_files: Vec<Utf8PathBuf>) {
@@ -58,7 +66,7 @@ fn run_git_add(changed_files: Vec<Utf8PathBuf>) {
     let changed_files: Vec<String> = changed_files.iter().map(|f| f.to_string()).collect();
     git_add_args.extend(changed_files);
 
-    run_cmd("git", &git_add_args);
+    Cmd::new("git", &git_add_args).run();
 }
 
 fn branch_name_from_commit_message(commit_message: &str) -> String {
@@ -67,37 +75,4 @@ fn branch_name_from_commit_message(commit_message: &str) -> String {
         .replace(['(', '/'], "-");
     let trimmed = commit_message.trim().to_lowercase();
     trimmed.replace(" ", "-")
-}
-
-pub struct CmdOutput {
-    pub status: ExitStatus,
-    pub stdout: String,
-    pub stderr: String,
-}
-
-fn run_cmd<I, S>(cmd_name: &str, args: I) -> CmdOutput
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    let args: Vec<String> = args
-        .into_iter()
-        .map(|arg| arg.as_ref().to_string())
-        .collect();
-    println!("🚀 {} {}", cmd_name, args.join(" "));
-    let child = Command::new(cmd_name).args(args).spawn().unwrap();
-    let output = child.wait_with_output().unwrap();
-
-    let output_stdout = String::from_utf8(output.stdout).unwrap();
-    let output_stderr = String::from_utf8(output.stderr).unwrap();
-
-    println!("{}", output_stderr);
-    println!("{}", output_stdout);
-    assert!(output.status.success());
-
-    CmdOutput {
-        status: output.status,
-        stdout: output_stdout,
-        stderr: output_stderr,
-    }
 }
