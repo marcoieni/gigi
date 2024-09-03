@@ -25,13 +25,45 @@ fn pr_title() -> String {
         .to_string()
 }
 
+fn default_branch(repo_root: &Utf8Path) -> String {
+    Cmd::new(
+        "gh",
+        [
+            "repo",
+            "view",
+            "--json",
+            "defaultBranchRef",
+            "-q",
+            ".defaultBranchRef.name",
+        ],
+    )
+    .with_current_dir(repo_root)
+    .run()
+    .stdout()
+    .to_string()
+}
+
 fn squash(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
-    let current_branch = repo.original_branch();
+    let feature_branch = repo.original_branch();
+    let default_branch = default_branch(&repo_root);
     let pr_title = pr_title();
     anyhow::ensure!(
-        current_branch != "master" && current_branch != "main",
+        feature_branch != default_branch,
         "❌ You are on the main branch. Switch to a feature branch to squash"
     );
+
+    // sync branch
+    Cmd::new("git", ["checkout", &default_branch])
+        .with_current_dir(&repo_root)
+        .run();
+    Cmd::new("git", ["pull"]).with_current_dir(&repo_root).run();
+    Cmd::new("git", ["checkout", feature_branch])
+        .with_current_dir(&repo_root)
+        .run();
+    Cmd::new("git", ["merge", "origin", &default_branch])
+        .with_current_dir(&repo_root)
+        .run();
+
     Cmd::new("git", ["squash"])
         .with_current_dir(&repo_root)
         .run();
