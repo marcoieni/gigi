@@ -44,6 +44,7 @@ fn default_branch(repo_root: &Utf8Path) -> String {
 }
 
 fn squash(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
+    anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
     let feature_branch = repo.original_branch();
     let default_branch = default_branch(&repo_root);
     let pr_title = pr_title();
