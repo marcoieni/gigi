@@ -81,6 +81,7 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
 }
 
 fn open_pr(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
+    Cmd::new("git", ["pull"]).with_current_dir(&repo_root).run();
     let commit_message = inquire::Text::new("Commit message").prompt().unwrap();
     anyhow::ensure!(
         !commit_message.is_empty() && commit_message.len() < 71,
