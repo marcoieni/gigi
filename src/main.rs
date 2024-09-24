@@ -18,11 +18,10 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn pr_title() -> String {
-    Cmd::new("gh", ["pr", "view", "--json", "title", "-q", ".title"])
-        .run()
-        .stdout()
-        .to_string()
+fn pr_title() -> anyhow::Result<String> {
+    let output = Cmd::new("gh", ["pr", "view", "--json", "title", "-q", ".title"]).run();
+    anyhow::ensure!(output.status().success(), "❌ Failed to get PR title");
+    Ok(output.stdout().to_string())
 }
 
 fn default_branch(repo_root: &Utf8Path) -> String {
@@ -47,7 +46,7 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
     anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
     let feature_branch = repo.original_branch();
     let default_branch = default_branch(&repo_root);
-    let pr_title = pr_title();
+    let pr_title = pr_title()?;
     anyhow::ensure!(
         feature_branch != default_branch,
         "❌ You are on the main branch. Switch to a feature branch to squash"
