@@ -101,10 +101,11 @@ fn open_pr(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
         )
     );
     let default_branch_name = branch_name_from_commit_message(&commit_message);
-    let branch_name = inquire::Text::new("Branch name")
-        .with_default(&default_branch_name)
-        .prompt()
-        .unwrap();
+    let branch_name = default_branch_name;
+    // let branch_name = inquire::Text::new("Branch name")
+    //     .with_default(&default_branch_name)
+    //     .prompt()
+    //     .unwrap();
 
     let staged_files = get_staged_files(&repo_root);
     println!("ℹ️ Staged files: {:?}", staged_files);
