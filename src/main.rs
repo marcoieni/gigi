@@ -76,7 +76,18 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
     Cmd::new("git", ["push", "--force-with-lease"])
         .with_current_dir(&repo_root)
         .run();
+
+    view_pr_in_browser(&repo_root);
+
     Ok(())
+}
+
+fn view_pr_in_browser(repo_root: &Utf8Path) {
+    Cmd::new("gh", ["pr", "view", "-w", "pr", "show"])
+        .with_current_dir(repo_root)
+        .run()
+        .stdout()
+        .to_string();
 }
 
 fn open_pr(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
