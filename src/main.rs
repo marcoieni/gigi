@@ -22,7 +22,7 @@ fn main() -> anyhow::Result<()> {
 fn assert_default_repo_is_set() {
     let output = Cmd::new("gh", ["repo", "set-default", "--view"]).run();
     if output.stdout().trim().is_empty() {
-        panic!("plase run `gh repo set-default` first");
+        panic!("❌ Please run `gh repo set-default` first");
     }
 }
 
