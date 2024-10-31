@@ -8,6 +8,7 @@ use cmd::Cmd;
 use git_cmd::Repo;
 
 fn main() -> anyhow::Result<()> {
+    assert_default_repo_is_set();
     let repo_root = repo_root();
     let repo = Repo::new(repo_root.clone()).unwrap();
     let args = CliArgs::parse();
@@ -18,14 +19,15 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn pr_title() -> anyhow::Result<String> {
-    let mut output = Cmd::new("gh", ["pr", "view", "--json", "title", "-q", ".title"]).run();
-    if output.stdout().contains("gh repo set-default") {
-        // Need to set default repo
-        Cmd::new("gh", ["repo", "set-default"]).run();
-        // retry
-        output = Cmd::new("gh", ["pr", "view", "--json", "title", "-q", ".title"]).run();
+fn assert_default_repo_is_set() {
+    let output = Cmd::new("gh", ["repo", "set-default", "--view"]).run();
+    if output.stdout().trim().is_empty() {
+        panic!("plase run `gh repo set-default` first");
     }
+}
+
+fn pr_title() -> anyhow::Result<String> {
+    let output = Cmd::new("gh", ["pr", "view", "--json", "title", "-q", ".title"]).run();
     anyhow::ensure!(output.status().success(), "❌ Failed to get PR title");
     Ok(output.stdout().to_string())
 }
