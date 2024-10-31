@@ -19,7 +19,13 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn pr_title() -> anyhow::Result<String> {
-    let output = Cmd::new("gh", ["pr", "view", "--json", "title", "-q", ".title"]).run();
+    let mut output = Cmd::new("gh", ["pr", "view", "--json", "title", "-q", ".title"]).run();
+    if output.stdout().contains("gh repo set-default") {
+        // Need to set default repo
+        Cmd::new("gh", ["repo", "set-default"]).run();
+        // retry
+        output = Cmd::new("gh", ["pr", "view", "--json", "title", "-q", ".title"]).run();
+    }
     anyhow::ensure!(output.status().success(), "❌ Failed to get PR title");
     Ok(output.stdout().to_string())
 }
