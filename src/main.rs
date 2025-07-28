@@ -50,6 +50,25 @@ fn default_branch(repo_root: &Utf8Path) -> String {
     .to_string()
 }
 
+fn current_branch(repo_root: &Utf8Path) -> String {
+    Cmd::new("git", ["branch", "--show-current"])
+        .with_current_dir(repo_root)
+        .run()
+        .stdout()
+        .to_string()
+}
+
+fn ensure_not_on_default_branch(repo_root: &Utf8Path) -> anyhow::Result<()> {
+    let current_branch = current_branch(repo_root);
+    let default_branch = default_branch(repo_root);
+    anyhow::ensure!(
+        current_branch != default_branch,
+        "❌ Cannot push to default branch '{}'. Switch to a feature branch first.",
+        default_branch
+    );
+    Ok(())
+}
+
 fn squash(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
     anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
     let feature_branch = repo.original_branch();
@@ -81,7 +100,9 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
     Cmd::new("git", ["commit", "-m", &pr_title])
         .with_current_dir(&repo_root)
         .run();
-    Cmd::new("git", ["push", "--force-with-lease"])
+
+    ensure_not_on_default_branch(&repo_root)?;
+    Cmd::new("git", &["push", "--force-with-lease"])
         .with_current_dir(&repo_root)
         .run();
 
@@ -133,6 +154,9 @@ fn open_pr(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
     if output.stdout().contains("nothing to commit") {
         panic!("❌ Nothing to commit");
     }
+
+    // Ensure we're not on the default branch before proposing/pushing
+    ensure_not_on_default_branch(&repo_root)?;
 
     Cmd::new("git-town", ["propose"])
         .with_current_dir(&repo_root)
