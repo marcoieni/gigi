@@ -13,7 +13,7 @@ use secrecy::{ExposeSecret, SecretString};
 pub struct CmdOutput {
     status: ExitStatus,
     stdout: String,
-    stderr: String,
+    // stderr: String,
 }
 
 impl CmdOutput {
@@ -25,9 +25,9 @@ impl CmdOutput {
         self.stdout.trim()
     }
 
-    pub fn stderr(&self) -> &str {
-        self.stderr.trim()
-    }
+    // pub fn stderr(&self) -> &str {
+    //     self.stderr.trim()
+    // }
 }
 
 pub struct Cmd {
@@ -57,20 +57,20 @@ impl Cmd {
         }
     }
 
-    pub fn with_env_vars(&mut self, env_vars: BTreeMap<String, SecretString>) -> &mut Self {
-        self.env_vars = env_vars;
-        self
-    }
+    // pub fn with_env_vars(&mut self, env_vars: BTreeMap<String, SecretString>) -> &mut Self {
+    //     self.env_vars = env_vars;
+    //     self
+    // }
 
     pub fn with_current_dir(&mut self, dir: impl Into<Utf8PathBuf>) -> &mut Self {
         self.current_dir = Some(dir.into());
         self
     }
 
-    pub fn hide_stdout(&mut self) -> &mut Self {
-        self.hide_stdout = true;
-        self
-    }
+    // pub fn hide_stdout(&mut self) -> &mut Self {
+    //     self.hide_stdout = true;
+    //     self
+    // }
 
     pub fn run(&self) -> CmdOutput {
         let mut to_print = format!("🚀 {} {}", self.name, self.args.join(" "));
@@ -134,7 +134,7 @@ impl Cmd {
         CmdOutput {
             status: output,
             stdout: output_stdout,
-            stderr: output_stderr,
+            // stderr: output_stderr,
         }
     }
 }
