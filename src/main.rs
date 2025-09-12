@@ -120,28 +120,33 @@ fn view_pr_in_browser(repo_root: &Utf8Path) {
 }
 
 fn open_pr(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
-    Cmd::new("git", ["pull"]).with_current_dir(&repo_root).run();
-    let commit_message = inquire::Text::new("Commit message").prompt().unwrap();
-    anyhow::ensure!(
-        !commit_message.is_empty() && commit_message.len() < 71,
-        format!(
-            "Commit message size should be between 1 and 70 characters. Current size: {}",
-            commit_message.len()
-        )
-    );
-    let default_branch_name = branch_name_from_commit_message(&commit_message);
-    let branch_name = default_branch_name;
+    let commit_message = prompt_commit_message()?;
+
+    // Always start from an up-to-date default branch, then create a feature branch
+    let default_branch_name = default_branch(&repo_root);
+    // Derive branch name from commit message (simple slug)
+    let branch_name = branch_name_from_commit_message(&commit_message);
+
     // let branch_name = inquire::Text::new("Branch name")
     //     .with_default(&default_branch_name)
     //     .prompt()
     //     .unwrap();
 
-    let staged_files = get_staged_files(&repo_root);
-    println!("ℹ️ Staged files: {:?}", staged_files);
-    Cmd::new("git-town", ["hack", &branch_name])
+    // Update default branch locally
+    Cmd::new("git", ["checkout", &default_branch_name])
+        .with_current_dir(&repo_root)
+        .run();
+    Cmd::new("git", ["pull", "--ff-only"])
         .with_current_dir(&repo_root)
         .run();
 
+    // Create the feature branch
+    Cmd::new("git", ["checkout", "-b", &branch_name])
+        .with_current_dir(&repo_root)
+        .run();
+
+    let staged_files = get_staged_files(&repo_root);
+    println!("ℹ️ Staged files: {:?}", staged_files);
     if staged_files.is_empty() {
         run_git_add(changed_files(&repo), repo.directory());
     } else {
@@ -155,13 +160,54 @@ fn open_pr(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
         panic!("❌ Nothing to commit");
     }
 
-    // Ensure we're not on the default branch before proposing/pushing
+    // Ensure we're not on the default branch before pushing
     ensure_not_on_default_branch(&repo_root)?;
 
-    Cmd::new("git-town", ["propose"])
+    // Push branch (set upstream)
+    Cmd::new("git", ["push", "-u", "origin", &branch_name])
         .with_current_dir(&repo_root)
         .run();
+
+    // If a PR already exists, open it; otherwise create a new one.
+    let pr_view = Cmd::new("gh", ["pr", "view", "--json", "number", "-q", ".number"]) // relies on current branch
+        .with_current_dir(&repo_root)
+        .run();
+    if pr_view.status().success() {
+        // Open existing PR in browser
+        Cmd::new("gh", ["pr", "view", "--web"]) // show existing PR
+            .with_current_dir(&repo_root)
+            .run();
+    } else {
+        // Create new PR using commit message as title
+        Cmd::new(
+            "gh",
+            [
+                "pr",
+                "create",
+                "--title",
+                &commit_message,
+                "--body",
+                "",
+                "--web",
+            ],
+        )
+        .with_current_dir(&repo_root)
+        .run();
+    }
     Ok(())
+}
+
+/// Ask the user for a commit message and enforce size rules.
+fn prompt_commit_message() -> anyhow::Result<String> {
+    let msg = inquire::Text::new("Commit message").prompt().unwrap();
+    anyhow::ensure!(
+        !msg.is_empty() && msg.len() < 71,
+        format!(
+            "Commit message size should be between 1 and 70 characters. Current size: {}",
+            msg.len()
+        )
+    );
+    Ok(msg)
 }
 
 fn repo_root() -> Utf8PathBuf {
