@@ -1,4 +1,5 @@
 mod args;
+mod authors;
 mod cmd;
 
 use args::CliArgs;
@@ -91,13 +92,20 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
         .with_current_dir(&repo_root)
         .run();
 
+    // Get co-authors before squashing
+    let co_authors = authors::get_co_authors(&repo_root, &default_branch)?;
+    let co_authors_text = authors::format_co_authors(&co_authors);
+
     Cmd::new("git", ["squash"])
         .with_current_dir(&repo_root)
         .run();
     Cmd::new("git", ["add", "."])
         .with_current_dir(&repo_root)
         .run();
-    Cmd::new("git", ["commit", "-m", &pr_title])
+
+    // Create commit message with co-authors
+    let commit_message = format!("{}{}", pr_title, co_authors_text);
+    Cmd::new("git", ["commit", "-m", &commit_message])
         .with_current_dir(&repo_root)
         .run();
 
