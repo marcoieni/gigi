@@ -33,11 +33,7 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
     // Get commit messages to parse co-authors
     let commit_messages_output = Cmd::new(
         "git",
-        [
-            "log",
-            "--format=%B",
-            &format!("{}..HEAD", merge_base),
-        ],
+        ["log", "--format=%B", &format!("{}..HEAD", merge_base)],
     )
     .with_current_dir(repo_root)
     .run();
@@ -47,32 +43,41 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
         "Failed to get commit messages"
     );
 
-    // Get current user to exclude from co-authors
-    let current_user_output = Cmd::new("git", ["config", "user.name"])
-        .with_current_dir(repo_root)
-        .run();
+    // Get current user email to exclude from co-authors
     let current_user_email_output = Cmd::new("git", ["config", "user.email"])
         .with_current_dir(repo_root)
         .run();
 
     anyhow::ensure!(
-        current_user_output.status().success() && current_user_email_output.status().success(),
-        "Failed to get current git user name and email"
+        current_user_email_output.status().success(),
+        "Failed to get current git user email"
     );
-    let current_author = format!(
-        "{} <{}>",
-        current_user_output.stdout().trim(),
-        current_user_email_output.stdout().trim()
-    );
+    let current_user_email = current_user_email_output.stdout().trim();
 
-    // Collect unique authors (excluding current user)
+    // Helper function to extract email from author string "Name <email>"
+    let extract_email = |author: &str| -> Option<String> {
+        if let Some(start) = author.rfind('<') {
+            if let Some(end) = author.rfind('>') {
+                if start < end {
+                    return Some(author[start + 1..end].to_string());
+                }
+            }
+        }
+        None
+    };
+
+    // Collect unique authors (excluding current user by email)
     let mut authors = std::collections::HashSet::new();
-    
+
     // Add commit authors
     for line in authors_output.stdout().lines() {
         let author = line.trim();
-        if !author.is_empty() && author != current_author {
-            authors.insert(author.to_string());
+        if !author.is_empty() {
+            if let Some(email) = extract_email(author) {
+                if email != current_user_email {
+                    authors.insert(author.to_string());
+                }
+            }
         }
     }
 
@@ -81,8 +86,12 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
         let line = line.trim();
         if line.starts_with("Co-authored-by:") {
             if let Some(co_author) = line.strip_prefix("Co-authored-by:").map(|s| s.trim()) {
-                if !co_author.is_empty() && co_author != current_author {
-                    authors.insert(co_author.to_string());
+                if !co_author.is_empty() {
+                    if let Some(email) = extract_email(co_author) {
+                        if email != current_user_email {
+                            authors.insert(co_author.to_string());
+                        }
+                    }
                 }
             }
         }
@@ -115,7 +124,10 @@ pub struct CommitInfo {
     pub author: String,
 }
 
-pub fn get_commits_to_squash(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Result<Vec<CommitInfo>> {
+pub fn get_commits_to_squash(
+    repo_root: &Utf8Path,
+    default_branch: &str,
+) -> anyhow::Result<Vec<CommitInfo>> {
     // Get the merge base between current branch and default branch
     let merge_base_output = Cmd::new("git", ["merge-base", "HEAD", default_branch])
         .with_current_dir(repo_root)
@@ -125,7 +137,7 @@ pub fn get_commits_to_squash(repo_root: &Utf8Path, default_branch: &str) -> anyh
         "Failed to find merge base"
     );
     let merge_base = merge_base_output.stdout().trim();
-    
+
     // Get commits with hash, subject, and author
     let commits_output = Cmd::new(
         "git",
@@ -137,19 +149,16 @@ pub fn get_commits_to_squash(repo_root: &Utf8Path, default_branch: &str) -> anyh
     )
     .with_current_dir(repo_root)
     .run();
-    
-    anyhow::ensure!(
-        commits_output.status().success(),
-        "Failed to get commits"
-    );
-    
+
+    anyhow::ensure!(commits_output.status().success(), "Failed to get commits");
+
     let mut commits = Vec::new();
     for line in commits_output.stdout().lines() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        
+
         let parts: Vec<&str> = line.splitn(3, '|').collect();
         if parts.len() == 3 {
             commits.push(CommitInfo {
@@ -159,7 +168,7 @@ pub fn get_commits_to_squash(repo_root: &Utf8Path, default_branch: &str) -> anyh
             });
         }
     }
-    
+
     // Reverse to show commits in chronological order
     commits.reverse();
     Ok(commits)
