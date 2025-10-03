@@ -30,6 +30,23 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
         "Failed to get commit authors"
     );
 
+    // Get commit messages to parse co-authors
+    let commit_messages_output = Cmd::new(
+        "git",
+        [
+            "log",
+            "--format=%B",
+            &format!("{}..HEAD", merge_base),
+        ],
+    )
+    .with_current_dir(repo_root)
+    .run();
+
+    anyhow::ensure!(
+        commit_messages_output.status().success(),
+        "Failed to get commit messages"
+    );
+
     // Get current user to exclude from co-authors
     let current_user_output = Cmd::new("git", ["config", "user.name"])
         .with_current_dir(repo_root)
@@ -50,10 +67,24 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
 
     // Collect unique authors (excluding current user)
     let mut authors = std::collections::HashSet::new();
+    
+    // Add commit authors
     for line in authors_output.stdout().lines() {
         let author = line.trim();
         if !author.is_empty() && author != current_author {
             authors.insert(author.to_string());
+        }
+    }
+
+    // Parse co-authors from commit messages
+    for line in commit_messages_output.stdout().lines() {
+        let line = line.trim();
+        if line.starts_with("Co-authored-by:") {
+            if let Some(co_author) = line.strip_prefix("Co-authored-by:").map(|s| s.trim()) {
+                if !co_author.is_empty() && co_author != current_author {
+                    authors.insert(co_author.to_string());
+                }
+            }
         }
     }
 
