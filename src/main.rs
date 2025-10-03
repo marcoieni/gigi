@@ -15,7 +15,7 @@ fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
     match args.command {
         args::Command::OpenPr => open_pr(repo_root, repo),
-        args::Command::Squash => squash(repo_root, repo),
+        args::Command::Squash { dry_run } => squash(repo_root, repo, dry_run),
     }?;
     Ok(())
 }
@@ -70,7 +70,7 @@ fn ensure_not_on_default_branch(repo_root: &Utf8Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn squash(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
+fn squash(repo_root: Utf8PathBuf, repo: Repo, dry_run: bool) -> anyhow::Result<()> {
     anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
     let feature_branch = repo.original_branch();
     let default_branch = default_branch(&repo_root);
@@ -92,10 +92,43 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
         .with_current_dir(&repo_root)
         .run();
 
-    // Get co-authors before squashing
     let co_authors = authors::get_co_authors(&repo_root, &default_branch)?;
     let co_authors_text = authors::format_co_authors(&co_authors);
 
+    if dry_run {
+        println!("\n🔍 DRY RUN: The following commits would be squashed:");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+        let commits_to_squash = authors::get_commits_to_squash(&repo_root, &default_branch)?;
+        if commits_to_squash.is_empty() {
+            println!("⚠️  No commits to squash (already at merge base)");
+        } else {
+            for (i, commit) in commits_to_squash.iter().enumerate() {
+                println!(
+                    "{:2}. {} {} (by {})",
+                    i + 1,
+                    commit.hash,
+                    commit.message,
+                    commit.author
+                );
+            }
+        }
+
+        println!("\n📝 The resulting commit message would be:");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        let commit_message = format!("{}{}", pr_title, co_authors_text);
+        println!("{}", commit_message);
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+        if !co_authors.is_empty() {
+            println!("\n👥 Co-authors detected: {}", co_authors.len());
+        }
+
+        println!("\n💡 To perform the actual squash, run without --dry-run");
+        return Ok(());
+    }
+
+    // Normal squash operation
     Cmd::new("git", ["squash"])
         .with_current_dir(&repo_root)
         .run();

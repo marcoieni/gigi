@@ -76,3 +76,60 @@ pub fn format_co_authors(co_authors: &[String]) -> String {
         format!("\n{result}")
     }
 }
+
+#[derive(Debug)]
+pub struct CommitInfo {
+    pub hash: String,
+    pub message: String,
+    pub author: String,
+}
+
+pub fn get_commits_to_squash(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Result<Vec<CommitInfo>> {
+    // Get the merge base between current branch and default branch
+    let merge_base_output = Cmd::new("git", ["merge-base", "HEAD", default_branch])
+        .with_current_dir(repo_root)
+        .run();
+    anyhow::ensure!(
+        merge_base_output.status().success(),
+        "Failed to find merge base"
+    );
+    let merge_base = merge_base_output.stdout().trim();
+    
+    // Get commits with hash, subject, and author
+    let commits_output = Cmd::new(
+        "git",
+        [
+            "log",
+            "--format=%H|%s|%an <%ae>",
+            &format!("{}..HEAD", merge_base),
+        ],
+    )
+    .with_current_dir(repo_root)
+    .run();
+    
+    anyhow::ensure!(
+        commits_output.status().success(),
+        "Failed to get commits"
+    );
+    
+    let mut commits = Vec::new();
+    for line in commits_output.stdout().lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        
+        let parts: Vec<&str> = line.splitn(3, '|').collect();
+        if parts.len() == 3 {
+            commits.push(CommitInfo {
+                hash: parts[0][..8].to_string(), // Abbreviated hash
+                message: parts[1].to_string(),
+                author: parts[2].to_string(),
+            });
+        }
+    }
+    
+    // Reverse to show commits in chronological order
+    commits.reverse();
+    Ok(commits)
+}

@@ -8,5 +8,9 @@ pub struct CliArgs {
 #[derive(clap::Subcommand, Debug)]
 pub enum Command {
     OpenPr,
-    Squash,
+    Squash {
+        /// Show what would be squashed without actually performing the operation
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
