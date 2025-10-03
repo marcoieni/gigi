@@ -59,7 +59,7 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
         if let Some(start) = author.rfind('<') {
             if let Some(end) = author.rfind('>') {
                 if start < end {
-                    return Some(author[start + 1..end].to_string());
+                    return Some(author[start + 1..end].trim().to_string());
                 }
             }
         }
@@ -74,7 +74,7 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
         let author = line.trim();
         if !author.is_empty() {
             if let Some(email) = extract_email(author) {
-                if email != current_user_email {
+                if email.to_lowercase() != current_user_email.to_lowercase() {
                     authors.insert(author.to_string());
                 }
             }
@@ -88,7 +88,7 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
             if let Some(co_author) = line.strip_prefix("Co-authored-by:").map(|s| s.trim()) {
                 if !co_author.is_empty() {
                     if let Some(email) = extract_email(co_author) {
-                        if email != current_user_email {
+                        if email.to_lowercase() != current_user_email.to_lowercase() {
                             authors.insert(co_author.to_string());
                         }
                     }
