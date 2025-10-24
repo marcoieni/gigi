@@ -9,10 +9,10 @@ use cmd::Cmd;
 use git_cmd::Repo;
 
 fn main() -> anyhow::Result<()> {
+    let args = CliArgs::parse();
     assert_default_repo_is_set();
     let repo_root = repo_root();
     let repo = Repo::new(repo_root.clone()).unwrap();
-    let args = CliArgs::parse();
     match args.command {
         args::Command::OpenPr => open_pr(repo_root, repo),
         args::Command::Squash { dry_run } => squash(repo_root, repo, dry_run),
