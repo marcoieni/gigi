@@ -11,6 +11,18 @@ TODO:
 
 ## Install locally
 
+Add this to your gitconfig:
+
+```
+[alias]
+    main-branch = !git symbolic-ref refs/remotes/origin/HEAD | cut -d'/' -f4
+    squash = "!f() { git reset --soft \"$(git merge-base HEAD $(git main-branch))\"; }; f"
+```
+
+TODO:
+
+- [ ] avoid requiring editing the gitconfig (run those commands in rust directly)
+
 1. Clone this repo
 2. Run `cargo install --path .`
 
