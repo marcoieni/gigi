@@ -59,6 +59,20 @@ fn current_branch(repo_root: &Utf8Path) -> String {
         .to_string()
 }
 
+fn branch_exists_locally(repo_root: &Utf8Path, branch_name: &str) -> bool {
+    let output = Cmd::new("git", ["branch", "--list", branch_name])
+        .with_current_dir(repo_root)
+        .run();
+    !output.stdout().trim().is_empty()
+}
+
+fn branch_exists_remotely(repo_root: &Utf8Path, branch_name: &str) -> bool {
+    let output = Cmd::new("git", ["ls-remote", "--heads", "origin", branch_name])
+        .with_current_dir(repo_root)
+        .run();
+    !output.stdout().trim().is_empty()
+}
+
 fn ensure_not_on_default_branch(repo_root: &Utf8Path) -> anyhow::Result<()> {
     let current_branch = current_branch(repo_root);
     let default_branch = default_branch(repo_root);
@@ -168,10 +182,14 @@ fn open_pr(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
     // Derive branch name from commit message (simple slug)
     let branch_name = branch_name_from_commit_message(&commit_message);
 
-    // let branch_name = inquire::Text::new("Branch name")
-    //     .with_default(&default_branch_name)
-    //     .prompt()
-    //     .unwrap();
+    // Check if branch exists locally or remotely
+    if branch_exists_locally(&repo_root, &branch_name) {
+        anyhow::bail!("❌ Branch '{}' already exists locally. Please use a different commit message or delete the existing branch.", branch_name);
+    }
+    
+    if branch_exists_remotely(&repo_root, &branch_name) {
+        anyhow::bail!("❌ Branch '{}' already exists on remote. Please use a different commit message or delete the remote branch.", branch_name);
+    }
 
     // Update default branch locally
     Cmd::new("git", ["checkout", &default_branch_name])
