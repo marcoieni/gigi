@@ -186,7 +186,7 @@ fn open_pr(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
     if branch_exists_locally(&repo_root, &branch_name) {
         anyhow::bail!("❌ Branch '{}' already exists locally. Please use a different commit message or delete the existing branch.", branch_name);
     }
-    
+
     if branch_exists_remotely(&repo_root, &branch_name) {
         anyhow::bail!("❌ Branch '{}' already exists on remote. Please use a different commit message or delete the remote branch.", branch_name);
     }
