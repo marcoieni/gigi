@@ -27,9 +27,27 @@ fn assert_default_repo_is_set() {
     }
 }
 
-fn pr_title() -> anyhow::Result<String> {
-    let output = Cmd::new("gh", ["pr", "view", "--json", "title", "-q", ".title"]).run();
-    anyhow::ensure!(output.status().success(), "❌ Failed to get PR title");
+fn pr_title(repo_root: &Utf8Path) -> anyhow::Result<String> {
+    let current_branch = current_branch(repo_root);
+    let output = Cmd::new(
+        "gh",
+        [
+            "pr",
+            "list",
+            "--head",
+            &current_branch,
+            "--json",
+            "title",
+            "-q",
+            ".[0].title",
+        ],
+    )
+    .with_current_dir(repo_root)
+    .run();
+    anyhow::ensure!(
+        output.status().success() && !output.stdout().is_empty(),
+        "❌ Failed to get PR title"
+    );
     Ok(output.stdout().to_string())
 }
 
@@ -88,7 +106,7 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo, dry_run: bool) -> anyhow::Result<(
     anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
     let feature_branch = repo.original_branch();
     let default_branch = default_branch(&repo_root);
-    let pr_title = pr_title()?;
+    let pr_title = pr_title(&repo_root)?;
     anyhow::ensure!(
         feature_branch != default_branch,
         "❌ You are on the main branch. Switch to a feature branch to squash"
