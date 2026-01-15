@@ -2,7 +2,6 @@ use camino::Utf8Path;
 
 use crate::cmd::Cmd;
 
-
 /// Check if copilot CLI is installed.
 fn is_copilot_installed() -> bool {
     std::process::Command::new("which")
@@ -46,12 +45,15 @@ fn generate_ai_commit_message(repo_root: &Utf8Path) -> Option<String> {
     // Run copilot and capture stdout
     let prompt = format!(
         "Don't ask me questions or confirmation. Just write a short git commit message for these changes in one line: {}",
-        diff.lines().take(20).collect::<Vec<_>>().join("\n")
+        diff.lines().collect::<Vec<_>>().join("\n")
     );
+    let model = "gpt-5-mini";
     let output = Cmd::new(
         "copilot",
-        ["--silent", "--model", "gpt-5-mini", "--prompt", &prompt],
+        ["--silent", "--model", model, "--prompt", &prompt],
     )
+    .hide_stdout()
+    .with_title(format!("🚀 copilot --silent --model {model} --prompt ..."))
     .with_current_dir(repo_root)
     .run();
 

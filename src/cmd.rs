@@ -36,6 +36,7 @@ pub struct Cmd {
     args: Vec<String>,
     current_dir: Option<Utf8PathBuf>,
     hide_stdout: bool,
+    title: Option<String>,
 }
 
 impl Cmd {
@@ -54,6 +55,7 @@ impl Cmd {
             current_dir: None,
             hide_stdout: false,
             env_vars: BTreeMap::new(),
+            title: None,
         }
     }
 
@@ -62,18 +64,26 @@ impl Cmd {
     //     self
     // }
 
-    pub fn with_current_dir(mut self, dir: impl Into<Utf8PathBuf>) -> Self {
+    pub fn with_current_dir(&mut self, dir: impl Into<Utf8PathBuf>) -> &mut Self {
         self.current_dir = Some(dir.into());
         self
     }
 
-    pub fn hide_stdout(mut self) -> Self {
+    pub fn hide_stdout(&mut self) -> &mut Self {
         self.hide_stdout = true;
         self
     }
 
+    pub fn with_title(&mut self, title: impl Into<String>) -> &mut Self {
+        self.title = Some(title.into());
+        self
+    }
+
     pub fn run(&self) -> CmdOutput {
-        let mut to_print = format!("🚀 {} {}", self.name, self.args.join(" "));
+        let mut to_print = self
+            .title
+            .clone()
+            .unwrap_or_else(|| format!("🚀 {} {}", self.name, self.args.join(" ")));
         let mut command = Command::new(&self.name);
         if let Some(dir) = &self.current_dir {
             command.current_dir(dir);
