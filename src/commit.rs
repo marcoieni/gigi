@@ -47,6 +47,7 @@ fn generate_ai_commit_message(repo_root: &Utf8Path) -> Option<String> {
         "Don't ask me questions or confirmation. Just write a short git commit message for these changes in one line: {}",
         diff.lines().collect::<Vec<_>>().join("\n")
     );
+    // gpt-5-mini should be free (no premium requests)
     let model = "gpt-5-mini";
     let output = Cmd::new(
         "copilot",
