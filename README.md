@@ -1,4 +1,6 @@
-# propo
+# gigi
+
+**gigi** stands for **gi**t **gi**zmo.
 
 > [!NOTE]
 > This software is still highly experimental and the resulting git actions
@@ -6,7 +8,6 @@
 
 TODO:
 
-- [ ] find a better name
 - [ ] run `gh repo set-default` automatically
 
 ## Install locally
@@ -16,11 +17,11 @@ TODO:
 
 ## Alias
 
-With the following command you can `p <command>` in your projects, and
-it will run the latest version of `propo` in that directory.
+With the following command you can `gigi <command>` in your projects, and
+it will run the latest version of `gigi` in that directory.
 
 ```
-alias p='RUST_BACKTRACE=1 cargo run --manifest-path ~/path/to/propo/Cargo.toml --'
+alias gigi='RUST_BACKTRACE=1 cargo run --manifest-path ~/path/to/gigi/Cargo.toml --'
 ```
 
 ## Commands
