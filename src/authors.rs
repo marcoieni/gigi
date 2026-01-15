@@ -2,16 +2,7 @@ use camino::Utf8Path;
 
 use crate::cmd::Cmd;
 
-pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Result<Vec<String>> {
-    // Get the merge base between current branch and default branch
-    let merge_base_output = Cmd::new("git", ["merge-base", "HEAD", default_branch])
-        .with_current_dir(repo_root)
-        .run();
-    anyhow::ensure!(
-        merge_base_output.status().success(),
-        "Failed to find merge base"
-    );
-    let merge_base = merge_base_output.stdout().trim();
+pub fn get_co_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<Vec<String>> {
 
     // Get all authors from commits in the range
     let authors_output = Cmd::new(
@@ -119,19 +110,7 @@ pub struct CommitInfo {
     pub author: String,
 }
 
-pub fn get_commits_to_squash(
-    repo_root: &Utf8Path,
-    default_branch: &str,
-) -> anyhow::Result<Vec<CommitInfo>> {
-    // Get the merge base between current branch and default branch
-    let merge_base_output = Cmd::new("git", ["merge-base", "HEAD", default_branch])
-        .with_current_dir(repo_root)
-        .run();
-    anyhow::ensure!(
-        merge_base_output.status().success(),
-        "Failed to find merge base"
-    );
-    let merge_base = merge_base_output.stdout().trim();
+pub fn get_commits_to_squash(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<Vec<CommitInfo>> {
 
     // Get commits with hash, subject, and author
     let commits_output = Cmd::new(

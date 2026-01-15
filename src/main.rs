@@ -141,14 +141,24 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo, dry_run: bool) -> anyhow::Result<(
         .with_current_dir(&repo_root)
         .run();
 
-    let co_authors = authors::get_co_authors(&repo_root, &default_branch)?;
+    // Compute merge-base once and reuse
+    let merge_base = Cmd::new("git", ["merge-base", "HEAD", &default_branch])
+        .with_current_dir(&repo_root)
+        .run();
+    anyhow::ensure!(
+        merge_base.status().success(),
+        "❌ Failed to find merge base"
+    );
+    let merge_base = merge_base.stdout();
+
+    let co_authors = authors::get_co_authors(&repo_root, merge_base)?;
     let co_authors_text = authors::format_co_authors(&co_authors);
 
     if dry_run {
         println!("\n🔍 DRY RUN: The following commits would be squashed:");
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-        let commits_to_squash = authors::get_commits_to_squash(&repo_root, &default_branch)?;
+        let commits_to_squash = authors::get_commits_to_squash(&repo_root, merge_base)?;
         if commits_to_squash.is_empty() {
             println!("⚠️  No commits to squash (already at merge base)");
         } else {
@@ -177,14 +187,7 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo, dry_run: bool) -> anyhow::Result<(
         return Ok(());
     }
 
-    let merge_base = Cmd::new("git", ["merge-base", "HEAD", &default_branch])
-        .with_current_dir(&repo_root)
-        .run();
-    anyhow::ensure!(
-        merge_base.status().success(),
-        "❌ Failed to find merge base"
-    );
-    Cmd::new("git", ["reset", "--soft", merge_base.stdout()])
+    Cmd::new("git", ["reset", "--soft", merge_base])
         .with_current_dir(&repo_root)
         .run();
     Cmd::new("git", ["add", "."])
