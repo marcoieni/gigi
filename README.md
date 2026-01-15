@@ -1,5 +1,7 @@
 # gigi
 
+![logo](./assets/logo.png)
+
 **gigi** stands for **gi**t **gi**zmo.
 
 > [!NOTE]
