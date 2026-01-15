@@ -109,9 +109,8 @@ fn branch_exists_remotely(repo_root: &Utf8Path, branch_name: &str) -> bool {
     !output.stdout().trim().is_empty()
 }
 
-fn ensure_not_on_default_branch(repo_root: &Utf8Path) -> anyhow::Result<()> {
+fn ensure_not_on_default_branch(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Result<()> {
     let current_branch = current_branch(repo_root);
-    let default_branch = default_branch(repo_root);
     anyhow::ensure!(
         current_branch != default_branch,
         "❌ Cannot push to default branch '{}'. Switch to a feature branch first.",
@@ -198,7 +197,7 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo, dry_run: bool) -> anyhow::Result<(
         .with_current_dir(&repo_root)
         .run();
 
-    ensure_not_on_default_branch(&repo_root)?;
+    ensure_not_on_default_branch(&repo_root, &default_branch)?;
     Cmd::new("git", ["push", "--force-with-lease"])
         .with_current_dir(&repo_root)
         .run();
@@ -274,7 +273,7 @@ fn open_pr(repo_root: Utf8PathBuf, repo: Repo, message: Option<String>) -> anyho
     }
 
     // Ensure we're not on the default branch before pushing
-    ensure_not_on_default_branch(&repo_root)?;
+    ensure_not_on_default_branch(&repo_root, &default_branch_name)?;
 
     // Push branch (set upstream)
     Cmd::new("git", ["push", "-u", "origin", &branch_name])
