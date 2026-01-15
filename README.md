@@ -5,26 +5,18 @@
 **gigi** stands for **gi**t **gi**zmo.
 
 > [!NOTE]
-> This software is still highly experimental and the resulting git actions
-> might not follow best practices.
+> `gigi` is a CLI implementing some opinionated commands to simplify my
+> day-to-day work with git and GitHub.
+
+> [!WARNING]
+> This software runs `git` and `gh` commands. Use it at your own risk.
 
 ## Install locally
 
 1. Clone this repo
 2. Run `cargo install --path .`
 
-OR:
-
-`cargo install --git https://github.com/marcoieni/gigi`
-
-## Alias
-
-With the following command you can `gigi <command>` in your projects, and
-it will run the latest version of `gigi` in that directory.
-
-```
-alias gigi='RUST_BACKTRACE=1 cargo run --manifest-path ~/path/to/gigi/Cargo.toml --'
-```
+OR run `cargo install --git https://github.com/marcoieni/gigi`
 
 ## Commands
 
@@ -47,3 +39,14 @@ the default branch and setting the PR title as the commit message.
 
 The authors of the original commits are set as co-authors in the new commit
 message.
+
+## Alias
+
+You can set an alias to recompile and run `gigi` from your local project.
+
+With the following command you can `gigi <command>` in your projects, and
+it will run the latest version of `gigi` in that directory.
+
+```
+alias gigi='RUST_BACKTRACE=1 cargo run --manifest-path ~/path/to/gigi/Cargo.toml --'
+```
