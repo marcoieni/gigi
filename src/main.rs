@@ -311,7 +311,9 @@ fn open_pr(repo_root: Utf8PathBuf, repo: Repo, message: Option<String>) -> anyho
 }
 
 fn repo_root() -> Utf8PathBuf {
-    let git_root = Cmd::new("git", ["rev-parse", "--show-toplevel"]).run();
+    let git_root = Cmd::new("git", ["rev-parse", "--show-toplevel"])
+        .hide_stdout()
+        .run();
     camino::Utf8PathBuf::from(git_root.stdout())
 }
 
