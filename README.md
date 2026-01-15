@@ -16,9 +16,7 @@
 1. Clone this repo
 2. Run `cargo install --path .`
 
-OR:
-
-`cargo install --git https://github.com/marcoieni/gigi`
+OR run `cargo install --git https://github.com/marcoieni/gigi`
 
 ## Commands
 
