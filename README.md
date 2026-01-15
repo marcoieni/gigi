@@ -37,7 +37,13 @@ set from the commit message.
 
 If there are any staged changes, only those are included in the PR.
 
+If you have `copilot` installed, gigi will use it to generate a commit message,
+that you can edit before creating the PR.
+
 ### Squash
 
 The squash subcommand squashes all the commits of the PR into one, rebasing
 the default branch and setting the PR title as the commit message.
+
+The authors of the original commits are set as co-authors in the new commit
+message.
