@@ -14,7 +14,7 @@ fn main() -> anyhow::Result<()> {
     let repo_root = repo_root();
     let repo = Repo::new(repo_root.clone()).unwrap();
     match args.command {
-        args::Command::OpenPr => open_pr(repo_root, repo),
+        args::Command::OpenPr { message } => open_pr(repo_root, repo, message),
         args::Command::Squash { dry_run } => squash(repo_root, repo, dry_run),
     }?;
     Ok(())
@@ -192,8 +192,23 @@ fn view_pr_in_browser(repo_root: &Utf8Path) {
         .to_string();
 }
 
-fn open_pr(repo_root: Utf8PathBuf, repo: Repo) -> anyhow::Result<()> {
-    let commit_message = prompt_commit_message(&repo_root)?;
+fn check_commit_message(message: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !message.is_empty() && message.len() < 71,
+        "Commit message size should be between 1 and 70 characters. Current size: {}",
+        message.len()
+    );
+    Ok(())
+}
+
+fn open_pr(repo_root: Utf8PathBuf, repo: Repo, message: Option<String>) -> anyhow::Result<()> {
+    let commit_message = match message {
+        Some(msg) => {
+            check_commit_message(&msg)?;
+            msg
+        }
+        None => prompt_commit_message(&repo_root)?,
+    };
 
     // Always start from an up-to-date default branch, then create a feature branch
     let default_branch_name = default_branch(&repo_root);
@@ -344,13 +359,7 @@ fn prompt_commit_message(repo_root: &Utf8Path) -> anyhow::Result<String> {
         .with_initial_value(&initial_value)
         .prompt()
         .unwrap();
-    anyhow::ensure!(
-        !msg.is_empty() && msg.len() < 71,
-        format!(
-            "Commit message size should be between 1 and 70 characters. Current size: {}",
-            msg.len()
-        )
-    );
+    check_commit_message(&msg)?;
     Ok(msg)
 }
 

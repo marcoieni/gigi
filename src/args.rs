@@ -7,7 +7,11 @@ pub struct CliArgs {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum Command {
-    OpenPr,
+    OpenPr {
+        /// Commit message (skips interactive prompt)
+        #[arg(short, long)]
+        message: Option<String>,
+    },
     Squash {
         /// Show what would be squashed without actually performing the operation
         #[arg(long)]
