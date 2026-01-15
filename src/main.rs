@@ -13,7 +13,9 @@ use crate::commit::{check_commit_message, prompt_commit_message};
 
 fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
-    assert_default_repo_is_set();
+    if !is_default_repo_set() {
+        set_default_repo();
+    }
     let repo_root = repo_root();
     let repo = Repo::new(repo_root.clone()).unwrap();
     match args.command {
@@ -23,11 +25,23 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn assert_default_repo_is_set() {
-    let output = Cmd::new("gh", ["repo", "set-default", "--view"]).run();
-    if output.stdout().trim().is_empty() {
-        panic!("❌ Please run `gh repo set-default` first");
-    }
+fn is_default_repo_set() -> bool {
+    let output = Cmd::new("gh", ["repo", "set-default", "--view"])
+        .hide_stdout()
+        .run();
+    !output.stdout().trim().is_empty()
+}
+
+fn set_default_repo() {
+    // Check if "upstream" remote exists
+    let remotes_output = Cmd::new("git", ["remote"]).hide_stdout().run();
+    let has_upstream = remotes_output
+        .stdout()
+        .lines()
+        .any(|line| line.trim() == "upstream");
+
+    let remote = if has_upstream { "upstream" } else { "origin" };
+    Cmd::new("gh", ["repo", "set-default", remote]).run();
 }
 
 fn pr_title(repo_root: &Utf8Path) -> anyhow::Result<String> {

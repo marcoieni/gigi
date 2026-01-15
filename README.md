@@ -8,10 +8,6 @@
 > This software is still highly experimental and the resulting git actions
 > might not follow best practices.
 
-TODO:
-
-- [ ] run `gh repo set-default` automatically
-
 ## Install locally
 
 1. Clone this repo
