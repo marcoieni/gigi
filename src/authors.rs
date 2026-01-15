@@ -58,9 +58,10 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
     let extract_email = |author: &str| -> Option<String> {
         if let Some(start) = author.rfind('<')
             && let Some(end) = author.rfind('>')
-                && start < end {
-                    return Some(author[start + 1..end].trim().to_string());
-                }
+            && start < end
+        {
+            return Some(author[start + 1..end].trim().to_string());
+        }
         None
     };
 
@@ -72,9 +73,10 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
         let author = line.trim();
         if !author.is_empty()
             && let Some(email) = extract_email(author)
-                && email.to_lowercase() != current_user_email.to_lowercase() {
-                    authors.insert(author.to_string());
-                }
+            && email.to_lowercase() != current_user_email.to_lowercase()
+        {
+            authors.insert(author.to_string());
+        }
     }
 
     // Parse co-authors from commit messages
@@ -82,11 +84,12 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
         let line = line.trim();
         if line.starts_with("Co-authored-by:")
             && let Some(co_author) = line.strip_prefix("Co-authored-by:").map(|s| s.trim())
-                && !co_author.is_empty()
-                    && let Some(email) = extract_email(co_author)
-                        && email.to_lowercase() != current_user_email.to_lowercase() {
-                            authors.insert(co_author.to_string());
-                        }
+            && !co_author.is_empty()
+            && let Some(email) = extract_email(co_author)
+            && email.to_lowercase() != current_user_email.to_lowercase()
+        {
+            authors.insert(co_author.to_string());
+        }
     }
 
     Ok(authors.into_iter().collect())

@@ -59,11 +59,7 @@ fn generate_ai_commit_message(repo_root: &Utf8Path) -> Option<String> {
 
     if output.status().success() {
         let msg = output.stdout().trim().to_string();
-        if msg.is_empty() {
-            None
-        } else {
-            Some(msg)
-        }
+        if msg.is_empty() { None } else { Some(msg) }
     } else {
         None
     }
