@@ -163,8 +163,14 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo, dry_run: bool) -> anyhow::Result<(
         return Ok(());
     }
 
-    // Normal squash operation
-    Cmd::new("git", ["squash"])
+    let merge_base = Cmd::new("git", ["merge-base", "HEAD", &default_branch])
+        .with_current_dir(&repo_root)
+        .run();
+    anyhow::ensure!(
+        merge_base.status().success(),
+        "❌ Failed to find merge base"
+    );
+    Cmd::new("git", ["reset", "--soft", merge_base.stdout()])
         .with_current_dir(&repo_root)
         .run();
     Cmd::new("git", ["add", "."])
