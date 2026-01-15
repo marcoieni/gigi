@@ -62,12 +62,12 @@ impl Cmd {
     //     self
     // }
 
-    pub fn with_current_dir(&mut self, dir: impl Into<Utf8PathBuf>) -> &mut Self {
+    pub fn with_current_dir(mut self, dir: impl Into<Utf8PathBuf>) -> Self {
         self.current_dir = Some(dir.into());
         self
     }
 
-    pub fn hide_stdout(&mut self) -> &mut Self {
+    pub fn hide_stdout(mut self) -> Self {
         self.hide_stdout = true;
         self
     }
