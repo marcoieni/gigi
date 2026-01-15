@@ -56,13 +56,11 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
 
     // Helper function to extract email from author string "Name <email>"
     let extract_email = |author: &str| -> Option<String> {
-        if let Some(start) = author.rfind('<') {
-            if let Some(end) = author.rfind('>') {
-                if start < end {
+        if let Some(start) = author.rfind('<')
+            && let Some(end) = author.rfind('>')
+                && start < end {
                     return Some(author[start + 1..end].trim().to_string());
                 }
-            }
-        }
         None
     };
 
@@ -72,29 +70,23 @@ pub fn get_co_authors(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
     // Add commit authors
     for line in authors_output.stdout().lines() {
         let author = line.trim();
-        if !author.is_empty() {
-            if let Some(email) = extract_email(author) {
-                if email.to_lowercase() != current_user_email.to_lowercase() {
+        if !author.is_empty()
+            && let Some(email) = extract_email(author)
+                && email.to_lowercase() != current_user_email.to_lowercase() {
                     authors.insert(author.to_string());
                 }
-            }
-        }
     }
 
     // Parse co-authors from commit messages
     for line in commit_messages_output.stdout().lines() {
         let line = line.trim();
-        if line.starts_with("Co-authored-by:") {
-            if let Some(co_author) = line.strip_prefix("Co-authored-by:").map(|s| s.trim()) {
-                if !co_author.is_empty() {
-                    if let Some(email) = extract_email(co_author) {
-                        if email.to_lowercase() != current_user_email.to_lowercase() {
+        if line.starts_with("Co-authored-by:")
+            && let Some(co_author) = line.strip_prefix("Co-authored-by:").map(|s| s.trim())
+                && !co_author.is_empty()
+                    && let Some(email) = extract_email(co_author)
+                        && email.to_lowercase() != current_user_email.to_lowercase() {
                             authors.insert(co_author.to_string());
                         }
-                    }
-                }
-            }
-        }
     }
 
     Ok(authors.into_iter().collect())
