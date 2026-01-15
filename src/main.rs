@@ -307,6 +307,7 @@ fn generate_ai_commit_message(repo_root: &Utf8Path) -> Option<String> {
     // Get the diff to help copilot understand what changed
     let diff_output = Cmd::new("git", ["diff", "--cached"])
         .with_current_dir(repo_root)
+        .hide_stdout()
         .run();
     let diff = diff_output.stdout();
 
@@ -314,6 +315,7 @@ fn generate_ai_commit_message(repo_root: &Utf8Path) -> Option<String> {
     let diff = if diff.trim().is_empty() {
         Cmd::new("git", ["diff"])
             .with_current_dir(repo_root)
+            .hide_stdout()
             .run()
             .stdout()
             .to_string()

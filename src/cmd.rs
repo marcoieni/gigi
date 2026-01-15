@@ -67,10 +67,10 @@ impl Cmd {
         self
     }
 
-    // pub fn hide_stdout(&mut self) -> &mut Self {
-    //     self.hide_stdout = true;
-    //     self
-    // }
+    pub fn hide_stdout(&mut self) -> &mut Self {
+        self.hide_stdout = true;
+        self
+    }
 
     pub fn run(&self) -> CmdOutput {
         let mut to_print = format!("🚀 {} {}", self.name, self.args.join(" "));
