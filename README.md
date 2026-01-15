@@ -13,6 +13,10 @@
 1. Clone this repo
 2. Run `cargo install --path .`
 
+OR:
+
+`cargo install --git https://github.com/marcoieni/gigi`
+
 ## Alias
 
 With the following command you can `gigi <command>` in your projects, and
