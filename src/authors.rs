@@ -3,7 +3,6 @@ use camino::Utf8Path;
 use crate::cmd::Cmd;
 
 pub fn get_co_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<Vec<String>> {
-
     // Get all authors from commits in the range
     let authors_output = Cmd::new(
         "git",
@@ -110,8 +109,10 @@ pub struct CommitInfo {
     pub author: String,
 }
 
-pub fn get_commits_to_squash(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<Vec<CommitInfo>> {
-
+pub fn get_commits_to_squash(
+    repo_root: &Utf8Path,
+    merge_base: &str,
+) -> anyhow::Result<Vec<CommitInfo>> {
     // Get commits with hash, subject, and author
     let commits_output = Cmd::new(
         "git",
