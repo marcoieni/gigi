@@ -4,10 +4,10 @@
 
 **gigi** stands for **gi**t **gi**zmo.
 
-> [!INFO]
+> [!NOTE]
 > A collection of opinionated CLI tools to streamline common git and GitHub workflows. gigi automates repetitive tasks like creating PRs, squashing commits, and managing branches—so you can focus on writing code.
 
-> [!NOTE]
+> [!WARNING]
 > This software runs `git` and `gh` commands. Use it at your own risk.
 
 ## Install locally
