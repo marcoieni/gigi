@@ -28,6 +28,7 @@ fn main() -> anyhow::Result<()> {
 fn is_default_repo_set() -> bool {
     let output = Cmd::new("gh", ["repo", "set-default", "--view"])
         .hide_stdout()
+        .hide_stderr()
         .run();
     !output.stdout().trim().is_empty()
 }

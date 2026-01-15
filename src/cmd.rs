@@ -36,6 +36,7 @@ pub struct Cmd {
     args: Vec<String>,
     current_dir: Option<Utf8PathBuf>,
     hide_stdout: bool,
+    hide_stderr: bool,
     title: Option<String>,
 }
 
@@ -54,6 +55,7 @@ impl Cmd {
             args,
             current_dir: None,
             hide_stdout: false,
+            hide_stderr: false,
             env_vars: BTreeMap::new(),
             title: None,
         }
@@ -71,6 +73,11 @@ impl Cmd {
 
     pub fn hide_stdout(&mut self) -> &mut Self {
         self.hide_stdout = true;
+        self
+    }
+
+    pub fn hide_stderr(&mut self) -> &mut Self {
+        self.hide_stderr = true;
         self
     }
 
@@ -134,7 +141,9 @@ impl Cmd {
                 output_stdout.push_str(&line);
                 output_stdout.push('\n');
             } else {
-                eprintln!("{}", line);
+                if !self.hide_stderr {
+                    eprintln!("{}", line);
+                }
                 output_stderr.push_str(&line);
                 output_stderr.push('\n');
             }
