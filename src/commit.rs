@@ -1,5 +1,7 @@
 use camino::Utf8Path;
 
+use inquire::validator::Validation;
+
 use crate::cmd::Cmd;
 
 /// Check if copilot CLI is installed.
@@ -72,17 +74,30 @@ pub fn prompt_commit_message(repo_root: &Utf8Path) -> anyhow::Result<String> {
 
     let msg = inquire::Text::new("Commit message")
         .with_initial_value(&initial_value)
+        .with_validator(|input: &str| {
+            if is_commit_message_valid(input) {
+                Ok(Validation::Valid)
+            } else {
+                Ok(Validation::Invalid(format!(
+                    "Commit message size should be between 1 and 70 characters. Current size: {}",
+                    input.len()
+                ).into()))
+            }
+        })
         .prompt()
         .unwrap();
-    check_commit_message(&msg)?;
     Ok(msg)
 }
 
 pub fn check_commit_message(message: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
-        !message.is_empty() && message.len() < 71,
+        is_commit_message_valid(message),
         "Commit message size should be between 1 and 70 characters. Current size: {}",
         message.len()
     );
     Ok(())
+}
+
+fn is_commit_message_valid(message: &str) -> bool {
+    !message.is_empty() && message.len() <= 70
 }
