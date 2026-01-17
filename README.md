@@ -50,3 +50,11 @@ it will run the latest version of `gigi` in that directory.
 ```
 alias gigi='RUST_BACKTRACE=1 cargo run --manifest-path ~/path/to/gigi/Cargo.toml --'
 ```
+
+## Contributing
+
+This project is mainly for my personal use, so I'll only accept contributions
+that align with my workflow.
+
+If you want to contribute, please open an issue to discuss your idea before
+opening a PR.
