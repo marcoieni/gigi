@@ -13,6 +13,7 @@ use crate::commit::{check_commit_message, prompt_commit_message};
 
 fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
+    cmd::set_verbose(args.verbose);
     if !is_default_repo_set() {
         set_default_repo();
     }

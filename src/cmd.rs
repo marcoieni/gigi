@@ -2,12 +2,22 @@ use std::{
     collections::BTreeMap,
     io::{BufRead as _, BufReader},
     process::{Command, ExitStatus, Stdio},
-    sync::mpsc,
+    sync::{atomic::{AtomicBool, Ordering}, mpsc},
     thread,
 };
 
 use camino::Utf8PathBuf;
 use secrecy::{ExposeSecret, SecretString};
+
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_verbose(verbose: bool) {
+    VERBOSE.store(verbose, Ordering::SeqCst);
+}
+
+fn is_verbose() -> bool {
+    VERBOSE.load(Ordering::SeqCst)
+}
 
 #[derive(Debug)]
 pub struct CmdOutput {
@@ -145,7 +155,9 @@ impl Cmd {
     }
 
     pub fn run(&self) -> CmdOutput {
-        println!("{}", self.build_command_description());
+        if is_verbose() {
+            println!("{}", self.build_command_description());
+        }
 
         let mut child = self
             .configure_command()
