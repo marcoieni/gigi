@@ -1,10 +1,23 @@
+use std::collections::HashSet;
+
 use camino::Utf8Path;
 
 use crate::cmd::Cmd;
 
-pub fn get_co_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<Vec<String>> {
-    // Get all authors from commits in the range
-    let authors_output = Cmd::new(
+/// Extract email from author string "Name <email>"
+fn extract_email(author: &str) -> Option<String> {
+    if let Some(start) = author.rfind('<')
+        && let Some(end) = author.rfind('>')
+        && start < end
+    {
+        return Some(author[start + 1..end].trim().to_string());
+    }
+    None
+}
+
+/// Get all authors from commits in the range
+fn get_commit_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<String> {
+    let output = Cmd::new(
         "git",
         [
             "log",
@@ -14,52 +27,35 @@ pub fn get_co_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<
     )
     .with_current_dir(repo_root)
     .run();
+    anyhow::ensure!(output.status().success(), "Failed to get commit authors");
+    Ok(output.stdout().to_string())
+}
 
-    anyhow::ensure!(
-        authors_output.status().success(),
-        "Failed to get commit authors"
-    );
-
-    // Get commit messages to parse co-authors
-    let commit_messages_output = Cmd::new(
+fn get_commit_messages(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<String> {
+    let output = Cmd::new(
         "git",
         ["log", "--format=%B", &format!("{}..HEAD", merge_base)],
     )
     .with_current_dir(repo_root)
     .run();
+    anyhow::ensure!(output.status().success(), "Failed to get commit messages");
+    Ok(output.stdout().to_string())
+}
 
-    anyhow::ensure!(
-        commit_messages_output.status().success(),
-        "Failed to get commit messages"
-    );
-
-    // Get current user email to exclude from co-authors
-    let current_user_email_output = Cmd::new("git", ["config", "user.email"])
+fn get_current_user_email(repo_root: &Utf8Path) -> anyhow::Result<String> {
+    let output = Cmd::new("git", ["config", "user.email"])
         .with_current_dir(repo_root)
         .run();
-
     anyhow::ensure!(
-        current_user_email_output.status().success(),
+        output.status().success(),
         "Failed to get current git user email"
     );
-    let current_user_email = current_user_email_output.stdout().trim();
+    Ok(output.stdout().trim().to_string())
+}
 
-    // Helper function to extract email from author string "Name <email>"
-    let extract_email = |author: &str| -> Option<String> {
-        if let Some(start) = author.rfind('<')
-            && let Some(end) = author.rfind('>')
-            && start < end
-        {
-            return Some(author[start + 1..end].trim().to_string());
-        }
-        None
-    };
-
-    // Collect unique authors (excluding current user by email)
-    let mut authors = std::collections::HashSet::new();
-
-    // Add commit authors
-    for line in authors_output.stdout().lines() {
+fn collect_authors_from_log(authors_output: &str, current_user_email: &str) -> HashSet<String> {
+    let mut authors = HashSet::new();
+    for line in authors_output.lines() {
         let author = line.trim();
         if !author.is_empty()
             && let Some(email) = extract_email(author)
@@ -68,9 +64,15 @@ pub fn get_co_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<
             authors.insert(author.to_string());
         }
     }
+    authors
+}
 
-    // Parse co-authors from commit messages
-    for line in commit_messages_output.stdout().lines() {
+fn parse_co_authors_from_messages(
+    commit_messages: &str,
+    current_user_email: &str,
+    authors: &mut HashSet<String>,
+) {
+    for line in commit_messages.lines() {
         let line = line.trim();
         if line.starts_with("Co-authored-by:")
             && let Some(co_author) = line.strip_prefix("Co-authored-by:").map(|s| s.trim())
@@ -81,6 +83,15 @@ pub fn get_co_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<
             authors.insert(co_author.to_string());
         }
     }
+}
+
+pub fn get_co_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<Vec<String>> {
+    let authors_output = get_commit_authors(repo_root, merge_base)?;
+    let commit_messages = get_commit_messages(repo_root, merge_base)?;
+    let current_user_email = get_current_user_email(repo_root)?;
+
+    let mut authors = collect_authors_from_log(&authors_output, &current_user_email);
+    parse_co_authors_from_messages(&commit_messages, &current_user_email, &mut authors);
 
     Ok(authors.into_iter().collect())
 }

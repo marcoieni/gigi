@@ -86,50 +86,43 @@ impl Cmd {
         self
     }
 
-    pub fn run(&self) -> CmdOutput {
-        let mut to_print = self
+    fn build_command_description(&self) -> String {
+        let mut description = self
             .title
             .clone()
             .unwrap_or_else(|| format!("🚀 {} {}", self.name, self.args.join(" ")));
+        if let Some(dir) = &self.current_dir {
+            description.push_str(&format!(" 👉 {}", dir));
+        }
+        description
+    }
+
+    fn configure_command(&self) -> Command {
         let mut command = Command::new(&self.name);
         if let Some(dir) = &self.current_dir {
             command.current_dir(dir);
-            to_print.push_str(&format!(" 👉 {}", dir));
         }
         for (key, value) in &self.env_vars {
             command.env(key, value.expose_secret());
         }
-        println!("{to_print}");
-        let mut child = command
-            .args(&self.args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        command
+    }
 
-        let (tx, rx) = mpsc::channel();
-
-        // Thread to read stdout
-        let tx_clone = tx.clone();
+    fn spawn_output_reader<R: std::io::Read + Send + 'static>(
+        reader: R,
+        tx: mpsc::Sender<(String, bool)>,
+        is_stdout: bool,
+    ) {
         thread::spawn(move || {
-            let reader = BufReader::new(stdout);
+            let reader = BufReader::new(reader);
             for line in reader.lines() {
                 let line = line.unwrap();
-                tx_clone.send((line.clone(), true)).unwrap();
+                tx.send((line, is_stdout)).unwrap();
             }
         });
+    }
 
-        // Thread to read stderr
-        thread::spawn(move || {
-            let reader = BufReader::new(stderr);
-            for line in reader.lines() {
-                let line = line.unwrap();
-                tx.send((line.clone(), false)).unwrap();
-            }
-        });
-
+    fn collect_output(&self, rx: mpsc::Receiver<(String, bool)>) -> (String, String) {
         let mut output_stdout = String::new();
         let mut output_stderr = String::new();
 
@@ -148,12 +141,33 @@ impl Cmd {
                 output_stderr.push('\n');
             }
         }
-        let output = child.wait().unwrap();
+        (output_stdout, output_stderr)
+    }
+
+    pub fn run(&self) -> CmdOutput {
+        println!("{}", self.build_command_description());
+
+        let mut child = self
+            .configure_command()
+            .args(&self.args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let (tx, rx) = mpsc::channel();
+
+        Self::spawn_output_reader(stdout, tx.clone(), true);
+        Self::spawn_output_reader(stderr, tx, false);
+
+        let (output_stdout, _output_stderr) = self.collect_output(rx);
+        let status = child.wait().unwrap();
 
         CmdOutput {
-            status: output,
+            status,
             stdout: output_stdout,
-            // stderr: output_stderr,
         }
     }
 }

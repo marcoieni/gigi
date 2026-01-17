@@ -119,6 +119,96 @@ fn ensure_not_on_default_branch(repo_root: &Utf8Path, default_branch: &str) -> a
     Ok(())
 }
 
+fn sync_feature_branch_with_default(
+    repo_root: &Utf8Path,
+    feature_branch: &str,
+    default_branch: &str,
+) {
+    Cmd::new("git", ["checkout", default_branch])
+        .with_current_dir(repo_root)
+        .run();
+    Cmd::new("git", ["pull"]).with_current_dir(repo_root).run();
+    Cmd::new("git", ["checkout", feature_branch])
+        .with_current_dir(repo_root)
+        .run();
+    Cmd::new("git", ["merge", "origin", default_branch])
+        .with_current_dir(repo_root)
+        .run();
+}
+
+fn compute_merge_base(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Result<String> {
+    let merge_base = Cmd::new("git", ["merge-base", "HEAD", default_branch])
+        .with_current_dir(repo_root)
+        .run();
+    anyhow::ensure!(
+        merge_base.status().success(),
+        "❌ Failed to find merge base"
+    );
+    Ok(merge_base.stdout().to_string())
+}
+
+fn print_dry_run_summary(
+    repo_root: &Utf8Path,
+    merge_base: &str,
+    pr_title: &str,
+    co_authors: &[String],
+    co_authors_text: &str,
+) -> anyhow::Result<()> {
+    println!("\n🔍 DRY RUN: The following commits would be squashed:");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+    let commits_to_squash = authors::get_commits_to_squash(repo_root, merge_base)?;
+    if commits_to_squash.is_empty() {
+        println!("⚠️  No commits to squash (already at merge base)");
+    } else {
+        for (i, commit) in commits_to_squash.iter().enumerate() {
+            println!(
+                "{:2}. {} {} (by {})",
+                i + 1,
+                commit.hash,
+                commit.message,
+                commit.author
+            );
+        }
+    }
+
+    println!("\n📝 The resulting commit message would be:");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    let commit_message = format!("{}{}", pr_title, co_authors_text);
+    println!("{}", commit_message);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+    if !co_authors.is_empty() {
+        println!("\n👥 Co-authors detected: {}", co_authors.len());
+    }
+
+    println!("\n💡 To perform the actual squash, run without --dry-run");
+    Ok(())
+}
+
+fn perform_squash_and_push(
+    repo_root: &Utf8Path,
+    merge_base: &str,
+    commit_message: &str,
+    default_branch: &str,
+) -> anyhow::Result<()> {
+    Cmd::new("git", ["reset", "--soft", merge_base])
+        .with_current_dir(repo_root)
+        .run();
+    Cmd::new("git", ["add", "."])
+        .with_current_dir(repo_root)
+        .run();
+    Cmd::new("git", ["commit", "-m", commit_message])
+        .with_current_dir(repo_root)
+        .run();
+
+    ensure_not_on_default_branch(repo_root, default_branch)?;
+    Cmd::new("git", ["push", "--force-with-lease"])
+        .with_current_dir(repo_root)
+        .run();
+    Ok(())
+}
+
 fn squash(repo_root: Utf8PathBuf, repo: Repo, dry_run: bool) -> anyhow::Result<()> {
     anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
     let feature_branch = repo.original_branch();
@@ -129,82 +219,24 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo, dry_run: bool) -> anyhow::Result<(
         "❌ You are on the main branch. Switch to a feature branch to squash"
     );
 
-    // sync branch
-    Cmd::new("git", ["checkout", &default_branch])
-        .with_current_dir(&repo_root)
-        .run();
-    Cmd::new("git", ["pull"]).with_current_dir(&repo_root).run();
-    Cmd::new("git", ["checkout", feature_branch])
-        .with_current_dir(&repo_root)
-        .run();
-    Cmd::new("git", ["merge", "origin", &default_branch])
-        .with_current_dir(&repo_root)
-        .run();
+    sync_feature_branch_with_default(&repo_root, feature_branch, &default_branch);
+    let merge_base = compute_merge_base(&repo_root, &default_branch)?;
 
-    // Compute merge-base once and reuse
-    let merge_base = Cmd::new("git", ["merge-base", "HEAD", &default_branch])
-        .with_current_dir(&repo_root)
-        .run();
-    anyhow::ensure!(
-        merge_base.status().success(),
-        "❌ Failed to find merge base"
-    );
-    let merge_base = merge_base.stdout();
-
-    let co_authors = authors::get_co_authors(&repo_root, merge_base)?;
+    let co_authors = authors::get_co_authors(&repo_root, &merge_base)?;
     let co_authors_text = authors::format_co_authors(&co_authors);
 
     if dry_run {
-        println!("\n🔍 DRY RUN: The following commits would be squashed:");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
-        let commits_to_squash = authors::get_commits_to_squash(&repo_root, merge_base)?;
-        if commits_to_squash.is_empty() {
-            println!("⚠️  No commits to squash (already at merge base)");
-        } else {
-            for (i, commit) in commits_to_squash.iter().enumerate() {
-                println!(
-                    "{:2}. {} {} (by {})",
-                    i + 1,
-                    commit.hash,
-                    commit.message,
-                    commit.author
-                );
-            }
-        }
-
-        println!("\n📝 The resulting commit message would be:");
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        let commit_message = format!("{}{}", pr_title, co_authors_text);
-        println!("{}", commit_message);
-        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
-        if !co_authors.is_empty() {
-            println!("\n👥 Co-authors detected: {}", co_authors.len());
-        }
-
-        println!("\n💡 To perform the actual squash, run without --dry-run");
-        return Ok(());
+        return print_dry_run_summary(
+            &repo_root,
+            &merge_base,
+            &pr_title,
+            &co_authors,
+            &co_authors_text,
+        );
     }
 
-    Cmd::new("git", ["reset", "--soft", merge_base])
-        .with_current_dir(&repo_root)
-        .run();
-    Cmd::new("git", ["add", "."])
-        .with_current_dir(&repo_root)
-        .run();
-
-    // Create commit message with co-authors
     let commit_message = format!("{}{}", pr_title, co_authors_text);
-    Cmd::new("git", ["commit", "-m", &commit_message])
-        .with_current_dir(&repo_root)
-        .run();
-
-    ensure_not_on_default_branch(&repo_root, &default_branch)?;
-    Cmd::new("git", ["push", "--force-with-lease"])
-        .with_current_dir(&repo_root)
-        .run();
-
+    perform_squash_and_push(&repo_root, &merge_base, &commit_message, &default_branch)?;
     view_pr_in_browser(&repo_root);
 
     Ok(())
@@ -218,97 +250,114 @@ fn view_pr_in_browser(repo_root: &Utf8Path) {
         .to_string();
 }
 
-fn open_pr(repo_root: Utf8PathBuf, repo: Repo, message: Option<String>) -> anyhow::Result<()> {
-    let commit_message = match message {
+fn resolve_commit_message(repo_root: &Utf8Path, message: Option<String>) -> anyhow::Result<String> {
+    match message {
         Some(msg) => {
             check_commit_message(&msg)?;
-            msg
+            Ok(msg)
         }
-        None => prompt_commit_message(&repo_root)?,
-    };
+        None => prompt_commit_message(repo_root),
+    }
+}
 
-    // Always start from an up-to-date default branch, then create a feature branch
-    let default_branch_name = default_branch(&repo_root);
-    // Derive branch name from commit message (simple slug)
-    let branch_name = branch_name_from_commit_message(&commit_message);
-
-    // Check if branch exists locally or remotely
-    if branch_exists_locally(&repo_root, &branch_name) {
+fn ensure_branch_does_not_exist(repo_root: &Utf8Path, branch_name: &str) -> anyhow::Result<()> {
+    if branch_exists_locally(repo_root, branch_name) {
         anyhow::bail!(
             "❌ Branch '{}' already exists locally. Please use a different commit message or delete the existing branch.",
             branch_name
         );
     }
-
-    if branch_exists_remotely(&repo_root, &branch_name) {
+    if branch_exists_remotely(repo_root, branch_name) {
         anyhow::bail!(
             "❌ Branch '{}' already exists on remote. Please use a different commit message or delete the remote branch.",
             branch_name
         );
     }
+    Ok(())
+}
 
-    // Update default branch locally
-    Cmd::new("git", ["checkout", &default_branch_name])
-        .with_current_dir(&repo_root)
+fn create_feature_branch_from_default(
+    repo_root: &Utf8Path,
+    default_branch_name: &str,
+    branch_name: &str,
+) {
+    Cmd::new("git", ["checkout", default_branch_name])
+        .with_current_dir(repo_root)
         .run();
     Cmd::new("git", ["pull", "--ff-only"])
-        .with_current_dir(&repo_root)
+        .with_current_dir(repo_root)
         .run();
-
-    // Create the feature branch
-    Cmd::new("git", ["checkout", "-b", &branch_name])
-        .with_current_dir(&repo_root)
+    Cmd::new("git", ["checkout", "-b", branch_name])
+        .with_current_dir(repo_root)
         .run();
+}
 
-    let staged_files = get_staged_files(&repo_root);
+fn stage_and_commit_changes(
+    repo_root: &Utf8Path,
+    repo: &Repo,
+    commit_message: &str,
+) -> anyhow::Result<()> {
+    let staged_files = get_staged_files(repo_root);
     println!("ℹ️ Staged files: {:?}", staged_files);
     if staged_files.is_empty() {
-        run_git_add(changed_files(&repo), repo.directory());
+        run_git_add(changed_files(repo), repo.directory());
     } else {
-        run_git_add(staged_files, &repo_root);
+        run_git_add(staged_files, repo_root);
     }
 
-    let output = Cmd::new("git", ["commit", "-m", &commit_message])
-        .with_current_dir(&repo_root)
+    let output = Cmd::new("git", ["commit", "-m", commit_message])
+        .with_current_dir(repo_root)
         .run();
     if output.stdout().contains("nothing to commit") {
         panic!("❌ Nothing to commit");
     }
+    Ok(())
+}
 
-    // Ensure we're not on the default branch before pushing
-    ensure_not_on_default_branch(&repo_root, &default_branch_name)?;
-
-    // Push branch (set upstream)
-    Cmd::new("git", ["push", "-u", "origin", &branch_name])
-        .with_current_dir(&repo_root)
+fn push_branch_and_open_pr(repo_root: &Utf8Path, branch_name: &str, commit_message: &str) {
+    Cmd::new("git", ["push", "-u", "origin", branch_name])
+        .with_current_dir(repo_root)
         .run();
 
-    // If a PR already exists, open it; otherwise create a new one.
-    let pr_view = Cmd::new("gh", ["pr", "view", "--json", "number", "-q", ".number"]) // relies on current branch
-        .with_current_dir(&repo_root)
-        .run();
-    if pr_view.status().success() {
-        // Open existing PR in browser
-        Cmd::new("gh", ["pr", "view", "--web"]) // show existing PR
-            .with_current_dir(&repo_root)
+    let pr_exists = Cmd::new("gh", ["pr", "view", "--json", "number", "-q", ".number"])
+        .with_current_dir(repo_root)
+        .run()
+        .status()
+        .success();
+
+    if pr_exists {
+        Cmd::new("gh", ["pr", "view", "--web"])
+            .with_current_dir(repo_root)
             .run();
     } else {
-        // Create new PR using commit message as title
         Cmd::new(
             "gh",
             [
                 "pr",
                 "create",
                 "--title",
-                &commit_message,
+                commit_message,
                 "--body",
                 "",
                 "--web",
             ],
         )
-        .with_current_dir(&repo_root)
+        .with_current_dir(repo_root)
         .run();
     }
+}
+
+fn open_pr(repo_root: Utf8PathBuf, repo: Repo, message: Option<String>) -> anyhow::Result<()> {
+    let commit_message = resolve_commit_message(&repo_root, message)?;
+    let default_branch_name = default_branch(&repo_root);
+    let branch_name = branch_name_from_commit_message(&commit_message);
+
+    ensure_branch_does_not_exist(&repo_root, &branch_name)?;
+    create_feature_branch_from_default(&repo_root, &default_branch_name, &branch_name);
+    stage_and_commit_changes(&repo_root, &repo, &commit_message)?;
+    ensure_not_on_default_branch(&repo_root, &default_branch_name)?;
+    push_branch_and_open_pr(&repo_root, &branch_name, &commit_message);
+
     Ok(())
 }
 
