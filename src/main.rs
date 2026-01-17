@@ -453,9 +453,6 @@ mod tests {
 
     #[test]
     fn test_branch_name_trims_whitespace() {
-        assert_eq!(
-            branch_name_from_commit_message("  Fix bug  "),
-            "fix-bug"
-        );
+        assert_eq!(branch_name_from_commit_message("  Fix bug  "), "fix-bug");
     }
 }
