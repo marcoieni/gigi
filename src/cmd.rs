@@ -2,7 +2,10 @@ use std::{
     collections::BTreeMap,
     io::{BufRead as _, BufReader},
     process::{Command, ExitStatus, Stdio},
-    sync::{atomic::{AtomicBool, Ordering}, mpsc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
 };
 
