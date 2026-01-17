@@ -171,3 +171,69 @@ impl Cmd {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cmd_new_stores_args() {
+        let cmd = Cmd::new("git", ["status", "-s"]);
+        assert_eq!(cmd.name, "git");
+        assert_eq!(cmd.args, vec!["status", "-s"]);
+    }
+
+    #[test]
+    fn test_cmd_new_empty_args() {
+        let cmd = Cmd::new("ls", Vec::<&str>::new());
+        assert_eq!(cmd.name, "ls");
+        assert!(cmd.args.is_empty());
+    }
+
+    #[test]
+    fn test_build_command_description_default() {
+        let cmd = Cmd::new("git", ["status"]);
+        let desc = cmd.build_command_description();
+        assert_eq!(desc, "🚀 git status");
+    }
+
+    #[test]
+    fn test_build_command_description_with_dir() {
+        let mut cmd = Cmd::new("git", ["status"]);
+        cmd.with_current_dir("/some/path");
+        let desc = cmd.build_command_description();
+        assert_eq!(desc, "🚀 git status 👉 /some/path");
+    }
+
+    #[test]
+    fn test_build_command_description_with_title() {
+        let mut cmd = Cmd::new("git", ["status"]);
+        cmd.with_title("Checking repo status");
+        let desc = cmd.build_command_description();
+        assert_eq!(desc, "Checking repo status");
+    }
+
+    #[test]
+    fn test_build_command_description_with_title_and_dir() {
+        let mut cmd = Cmd::new("git", ["status"]);
+        cmd.with_title("Checking status");
+        cmd.with_current_dir("/repo");
+        let desc = cmd.build_command_description();
+        assert_eq!(desc, "Checking status 👉 /repo");
+    }
+
+    #[test]
+    fn test_cmd_output_stdout_trims() {
+        use std::process::ExitStatus;
+        #[cfg(unix)]
+        let status = {
+            use std::os::unix::process::ExitStatusExt;
+            ExitStatus::from_raw(0)
+        };
+        let output = CmdOutput {
+            status,
+            stdout: "  hello world  \n".to_string(),
+        };
+        assert_eq!(output.stdout(), "hello world");
+    }
+}

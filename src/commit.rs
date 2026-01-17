@@ -101,3 +101,51 @@ pub fn check_commit_message(message: &str) -> anyhow::Result<()> {
 fn is_commit_message_valid(message: &str) -> bool {
     !message.is_empty() && message.len() <= 70
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_message() {
+        assert!(is_commit_message_valid("Fix bug"));
+    }
+
+    #[test]
+    fn test_empty_message_invalid() {
+        assert!(!is_commit_message_valid(""));
+    }
+
+    #[test]
+    fn test_message_at_max_length() {
+        let msg = "a".repeat(70);
+        assert!(is_commit_message_valid(&msg));
+    }
+
+    #[test]
+    fn test_message_over_max_length() {
+        let msg = "a".repeat(71);
+        assert!(!is_commit_message_valid(&msg));
+    }
+
+    #[test]
+    fn test_single_char_valid() {
+        assert!(is_commit_message_valid("a"));
+    }
+
+    #[test]
+    fn test_check_commit_message_valid() {
+        assert!(check_commit_message("Valid message").is_ok());
+    }
+
+    #[test]
+    fn test_check_commit_message_empty() {
+        assert!(check_commit_message("").is_err());
+    }
+
+    #[test]
+    fn test_check_commit_message_too_long() {
+        let msg = "a".repeat(71);
+        assert!(check_commit_message(&msg).is_err());
+    }
+}

@@ -159,3 +159,107 @@ pub fn get_commits_to_squash(
     commits.reverse();
     Ok(commits)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_email_valid() {
+        assert_eq!(
+            extract_email("John Doe <john@example.com>"),
+            Some("john@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_email_with_spaces() {
+        assert_eq!(
+            extract_email("John Doe < john@example.com >"),
+            Some("john@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_email_no_brackets() {
+        assert_eq!(extract_email("john@example.com"), None);
+    }
+
+    #[test]
+    fn test_extract_email_empty() {
+        assert_eq!(extract_email(""), None);
+    }
+
+    #[test]
+    fn test_extract_email_malformed() {
+        assert_eq!(extract_email("John Doe >john@example.com<"), None);
+    }
+
+    #[test]
+    fn test_collect_authors_from_log_filters_current_user() {
+        let log = "Alice <alice@example.com>\nBob <bob@example.com>\nAlice <alice@example.com>";
+        let authors = collect_authors_from_log(log, "alice@example.com");
+        assert_eq!(authors.len(), 1);
+        assert!(authors.contains("Bob <bob@example.com>"));
+    }
+
+    #[test]
+    fn test_collect_authors_from_log_case_insensitive_email() {
+        let log = "Alice <ALICE@EXAMPLE.COM>";
+        let authors = collect_authors_from_log(log, "alice@example.com");
+        assert!(authors.is_empty());
+    }
+
+    #[test]
+    fn test_collect_authors_from_log_skips_empty_lines() {
+        let log = "\n\nAlice <alice@example.com>\n\n";
+        let authors = collect_authors_from_log(log, "bob@example.com");
+        assert_eq!(authors.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_co_authors_from_messages() {
+        let messages = "Some commit message\nCo-authored-by: Carol <carol@example.com>\n";
+        let mut authors = HashSet::new();
+        parse_co_authors_from_messages(messages, "bob@example.com", &mut authors);
+        assert_eq!(authors.len(), 1);
+        assert!(authors.contains("Carol <carol@example.com>"));
+    }
+
+    #[test]
+    fn test_parse_co_authors_filters_current_user() {
+        let messages = "Co-authored-by: Bob <bob@example.com>";
+        let mut authors = HashSet::new();
+        parse_co_authors_from_messages(messages, "bob@example.com", &mut authors);
+        assert!(authors.is_empty());
+    }
+
+    #[test]
+    fn test_parse_co_authors_with_whitespace() {
+        let messages = "  Co-authored-by:   Dave <dave@example.com>  ";
+        let mut authors = HashSet::new();
+        parse_co_authors_from_messages(messages, "other@example.com", &mut authors);
+        assert_eq!(authors.len(), 1);
+    }
+
+    #[test]
+    fn test_format_co_authors_empty() {
+        assert_eq!(format_co_authors(&[]), "");
+    }
+
+    #[test]
+    fn test_format_co_authors_single() {
+        let result = format_co_authors(&["Alice <alice@example.com>".to_string()]);
+        assert_eq!(result, "\n\nCo-authored-by: Alice <alice@example.com>");
+    }
+
+    #[test]
+    fn test_format_co_authors_multiple() {
+        let result = format_co_authors(&[
+            "Alice <alice@example.com>".to_string(),
+            "Bob <bob@example.com>".to_string(),
+        ]);
+        assert!(result.contains("Co-authored-by: Alice <alice@example.com>"));
+        assert!(result.contains("Co-authored-by: Bob <bob@example.com>"));
+    }
+}

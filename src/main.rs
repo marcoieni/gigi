@@ -401,3 +401,61 @@ fn branch_name_from_commit_message(commit_message: &str) -> String {
     let trimmed = commit_message.trim().to_lowercase();
     trimmed.replace(" ", "-")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_branch_name_simple() {
+        assert_eq!(branch_name_from_commit_message("Fix bug"), "fix-bug");
+    }
+
+    #[test]
+    fn test_branch_name_with_special_chars() {
+        assert_eq!(
+            branch_name_from_commit_message("feat(scope): add feature"),
+            "feat-scope-add-feature"
+        );
+    }
+
+    #[test]
+    fn test_branch_name_with_backticks() {
+        assert_eq!(
+            branch_name_from_commit_message("Fix `foo` function"),
+            "fix-foo-function"
+        );
+    }
+
+    #[test]
+    fn test_branch_name_with_quotes() {
+        assert_eq!(
+            branch_name_from_commit_message("Update \"config\" file"),
+            "update-config-file"
+        );
+    }
+
+    #[test]
+    fn test_branch_name_with_slashes() {
+        assert_eq!(
+            branch_name_from_commit_message("Fix path/to/file.rs"),
+            "fix-path-to-file-rs"
+        );
+    }
+
+    #[test]
+    fn test_branch_name_preserves_hyphens() {
+        assert_eq!(
+            branch_name_from_commit_message("Add pre-commit hook"),
+            "add-pre-commit-hook"
+        );
+    }
+
+    #[test]
+    fn test_branch_name_trims_whitespace() {
+        assert_eq!(
+            branch_name_from_commit_message("  Fix bug  "),
+            "fix-bug"
+        );
+    }
+}
