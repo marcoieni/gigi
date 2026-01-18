@@ -216,10 +216,10 @@ fn commit(repo_root: &Utf8Path, commit_message: &str) -> anyhow::Result<()> {
         .with_current_dir(repo_root)
         .run();
     if !output.status().success() {
-        let error_msg = if !output.stderr().is_empty() {
-            output.stderr().to_string()
-        } else {
+        let error_msg = if output.stderr().is_empty() {
             output.stdout().to_string()
+        } else {
+            output.stderr().to_string()
         };
         anyhow::bail!("❌ git commit failed: {error_msg}");
     }
