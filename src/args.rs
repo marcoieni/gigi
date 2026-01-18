@@ -9,6 +9,13 @@ pub struct CliArgs {
     pub command: Command,
 }
 
+#[derive(clap::ValueEnum, Clone, Debug, Default)]
+pub enum Agent {
+    #[default]
+    Copilot,
+    Gemini,
+}
+
 #[derive(clap::Subcommand, Debug)]
 pub enum Command {
     /// Creates a new branch and opens a pull request preview in the browser
@@ -16,6 +23,9 @@ pub enum Command {
         /// Commit message (skips interactive prompt)
         #[arg(short, long)]
         message: Option<String>,
+        /// AI agent to generate commit message
+        #[arg(long, value_enum)]
+        agent: Option<Agent>,
     },
     Squash {
         /// Show what would be squashed without actually performing the operation

@@ -20,7 +20,7 @@ fn main() -> anyhow::Result<()> {
     let repo_root = repo_root();
     let repo = Repo::new(repo_root.clone()).unwrap();
     match args.command {
-        args::Command::OpenPr { message } => open_pr(repo_root, repo, message),
+        args::Command::OpenPr { message, agent } => open_pr(repo_root, repo, message, agent),
         args::Command::Squash { dry_run } => squash(repo_root, repo, dry_run),
     }?;
     Ok(())
@@ -251,13 +251,17 @@ fn view_pr_in_browser(repo_root: &Utf8Path) {
         .to_string();
 }
 
-fn resolve_commit_message(repo_root: &Utf8Path, message: Option<String>) -> anyhow::Result<String> {
+fn resolve_commit_message(
+    repo_root: &Utf8Path,
+    message: Option<String>,
+    agent: Option<args::Agent>,
+) -> anyhow::Result<String> {
     match message {
         Some(msg) => {
             check_commit_message(&msg)?;
             Ok(msg)
         }
-        None => prompt_commit_message(repo_root),
+        None => prompt_commit_message(repo_root, agent),
     }
 }
 
@@ -348,8 +352,13 @@ fn push_branch_and_open_pr(repo_root: &Utf8Path, branch_name: &str, commit_messa
     }
 }
 
-fn open_pr(repo_root: Utf8PathBuf, repo: Repo, message: Option<String>) -> anyhow::Result<()> {
-    let commit_message = resolve_commit_message(&repo_root, message)?;
+fn open_pr(
+    repo_root: Utf8PathBuf,
+    repo: Repo,
+    message: Option<String>,
+    agent: Option<args::Agent>,
+) -> anyhow::Result<()> {
+    let commit_message = resolve_commit_message(&repo_root, message, agent)?;
     let default_branch_name = default_branch(&repo_root);
     let branch_name = branch_name_from_commit_message(&commit_message);
 
