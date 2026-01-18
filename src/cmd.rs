@@ -141,13 +141,13 @@ impl Cmd {
 
         for (line, is_stdout) in rx {
             if is_stdout {
-                if !self.hide_stdout {
+                if is_verbose() && !self.hide_stdout {
                     println!("{}", line);
                 }
                 output_stdout.push_str(&line);
                 output_stdout.push('\n');
             } else {
-                if !self.hide_stderr {
+                if is_verbose() && !self.hide_stderr {
                     eprintln!("{}", line);
                 }
                 output_stderr.push_str(&line);
