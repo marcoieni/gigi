@@ -21,7 +21,7 @@ pub enum Command {
     /// Creates a new branch and opens a pull request preview in the browser
     OpenPr {
         /// Commit message (skips interactive prompt)
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with_all = ["agent", "model"])]
         message: Option<String>,
         /// AI agent to generate commit message
         #[arg(long, value_enum)]
