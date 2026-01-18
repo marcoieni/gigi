@@ -19,11 +19,7 @@ fn extract_email(author: &str) -> Option<String> {
 fn get_commit_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<String> {
     let output = Cmd::new(
         "git",
-        [
-            "log",
-            "--format=%an <%ae>",
-            &format!("{}..HEAD", merge_base),
-        ],
+        ["log", "--format=%an <%ae>", &format!("{merge_base}..HEAD")],
     )
     .with_current_dir(repo_root)
     .run();
@@ -34,7 +30,7 @@ fn get_commit_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<
 fn get_commit_messages(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<String> {
     let output = Cmd::new(
         "git",
-        ["log", "--format=%B", &format!("{}..HEAD", merge_base)],
+        ["log", "--format=%B", &format!("{merge_base}..HEAD")],
     )
     .with_current_dir(repo_root)
     .run();
@@ -102,7 +98,7 @@ pub fn format_co_authors(co_authors: &[String]) -> String {
     } else {
         let mut result = String::new();
         for author in co_authors {
-            result.push_str(&format!("\nCo-authored-by: {}", author));
+            result.push_str(&format!("\nCo-authored-by: {author}"));
         }
         result
     };
@@ -130,7 +126,7 @@ pub fn get_commits_to_squash(
         [
             "log",
             "--format=%H|%s|%an <%ae>",
-            &format!("{}..HEAD", merge_base),
+            &format!("{merge_base}..HEAD"),
         ],
     )
     .with_current_dir(repo_root)

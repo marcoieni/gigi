@@ -118,8 +118,7 @@ fn ensure_not_on_default_branch(repo_root: &Utf8Path, default_branch: &str) -> a
     let current_branch = current_branch(repo_root);
     anyhow::ensure!(
         current_branch != default_branch,
-        "❌ Cannot push to default branch '{}'. Switch to a feature branch first.",
-        default_branch
+        "❌ Cannot push to default branch '{default_branch}'. Switch to a feature branch first."
     );
     Ok(())
 }
@@ -179,8 +178,8 @@ fn print_dry_run_summary(
 
     println!("\n📝 The resulting commit message would be:");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    let commit_message = format!("{}{}", pr_title, co_authors_text);
-    println!("{}", commit_message);
+    let commit_message = format!("{pr_title}{co_authors_text}");
+    println!("{commit_message}");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     if !co_authors.is_empty() {
@@ -240,7 +239,7 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo, dry_run: bool) -> anyhow::Result<(
         );
     }
 
-    let commit_message = format!("{}{}", pr_title, co_authors_text);
+    let commit_message = format!("{pr_title}{co_authors_text}");
     perform_squash_and_push(&repo_root, &merge_base, &commit_message, &default_branch)?;
     view_pr_in_browser(&repo_root);
 
@@ -273,14 +272,12 @@ fn resolve_commit_message(
 fn ensure_branch_does_not_exist(repo_root: &Utf8Path, branch_name: &str) -> anyhow::Result<()> {
     if branch_exists_locally(repo_root, branch_name) {
         anyhow::bail!(
-            "❌ Branch '{}' already exists locally. Please use a different commit message or delete the existing branch.",
-            branch_name
+            "❌ Branch '{branch_name}' already exists locally. Please use a different commit message or delete the existing branch."
         );
     }
     if branch_exists_remotely(repo_root, branch_name) {
         anyhow::bail!(
-            "❌ Branch '{}' already exists on remote. Please use a different commit message or delete the remote branch.",
-            branch_name
+            "❌ Branch '{branch_name}' already exists on remote. Please use a different commit message or delete the remote branch."
         );
     }
     Ok(())
@@ -308,7 +305,7 @@ fn stage_and_commit_changes(
     commit_message: &str,
 ) -> anyhow::Result<()> {
     let staged_files = get_staged_files(repo_root);
-    println!("ℹ️ Staged files: {:?}", staged_files);
+    println!("ℹ️ Staged files: {staged_files:?}");
     if staged_files.is_empty() {
         run_git_add(changed_files(repo), repo.directory());
     } else {

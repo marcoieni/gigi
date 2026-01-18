@@ -105,7 +105,7 @@ impl Cmd {
             .clone()
             .unwrap_or_else(|| format!("🚀 {} {}", self.name, self.args.join(" ")));
         if let Some(dir) = &self.current_dir {
-            description.push_str(&format!(" 👉 {}", dir));
+            description.push_str(&format!(" 👉 {dir}"));
         }
         description
     }
@@ -142,13 +142,13 @@ impl Cmd {
         for (line, is_stdout) in rx {
             if is_stdout {
                 if is_verbose() && !self.hide_stdout {
-                    println!("{}", line);
+                    println!("{line}");
                 }
                 output_stdout.push_str(&line);
                 output_stdout.push('\n');
             } else {
                 if is_verbose() && !self.hide_stderr {
-                    eprintln!("{}", line);
+                    eprintln!("{line}");
                 }
                 output_stderr.push_str(&line);
                 output_stderr.push('\n');
