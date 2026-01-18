@@ -113,7 +113,7 @@ pub fn prompt_commit_message(
     }
     .unwrap_or_default();
 
-    let msg = inquire::Text::new("Commit message")
+    let msg = inquire::Text::new("Commit message:")
         .with_initial_value(&initial_value)
         .with_validator(|input: &str| {
             if is_commit_message_valid(input) {
