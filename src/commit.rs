@@ -104,16 +104,14 @@ pub fn generate_gemini_commit_message(repo_root: &Utf8Path, model: Option<&str>)
 /// Ask the user for a commit message and enforce size rules.
 pub fn prompt_commit_message(
     repo_root: &Utf8Path,
-    agent: Option<crate::args::Agent>,
-    model: Option<String>,
+    agent: Option<&crate::args::Agent>,
+    model: Option<&str>,
 ) -> anyhow::Result<String> {
     let initial_value = match agent {
         Some(crate::args::Agent::Copilot) | None => {
-            generate_copilot_commit_message(repo_root, model.as_deref())
+            generate_copilot_commit_message(repo_root, model)
         }
-        Some(crate::args::Agent::Gemini) => {
-            generate_gemini_commit_message(repo_root, model.as_deref())
-        }
+        Some(crate::args::Agent::Gemini) => generate_gemini_commit_message(repo_root, model),
     }
     .unwrap_or_default();
 

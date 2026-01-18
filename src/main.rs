@@ -24,8 +24,8 @@ fn main() -> anyhow::Result<()> {
             message,
             agent,
             model,
-        } => open_pr(repo_root, repo, message, agent, model),
-        args::Command::Squash { dry_run } => squash(repo_root, repo, dry_run),
+        } => open_pr(&repo_root, &repo, message, agent.as_ref(), model.as_deref()),
+        args::Command::Squash { dry_run } => squash(&repo_root, &repo, dry_run),
     }?;
     Ok(())
 }
@@ -213,25 +213,25 @@ fn perform_squash_and_push(
     Ok(())
 }
 
-fn squash(repo_root: Utf8PathBuf, repo: Repo, dry_run: bool) -> anyhow::Result<()> {
+fn squash(repo_root: &Utf8Path, repo: &Repo, dry_run: bool) -> anyhow::Result<()> {
     anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
     let feature_branch = repo.original_branch();
-    let default_branch = default_branch(&repo_root);
-    let pr_title = pr_title(&repo_root)?;
+    let default_branch = default_branch(repo_root);
+    let pr_title = pr_title(repo_root)?;
     anyhow::ensure!(
         feature_branch != default_branch,
         "❌ You are on the main branch. Switch to a feature branch to squash"
     );
 
-    sync_feature_branch_with_default(&repo_root, feature_branch, &default_branch);
-    let merge_base = compute_merge_base(&repo_root, &default_branch)?;
+    sync_feature_branch_with_default(repo_root, feature_branch, &default_branch);
+    let merge_base = compute_merge_base(repo_root, &default_branch)?;
 
-    let co_authors = authors::get_co_authors(&repo_root, &merge_base)?;
+    let co_authors = authors::get_co_authors(repo_root, &merge_base)?;
     let co_authors_text = authors::format_co_authors(&co_authors);
 
     if dry_run {
         return print_dry_run_summary(
-            &repo_root,
+            repo_root,
             &merge_base,
             &pr_title,
             &co_authors,
@@ -240,8 +240,8 @@ fn squash(repo_root: Utf8PathBuf, repo: Repo, dry_run: bool) -> anyhow::Result<(
     }
 
     let commit_message = format!("{pr_title}{co_authors_text}");
-    perform_squash_and_push(&repo_root, &merge_base, &commit_message, &default_branch)?;
-    view_pr_in_browser(&repo_root);
+    perform_squash_and_push(repo_root, &merge_base, &commit_message, &default_branch)?;
+    view_pr_in_browser(repo_root);
 
     Ok(())
 }
@@ -257,8 +257,8 @@ fn view_pr_in_browser(repo_root: &Utf8Path) {
 fn resolve_commit_message(
     repo_root: &Utf8Path,
     message: Option<String>,
-    agent: Option<args::Agent>,
-    model: Option<String>,
+    agent: Option<&args::Agent>,
+    model: Option<&str>,
 ) -> anyhow::Result<String> {
     match message {
         Some(msg) => {
@@ -307,9 +307,9 @@ fn stage_and_commit_changes(
     let staged_files = get_staged_files(repo_root);
     println!("ℹ️ Staged files: {staged_files:?}");
     if staged_files.is_empty() {
-        run_git_add(changed_files(repo), repo.directory());
+        run_git_add(&changed_files(repo), repo.directory());
     } else {
-        run_git_add(staged_files, repo_root);
+        run_git_add(&staged_files, repo_root);
     }
 
     let output = Cmd::new("git", ["commit", "-m", commit_message])
@@ -355,21 +355,21 @@ fn push_branch_and_open_pr(repo_root: &Utf8Path, branch_name: &str, commit_messa
 }
 
 fn open_pr(
-    repo_root: Utf8PathBuf,
-    repo: Repo,
+    repo_root: &Utf8Path,
+    repo: &Repo,
     message: Option<String>,
-    agent: Option<args::Agent>,
-    model: Option<String>,
+    agent: Option<&args::Agent>,
+    model: Option<&str>,
 ) -> anyhow::Result<()> {
-    let commit_message = resolve_commit_message(&repo_root, message, agent, model)?;
-    let default_branch_name = default_branch(&repo_root);
+    let commit_message = resolve_commit_message(repo_root, message, agent, model)?;
+    let default_branch_name = default_branch(repo_root);
     let branch_name = branch_name_from_commit_message(&commit_message);
 
-    ensure_branch_does_not_exist(&repo_root, &branch_name)?;
-    create_feature_branch_from_default(&repo_root, &default_branch_name, &branch_name);
-    stage_and_commit_changes(&repo_root, &repo, &commit_message)?;
-    ensure_not_on_default_branch(&repo_root, &default_branch_name)?;
-    push_branch_and_open_pr(&repo_root, &branch_name, &commit_message);
+    ensure_branch_does_not_exist(repo_root, &branch_name)?;
+    create_feature_branch_from_default(repo_root, &default_branch_name, &branch_name);
+    stage_and_commit_changes(repo_root, repo, &commit_message)?;
+    ensure_not_on_default_branch(repo_root, &default_branch_name)?;
+    push_branch_and_open_pr(repo_root, &branch_name, &commit_message);
 
     Ok(())
 }
@@ -396,7 +396,7 @@ fn changed_files(repo: &Repo) -> Vec<Utf8PathBuf> {
     changed_files.iter().map(|f| git_root.join(f)).collect()
 }
 
-fn run_git_add(changed_files: Vec<Utf8PathBuf>, repo_root: &Utf8Path) {
+fn run_git_add(changed_files: &[Utf8PathBuf], repo_root: &Utf8Path) {
     assert!(!changed_files.is_empty(), "No files to add");
     let mut git_add_args = vec!["add".to_string()];
     let changed_files: Vec<String> = changed_files.iter().map(|f| f.to_string()).collect();
