@@ -26,7 +26,7 @@ fn is_verbose() -> bool {
 pub struct CmdOutput {
     status: ExitStatus,
     stdout: String,
-    // stderr: String,
+    stderr: String,
 }
 
 impl CmdOutput {
@@ -38,9 +38,9 @@ impl CmdOutput {
         self.stdout.trim()
     }
 
-    // pub fn stderr(&self) -> &str {
-    //     self.stderr.trim()
-    // }
+    pub fn stderr(&self) -> &str {
+        self.stderr.trim()
+    }
 }
 
 pub struct Cmd {
@@ -177,12 +177,13 @@ impl Cmd {
         Self::spawn_output_reader(stdout, tx.clone(), true);
         Self::spawn_output_reader(stderr, tx, false);
 
-        let (output_stdout, _output_stderr) = self.collect_output(rx);
+        let (output_stdout, output_stderr) = self.collect_output(rx);
         let status = child.wait().unwrap();
 
         CmdOutput {
             status,
             stdout: output_stdout,
+            stderr: output_stderr,
         }
     }
 }
@@ -248,6 +249,7 @@ mod tests {
         let output = CmdOutput {
             status,
             stdout: "  hello world  \n".to_string(),
+            stderr: String::new(),
         };
         assert_eq!(output.stdout(), "hello world");
     }

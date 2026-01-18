@@ -202,14 +202,31 @@ fn perform_squash_and_push(
     Cmd::new("git", ["add", "."])
         .with_current_dir(repo_root)
         .run();
-    Cmd::new("git", ["commit", "-m", commit_message])
-        .with_current_dir(repo_root)
-        .run();
+    commit(repo_root, commit_message)?;
 
     ensure_not_on_default_branch(repo_root, default_branch)?;
     Cmd::new("git", ["push", "--force-with-lease"])
         .with_current_dir(repo_root)
         .run();
+    Ok(())
+}
+
+fn commit(repo_root: &Utf8Path, commit_message: &str) -> anyhow::Result<()> {
+    let output = Cmd::new("git", ["commit", "-m", commit_message])
+        .with_current_dir(repo_root)
+        .run();
+    if !output.status().success() {
+        let error_msg = if !output.stderr().is_empty() {
+            output.stderr().to_string()
+        } else {
+            output.stdout().to_string()
+        };
+        anyhow::bail!("❌ git commit failed: {error_msg}");
+    }
+
+    if output.stdout().contains("nothing to commit") {
+        anyhow::bail!("❌ Nothing to commit");
+    }
     Ok(())
 }
 
@@ -312,12 +329,8 @@ fn stage_and_commit_changes(
         run_git_add(&staged_files, repo_root);
     }
 
-    let output = Cmd::new("git", ["commit", "-m", commit_message])
-        .with_current_dir(repo_root)
-        .run();
-    if output.stdout().contains("nothing to commit") {
-        panic!("❌ Nothing to commit");
-    }
+    commit(repo_root, commit_message)?;
+
     Ok(())
 }
 
