@@ -26,6 +26,9 @@ pub enum Command {
         /// AI agent to generate commit message
         #[arg(long, value_enum)]
         agent: Option<Agent>,
+        /// Model to use for commit message generation (defaults to gpt-5-mini for copilot, gemini-3-flash-preview for gemini)
+        #[arg(long)]
+        model: Option<String>,
     },
     Squash {
         /// Show what would be squashed without actually performing the operation

@@ -20,7 +20,11 @@ fn main() -> anyhow::Result<()> {
     let repo_root = repo_root();
     let repo = Repo::new(repo_root.clone()).unwrap();
     match args.command {
-        args::Command::OpenPr { message, agent } => open_pr(repo_root, repo, message, agent),
+        args::Command::OpenPr {
+            message,
+            agent,
+            model,
+        } => open_pr(repo_root, repo, message, agent, model),
         args::Command::Squash { dry_run } => squash(repo_root, repo, dry_run),
     }?;
     Ok(())
@@ -255,13 +259,14 @@ fn resolve_commit_message(
     repo_root: &Utf8Path,
     message: Option<String>,
     agent: Option<args::Agent>,
+    model: Option<String>,
 ) -> anyhow::Result<String> {
     match message {
         Some(msg) => {
             check_commit_message(&msg)?;
             Ok(msg)
         }
-        None => prompt_commit_message(repo_root, agent),
+        None => prompt_commit_message(repo_root, agent, model),
     }
 }
 
@@ -357,8 +362,9 @@ fn open_pr(
     repo: Repo,
     message: Option<String>,
     agent: Option<args::Agent>,
+    model: Option<String>,
 ) -> anyhow::Result<()> {
-    let commit_message = resolve_commit_message(&repo_root, message, agent)?;
+    let commit_message = resolve_commit_message(&repo_root, message, agent, model)?;
     let default_branch_name = default_branch(&repo_root);
     let branch_name = branch_name_from_commit_message(&commit_message);
 

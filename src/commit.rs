@@ -48,7 +48,10 @@ fn build_commit_prompt(diff: &str) -> String {
 }
 
 /// Generate a commit message using GitHub Copilot CLI.
-pub fn generate_copilot_commit_message(repo_root: &Utf8Path) -> Option<String> {
+pub fn generate_copilot_commit_message(
+    repo_root: &Utf8Path,
+    model: Option<&str>,
+) -> Option<String> {
     if !is_copilot_installed() {
         return None;
     }
@@ -58,8 +61,7 @@ pub fn generate_copilot_commit_message(repo_root: &Utf8Path) -> Option<String> {
     println!("🤖 Generating commit message with GitHub Copilot...");
 
     let prompt = build_commit_prompt(&diff);
-    // gpt-5-mini should be free (no premium requests)
-    let model = "gpt-5-mini";
+    let model = model.unwrap_or("gpt-5-mini");
     let output = Cmd::new(
         "copilot",
         ["--silent", "--model", model, "--prompt", &prompt],
@@ -78,20 +80,18 @@ pub fn generate_copilot_commit_message(repo_root: &Utf8Path) -> Option<String> {
 }
 
 /// Generate a commit message using Gemini CLI.
-pub fn generate_gemini_commit_message(repo_root: &Utf8Path) -> Option<String> {
+pub fn generate_gemini_commit_message(repo_root: &Utf8Path, model: Option<&str>) -> Option<String> {
     let diff = get_diff(repo_root)?;
 
     println!("🤖 Generating commit message with Gemini...");
 
     let prompt = build_commit_prompt(&diff);
-    let output = Cmd::new(
-        "gemini",
-        ["--model", "gemini-3-flash-preview", "--sandbox", &prompt],
-    )
-    .hide_stdout()
-    .with_title("🚀 gemini --model gemini-3-flash-preview --sandbox ...".to_string())
-    .with_current_dir(repo_root)
-    .run();
+    let model = model.unwrap_or("gemini-3-flash-preview");
+    let output = Cmd::new("gemini", ["--model", model, "--sandbox", &prompt])
+        .hide_stdout()
+        .with_title(format!("🚀 gemini --model {model} --sandbox ..."))
+        .with_current_dir(repo_root)
+        .run();
 
     if output.status().success() {
         let msg = output.stdout().trim().to_string();
@@ -105,11 +105,15 @@ pub fn generate_gemini_commit_message(repo_root: &Utf8Path) -> Option<String> {
 pub fn prompt_commit_message(
     repo_root: &Utf8Path,
     agent: Option<crate::args::Agent>,
+    model: Option<String>,
 ) -> anyhow::Result<String> {
     let initial_value = match agent {
-        Some(crate::args::Agent::Copilot) => generate_copilot_commit_message(repo_root),
-        Some(crate::args::Agent::Gemini) => generate_gemini_commit_message(repo_root),
-        None => generate_copilot_commit_message(repo_root),
+        Some(crate::args::Agent::Copilot) | None => {
+            generate_copilot_commit_message(repo_root, model.as_deref())
+        }
+        Some(crate::args::Agent::Gemini) => {
+            generate_gemini_commit_message(repo_root, model.as_deref())
+        }
     }
     .unwrap_or_default();
 
