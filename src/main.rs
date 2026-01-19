@@ -127,7 +127,7 @@ fn sync_feature_branch_with_default(
     repo_root: &Utf8Path,
     feature_branch: &str,
     default_branch: &str,
-) {
+) -> anyhow::Result<()> {
     Cmd::new("git", ["checkout", default_branch])
         .with_current_dir(repo_root)
         .run();
@@ -135,9 +135,15 @@ fn sync_feature_branch_with_default(
     Cmd::new("git", ["checkout", feature_branch])
         .with_current_dir(repo_root)
         .run();
-    Cmd::new("git", ["merge", "origin", default_branch])
+    let merge_output = Cmd::new("git", ["merge", "origin", default_branch])
         .with_current_dir(repo_root)
         .run();
+    anyhow::ensure!(
+        merge_output.status().success(),
+        "git merge failed. Error {:?}",
+        merge_output.stderr()
+    );
+    Ok(())
 }
 
 fn compute_merge_base(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Result<String> {
@@ -240,7 +246,7 @@ fn squash(repo_root: &Utf8Path, repo: &Repo, dry_run: bool) -> anyhow::Result<()
         "❌ You are on the main branch. Switch to a feature branch to squash"
     );
 
-    sync_feature_branch_with_default(repo_root, feature_branch, &default_branch);
+    sync_feature_branch_with_default(repo_root, feature_branch, &default_branch)?;
     let merge_base = compute_merge_base(repo_root, &default_branch)?;
 
     let co_authors = authors::get_co_authors(repo_root, &merge_base)?;
