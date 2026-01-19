@@ -322,7 +322,6 @@ fn stage_and_commit_changes(
     commit_message: &str,
 ) -> anyhow::Result<()> {
     let staged_files = get_staged_files(repo_root);
-    println!("ℹ️ Staged files: {staged_files:?}");
     if staged_files.is_empty() {
         run_git_add(&changed_files(repo), repo.directory());
     } else {
