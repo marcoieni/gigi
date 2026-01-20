@@ -1,3 +1,5 @@
+use std::io::IsTerminal as _;
+
 use camino::Utf8Path;
 use serde_json::{Map, Value};
 
@@ -19,7 +21,15 @@ pub fn review_pr(
         Some(Agent::Copilot) | None => generate_copilot_review(repo_root, &prompt, model),
     }?;
 
-    println!("{review}");
+    // Print the review; if stdout is a TTY and NO_COLOR isn't set, colorize the Markdown
+    if std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none() {
+        match colorize_markdown_ansi(&review) {
+            Ok(colored) => println!("{colored}"),
+            Err(_) => println!("{review}"),
+        }
+    } else {
+        println!("{review}");
+    }
     Ok(())
 }
 
@@ -144,4 +154,36 @@ fn generate_gemini_review(
     );
 
     Ok(output.stdout().to_string())
+}
+
+fn colorize_markdown_ansi(md: &str) -> anyhow::Result<String> {
+    use syntect::easy::HighlightLines;
+    use syntect::highlighting::ThemeSet;
+    use syntect::parsing::SyntaxSet;
+    use syntect::util::as_24_bit_terminal_escaped;
+
+    // Load default syntaxes/themes (includes Markdown)
+    let ps = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+
+    let syntax = ps.find_syntax_by_name("Markdown").unwrap();
+    // .or_else(|| ps.find_syntax_by_extension("md"))
+    // .unwrap_or_else(|| ps.find_syntax_plain_text());
+
+    let theme = ts
+        .themes
+        .get("InspiredGitHub")
+        .or_else(|| ts.themes.get("Solarized (dark)"))
+        .or_else(|| ts.themes.get("base16-ocean.dark"))
+        .or_else(|| ts.themes.values().next())
+        .expect("syntect default themes present");
+
+    let mut h = HighlightLines::new(syntax, theme);
+    let mut out = String::with_capacity(md.len() + 64);
+    for line in md.lines() {
+        let ranges = h.highlight_line(line, &ps)?;
+        out.push_str(&as_24_bit_terminal_escaped(&ranges[..], false));
+        out.push('\n');
+    }
+    Ok(out)
 }

@@ -17,6 +17,7 @@ tracing = "0.1.40"
 secrecy = "0.10.3"
 clap = { version = "4.5.16", features = ["derive"] }
 serde_json = "1.0.149"
+syntect = { version = "5.3.0", default-features = true }
 
 [lints.rust]
 ambiguous_negative_literals = "warn"
