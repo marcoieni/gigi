@@ -50,6 +50,33 @@ Examples:
 - `gigi squash`
 - `gigi squash --dry-run`
 
+#### Diagram
+
+Before running `gigi squash`:
+
+```
+main ──●─┐
+         │
+         ●  feat: first implementation    (alice)
+         ●  fix: handle edge case         (bob)
+         ●  docs: update usage            (alice)
+         │
+         ▼  PR: "feat: add caching" (#123)
+```
+
+After alice runs `gigi squash`:
+
+```
+
+main ──●─┐
+         │
+         ●  feat: add caching             (alice)
+         │
+         │  Co-authored-by: Bob <bob@example.com>
+         │
+         ▼  PR: "feat: add caching" (#123)
+```
+
 ### Review
 
 Review a GitHub PR with an AI agent. The first positional argument is the PR URL.
