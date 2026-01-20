@@ -29,7 +29,7 @@ fn fetch_pr_metadata(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<Strin
             "view",
             pr_url,
             "--json",
-            "title,body,author,baseRefName,headRefName,createdAt,updatedAt,labels,assignees,reviewRequests,reviews,comments,commits,files,additions,deletions,state,mergeable,url",
+            "title,body,author,baseRefName,headRefName,createdAt,updatedAt,labels,assignees,reviews,comments,commits,files,url",
         ],
     )
     .with_current_dir(repo_root)
