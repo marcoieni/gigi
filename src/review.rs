@@ -52,9 +52,9 @@ fn fetch_pr_diff(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<String> {
     Ok(output.stdout().to_string())
 }
 
-fn build_review_prompt(pr_url: &str, metadata: &str, diff: &str) -> String {
+fn build_review_prompt(metadata: &str, diff: &str) -> String {
     format!(
-        "You are an expert code reviewer. Review this GitHub pull request and write your review in Markdown.\n\nRules:\n- Do not ask questions unless information is missing.\n- Be concise but specific.\n- Include a short summary, then a list of issues (if any) with severity labels (BLOCKER, MAJOR, MINOR), and then suggestions.\n- If there are no issues, say so explicitly.\n- Refer to files and code hunks where possible.\n\nPR URL: {pr_url}\n\nPR METADATA (JSON):\n{metadata}\n\nPR DIFF:\n{diff}\n"
+        "You are an expert code reviewer. Review this GitHub pull request and write your review in Markdown.\n\nRules:\n- Do not ask questions unless information is missing.\n- Be concise but specific.\n- Include a short summary, then a list of issues (if any) with severity labels (BLOCKER, MAJOR, MINOR), and then suggestions.\n- If there are no issues, say so explicitly.\n- Refer to files and code hunks where possible.\n\nPR METADATA (JSON):\n{metadata}\n\nPR DIFF:\n{diff}\n"
     )
 }
 
