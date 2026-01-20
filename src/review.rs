@@ -46,6 +46,12 @@ fn fetch_pr_metadata(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<Strin
 fn minimize_pr_metadata(metadata: &str) -> anyhow::Result<String> {
     let mut value: Value = serde_json::from_str(metadata)?;
 
+    if let Some(author) = value.get_mut("author") {
+        if let Some(login) = author.get("login").and_then(Value::as_str) {
+            *author = Value::String(login.to_string());
+        }
+    }
+
     if let Some(comments) = value.get_mut("comments") {
         if let Some(array) = comments.as_array() {
             let slim: Vec<Value> = array
