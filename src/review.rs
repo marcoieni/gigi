@@ -10,7 +10,7 @@ pub fn review_pr(
 ) -> anyhow::Result<()> {
     let metadata = fetch_pr_metadata(repo_root, pr_url)?;
     let diff = fetch_pr_diff(repo_root, pr_url)?;
-    let prompt = build_review_prompt(pr_url, &metadata, &diff);
+    let prompt = build_review_prompt(&metadata, &diff);
 
     let review = match agent {
         Some(Agent::Gemini) => generate_gemini_review(repo_root, &prompt, model),
