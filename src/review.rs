@@ -167,22 +167,20 @@ fn colorize_markdown_ansi(md: &str) -> anyhow::Result<String> {
     let ts = ThemeSet::load_defaults();
 
     let syntax = ps.find_syntax_by_name("Markdown").unwrap();
-    // .or_else(|| ps.find_syntax_by_extension("md"))
-    // .unwrap_or_else(|| ps.find_syntax_plain_text());
 
     let theme = ts
         .themes
-        .get("InspiredGitHub")
+        .get("base16-ocean.dark")
         .or_else(|| ts.themes.get("Solarized (dark)"))
-        .or_else(|| ts.themes.get("base16-ocean.dark"))
+        .or_else(|| ts.themes.get("InspiredGitHub"))
         .or_else(|| ts.themes.values().next())
         .expect("syntect default themes present");
 
     let mut h = HighlightLines::new(syntax, theme);
-    let mut out = String::with_capacity(md.len() + 64);
+    let mut out = String::with_capacity(md.len());
     for line in md.lines() {
         let ranges = h.highlight_line(line, &ps)?;
-        out.push_str(&as_24_bit_terminal_escaped(&ranges[..], false));
+        out.push_str(&as_24_bit_terminal_escaped(&ranges[..], true));
         out.push('\n');
     }
     // Reset terminal colors
