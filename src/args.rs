@@ -30,6 +30,18 @@ pub enum Command {
         #[arg(long)]
         model: Option<String>,
     },
+    /// Review a GitHub pull request using an AI agent
+    Review {
+        /// GitHub PR URL to review
+        #[arg(value_name = "PR_URL")]
+        pr: String,
+        /// AI agent to generate the review
+        #[arg(long, value_enum)]
+        agent: Option<Agent>,
+        /// Model to use for review generation (defaults to gpt-5-mini for copilot, gemini-3-flash-preview for gemini)
+        #[arg(long)]
+        model: Option<String>,
+    },
     Squash {
         /// Show what would be squashed without actually performing the operation
         #[arg(long)]

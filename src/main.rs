@@ -2,12 +2,14 @@ mod args;
 mod authors;
 mod cmd;
 mod commit;
+mod review;
 
 use args::CliArgs;
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::Parser as _;
 use cmd::Cmd;
 use git_cmd::Repo;
+use review::review_pr;
 
 use crate::commit::{check_commit_message, prompt_commit_message};
 
@@ -25,6 +27,9 @@ fn main() -> anyhow::Result<()> {
             agent,
             model,
         } => open_pr(&repo_root, &repo, message, agent.as_ref(), model.as_deref()),
+        args::Command::Review { pr, agent, model } => {
+            review_pr(&repo_root, &pr, agent.as_ref(), model.as_deref())
+        }
         args::Command::Squash { dry_run } => squash(&repo_root, &repo, dry_run),
     }?;
     Ok(())
