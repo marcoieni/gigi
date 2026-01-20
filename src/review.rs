@@ -47,39 +47,41 @@ fn minimize_pr_metadata(metadata: &str) -> anyhow::Result<String> {
     let mut value: Value = serde_json::from_str(metadata)?;
 
     if let Some(author) = value.get_mut("author")
-        && let Some(login) = author.get("login").and_then(Value::as_str) {
-            *author = Value::String(login.to_string());
-        }
+        && let Some(login) = author.get("login").and_then(Value::as_str)
+    {
+        *author = Value::String(login.to_string());
+    }
 
     if let Some(comments) = value.get_mut("comments")
-        && let Some(array) = comments.as_array() {
-            let slim: Vec<Value> = array
-                .iter()
-                .filter_map(|comment| {
-                    let login = comment
-                        .get("author")
-                        .and_then(|author| author.get("login"))
-                        .and_then(Value::as_str);
-                    let body = comment.get("body").and_then(Value::as_str);
+        && let Some(array) = comments.as_array()
+    {
+        let slim: Vec<Value> = array
+            .iter()
+            .filter_map(|comment| {
+                let login = comment
+                    .get("author")
+                    .and_then(|author| author.get("login"))
+                    .and_then(Value::as_str);
+                let body = comment.get("body").and_then(Value::as_str);
 
-                    if login.is_none() && body.is_none() {
-                        return None;
-                    }
+                if login.is_none() && body.is_none() {
+                    return None;
+                }
 
-                    let mut map = Map::new();
-                    if let Some(login) = login {
-                        map.insert("login".to_string(), Value::String(login.to_string()));
-                    }
-                    if let Some(body) = body {
-                        map.insert("body".to_string(), Value::String(body.to_string()));
-                    }
+                let mut map = Map::new();
+                if let Some(login) = login {
+                    map.insert("login".to_string(), Value::String(login.to_string()));
+                }
+                if let Some(body) = body {
+                    map.insert("body".to_string(), Value::String(body.to_string()));
+                }
 
-                    Some(Value::Object(map))
-                })
-                .collect();
+                Some(Value::Object(map))
+            })
+            .collect();
 
-            *comments = Value::Array(slim);
-        }
+        *comments = Value::Array(slim);
+    }
 
     Ok(serde_json::to_string(&value)?)
 }
