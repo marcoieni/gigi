@@ -185,5 +185,60 @@ fn colorize_markdown_ansi(md: &str) -> anyhow::Result<String> {
         out.push_str(&as_24_bit_terminal_escaped(&ranges[..], false));
         out.push('\n');
     }
+    // Reset terminal colors
+    out.push_str("\x1b[0m");
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// You can use this test to visually inspect the ANSI colorization output
+    /// without needing to run the full application.
+    #[test]
+    fn test_colorize_markdown_ansi() {
+        let md = r#"# PR Review Summary
+
+This PR adds a **new feature** to the codebase.
+
+## Issues
+
+- **BLOCKER**: Missing error handling in `src/main.rs:42`
+- *MINOR*: Consider renaming `foo` to `bar`
+
+## Suggestions
+
+1. Add unit tests for the new function
+2. Update the README
+
+```rust
+fn example() {
+    println!("Hello, world!");
+}
+```
+
+> This is a blockquote
+
+[Link to docs](https://example.com)
+"#;
+
+        let colored = colorize_markdown_ansi(md).expect("colorization should succeed");
+
+        // Print the colored output so it's visible when running `cargo test -- --nocapture`
+        println!("\n--- Colored Markdown Output ---");
+        print!("{colored}");
+        println!("--- End of Colored Output ---\n");
+
+        // Basic sanity checks
+        assert!(!colored.is_empty());
+        // Should contain ANSI escape sequences (ESC [ ...)
+        assert!(
+            colored.contains("\x1b["),
+            "output should contain ANSI codes"
+        );
+        // The raw text should still be present
+        assert!(colored.contains("PR Review Summary"));
+        assert!(colored.contains("BLOCKER"));
+    }
 }
