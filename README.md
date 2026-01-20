@@ -40,6 +40,15 @@ the default branch and setting the PR title as the commit message.
 The authors of the original commits are set as co-authors in the new commit
 message.
 
+### Review
+
+Review a GitHub PR with an AI agent. The first positional argument is the PR URL.
+
+Examples:
+
+- `gigi review https://github.com/OWNER/REPO/pull/123`
+- `gigi review --agent gemini --model gemini-3-flash-preview https://github.com/OWNER/REPO/pull/123`
+
 ## Alias
 
 You can set an alias to recompile and run `gigi` from your local project.
