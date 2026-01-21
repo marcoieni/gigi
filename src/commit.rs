@@ -42,7 +42,7 @@ fn get_diff(repo_root: &Utf8Path) -> Option<String> {
 
 fn build_commit_prompt(diff: &str) -> String {
     format!(
-        "Don't ask me questions or confirmation. Just write a short git commit message for these changes in one line: {}",
+        "Don't ask me questions or confirmation. Write a git commit message (max 70 characters) for these changes in one line: {}",
         diff.lines().collect::<Vec<_>>().join("\n")
     )
 }
