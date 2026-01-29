@@ -138,9 +138,9 @@ pub fn generate_commit_message(
 }
 
 /// Ask the user for a commit message and enforce size rules.
-pub fn prompt_commit_message(initial_value: String) -> anyhow::Result<String> {
+pub fn prompt_commit_message(initial_value: &str) -> anyhow::Result<String> {
     let msg = inquire::Text::new("Commit message:")
-        .with_initial_value(&initial_value)
+        .with_initial_value(initial_value)
         .with_validator(|input: &str| {
             if is_commit_message_valid(input) {
                 Ok(Validation::Valid)

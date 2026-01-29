@@ -297,7 +297,7 @@ fn resolve_commit_message(
         None => {
             let initial_message = generate_commit_message(repo_root, agent, model)
                 .context("❌ Failed to generate commit message")?;
-            prompt_commit_message(initial_message)
+            prompt_commit_message(&initial_message)
         }
     }
 }
