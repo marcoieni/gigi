@@ -4,6 +4,7 @@ mod cmd;
 mod commit;
 mod review;
 
+use anyhow::Context;
 use args::CliArgs;
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::Parser as _;
@@ -11,7 +12,7 @@ use cmd::Cmd;
 use git_cmd::Repo;
 use review::review_pr;
 
-use crate::commit::{check_commit_message, prompt_commit_message};
+use crate::commit::{check_commit_message, generate_commit_message, prompt_commit_message};
 
 fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
@@ -293,7 +294,16 @@ fn resolve_commit_message(
             check_commit_message(&msg)?;
             Ok(msg)
         }
-        None => prompt_commit_message(repo_root, agent, model),
+        None => {
+            if agent.is_some() {
+                let msg = generate_commit_message(repo_root, agent, model)
+                    .context("❌ Failed to generate commit message")?;
+                check_commit_message(&msg)?;
+                Ok(msg)
+            } else {
+                prompt_commit_message(repo_root, agent, model)
+            }
+        }
     }
 }
 
