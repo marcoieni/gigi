@@ -29,12 +29,14 @@ set from the commit message.
 
 If there are any staged changes, only those are included in the PR.
 
-If you have `copilot` installed, gigi will use it to generate a commit message,
+If you specify an agent with `--agent`, gigi will use it to generate a commit message,
 that you can edit before creating the PR.
+
+If you don't specify an agent, gigi will prompt you to enter a commit message.
 
 Examples:
 
-- `gigi open-pr`
+- `gigi open-pr --agent copilot`
 - `gigi open-pr --message "feat: add thing"`
 
 ### Squash
