@@ -1,5 +1,5 @@
 use anyhow::Context;
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 
 use inquire::validator::Validation;
 
@@ -14,7 +14,51 @@ fn is_copilot_installed() -> bool {
         .unwrap_or(false)
 }
 
-fn get_diff(repo_root: &Utf8Path) -> Option<String> {
+fn get_untracked_files(repo_root: &Utf8Path) -> Vec<String> {
+    let status_output = Cmd::new("git", ["status", "--porcelain", "-z"])
+        .with_current_dir(repo_root)
+        .hide_stdout()
+        .run();
+
+    if !status_output.status().success() {
+        return Vec::new();
+    }
+
+    status_output
+        .stdout()
+        // `git status --porcelain -z` returns NUL-separated entries
+        .split('\0')
+        .filter(|&entry| entry.starts_with("?? "))
+        .map(|entry| entry.trim_start_matches("?? ").to_string())
+        .collect()
+}
+
+fn read_untracked_file(repo_root: &Utf8Path, relative_path: &str) -> anyhow::Result<String> {
+    let full_path: Utf8PathBuf = repo_root.join(relative_path);
+    match std::fs::read_to_string(&full_path) {
+        Ok(content) => Ok(content),
+        Err(_) => match std::fs::read(&full_path) {
+            Ok(_bytes) => Ok("<binary file>".to_string()),
+            Err(e) => anyhow::bail!("❌ Unable to read file {full_path}: {e}"),
+        },
+    }
+}
+
+fn build_untracked_context(repo_root: &Utf8Path) -> anyhow::Result<String> {
+    let untracked_files = get_untracked_files(repo_root);
+    if untracked_files.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut context = String::from("\n\n# Untracked files\n");
+    for relative_path in untracked_files {
+        let content = read_untracked_file(repo_root, &relative_path)?;
+        context.push_str(&format!("\n## {relative_path}\n{content}\n"));
+    }
+    Ok(context)
+}
+
+fn get_diff(repo_root: &Utf8Path) -> anyhow::Result<Option<String>> {
     // Get the diff to help understand what changed
     let diff_output = Cmd::new("git", ["diff", "--cached"])
         .with_current_dir(repo_root)
@@ -34,10 +78,16 @@ fn get_diff(repo_root: &Utf8Path) -> Option<String> {
         diff.to_string()
     };
 
-    if diff.trim().is_empty() {
-        None
+    let untracked_context = build_untracked_context(repo_root)?;
+    let mut diff_with_untracked = diff.clone();
+    if !untracked_context.is_empty() {
+        diff_with_untracked.push_str(&untracked_context);
+    }
+
+    if diff_with_untracked.trim().is_empty() {
+        Ok(None)
     } else {
-        Some(diff)
+        Ok(Some(diff_with_untracked))
     }
 }
 
@@ -57,7 +107,9 @@ pub fn generate_copilot_commit_message(
         anyhow::bail!("❌ GitHub Copilot CLI is not installed");
     }
 
-    let diff = get_diff(repo_root).context("can't get repository diff")?;
+    let diff = get_diff(repo_root)
+        .context("can't get repository diff")?
+        .context("no changes to generate commit message for")?;
 
     println!("🤖 Generating commit message with GitHub Copilot...");
 
@@ -97,7 +149,9 @@ pub fn generate_gemini_commit_message(
     repo_root: &Utf8Path,
     model: Option<&str>,
 ) -> anyhow::Result<String> {
-    let diff = get_diff(repo_root).context("can't get repository diff")?;
+    let diff = get_diff(repo_root)
+        .context("can't get repository diff")?
+        .context("no changes to generate commit message for")?;
 
     println!("🤖 Generating commit message with Gemini...");
 
