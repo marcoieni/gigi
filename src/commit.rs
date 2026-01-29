@@ -87,11 +87,24 @@ pub fn generate_gemini_commit_message(repo_root: &Utf8Path, model: Option<&str>)
 
     let prompt = build_commit_prompt(&diff);
     let model = model.unwrap_or("gemini-3-flash-preview");
-    let output = Cmd::new("gemini", ["--model", model, "--sandbox", &prompt])
-        .hide_stdout()
-        .with_title(format!("🚀 gemini --model {model} --sandbox ..."))
-        .with_current_dir(repo_root)
-        .run();
+    let output = Cmd::new(
+        "gemini",
+        [
+            "--model",
+            model,
+            "--sandbox",
+            "--output-format",
+            "text",
+            "--prompt",
+            &prompt,
+        ],
+    )
+    .hide_stdout()
+    .with_title(format!(
+        "🚀 gemini --model {model} --sandbox --output-format text --prompt ..."
+    ))
+    .with_current_dir(repo_root)
+    .run();
 
     if output.status().success() {
         let msg = output.stdout().trim().to_string();

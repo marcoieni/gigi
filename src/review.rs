@@ -142,11 +142,24 @@ fn generate_gemini_review(
     model: Option<&str>,
 ) -> anyhow::Result<String> {
     let model = model.unwrap_or("gemini-3-pro-preview");
-    let output = Cmd::new("gemini", ["--model", model, "--sandbox", prompt])
-        .hide_stdout()
-        .with_title(format!("🚀 gemini --model {model} --sandbox ..."))
-        .with_current_dir(repo_root)
-        .run();
+    let output = Cmd::new(
+        "gemini",
+        [
+            "--model",
+            model,
+            "--sandbox",
+            "--output-format",
+            "text",
+            "--prompt",
+            prompt,
+        ],
+    )
+    .hide_stdout()
+    .with_title(format!(
+        "🚀 gemini --model {model} --sandbox --output-format text --prompt ..."
+    ))
+    .with_current_dir(repo_root)
+    .run();
 
     anyhow::ensure!(
         output.status().success() && !output.stdout().trim().is_empty(),
