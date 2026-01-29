@@ -295,14 +295,9 @@ fn resolve_commit_message(
             Ok(msg)
         }
         None => {
-            if agent.is_some() {
-                let msg = generate_commit_message(repo_root, agent, model)
-                    .context("❌ Failed to generate commit message")?;
-                check_commit_message(&msg)?;
-                Ok(msg)
-            } else {
-                prompt_commit_message(repo_root, agent, model)
-            }
+            let initial_message = generate_commit_message(repo_root, agent, model)
+                .context("❌ Failed to generate commit message")?;
+            prompt_commit_message(initial_message)
         }
     }
 }

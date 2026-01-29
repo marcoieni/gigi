@@ -1,8 +1,9 @@
+use anyhow::Context;
 use camino::Utf8Path;
 
 use inquire::validator::Validation;
 
-use crate::cmd::Cmd;
+use crate::cmd::{Cmd, CmdOutput};
 
 /// Check if copilot CLI is installed.
 fn is_copilot_installed() -> bool {
@@ -51,12 +52,12 @@ fn build_commit_prompt(diff: &str) -> String {
 pub fn generate_copilot_commit_message(
     repo_root: &Utf8Path,
     model: Option<&str>,
-) -> Option<String> {
+) -> anyhow::Result<String> {
     if !is_copilot_installed() {
-        return None;
+        anyhow::bail!("❌ GitHub Copilot CLI is not installed");
     }
 
-    let diff = get_diff(repo_root)?;
+    let diff = get_diff(repo_root).context("can't get repository diff")?;
 
     println!("🤖 Generating commit message with GitHub Copilot...");
 
@@ -71,17 +72,32 @@ pub fn generate_copilot_commit_message(
     .with_current_dir(repo_root)
     .run();
 
+    process_model_output(&output)
+}
+
+fn process_model_output(output: &CmdOutput) -> anyhow::Result<String> {
     if output.status().success() {
         let msg = output.stdout().trim().to_string();
-        if msg.is_empty() { None } else { Some(msg) }
+        if msg.is_empty() {
+            anyhow::bail!("❌ Generated commit message is empty")
+        } else {
+            check_commit_message(&msg)?;
+            Ok(msg)
+        }
     } else {
-        None
+        anyhow::bail!(
+            "❌ Failed to generate commit message with Gemini: {}",
+            output.stderr()
+        );
     }
 }
 
 /// Generate a commit message using Gemini CLI.
-pub fn generate_gemini_commit_message(repo_root: &Utf8Path, model: Option<&str>) -> Option<String> {
-    let diff = get_diff(repo_root)?;
+pub fn generate_gemini_commit_message(
+    repo_root: &Utf8Path,
+    model: Option<&str>,
+) -> anyhow::Result<String> {
+    let diff = get_diff(repo_root).context("can't get repository diff")?;
 
     println!("🤖 Generating commit message with Gemini...");
 
@@ -106,34 +122,23 @@ pub fn generate_gemini_commit_message(repo_root: &Utf8Path, model: Option<&str>)
     .with_current_dir(repo_root)
     .run();
 
-    if output.status().success() {
-        let msg = output.stdout().trim().to_string();
-        if msg.is_empty() { None } else { Some(msg) }
-    } else {
-        None
-    }
+    process_model_output(&output)
 }
 
 pub fn generate_commit_message(
     repo_root: &Utf8Path,
     agent: Option<&crate::args::Agent>,
     model: Option<&str>,
-) -> Option<String> {
+) -> anyhow::Result<String> {
     match agent {
         Some(crate::args::Agent::Gemini) => generate_gemini_commit_message(repo_root, model),
         Some(crate::args::Agent::Copilot) => generate_copilot_commit_message(repo_root, model),
-        None => None,
+        None => Ok("".to_string()),
     }
 }
 
 /// Ask the user for a commit message and enforce size rules.
-pub fn prompt_commit_message(
-    repo_root: &Utf8Path,
-    agent: Option<&crate::args::Agent>,
-    model: Option<&str>,
-) -> anyhow::Result<String> {
-    let initial_value = generate_commit_message(repo_root, agent, model).unwrap_or_default();
-
+pub fn prompt_commit_message(initial_value: String) -> anyhow::Result<String> {
     let msg = inquire::Text::new("Commit message:")
         .with_initial_value(&initial_value)
         .with_validator(|input: &str| {
