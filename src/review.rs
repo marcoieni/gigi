@@ -153,7 +153,8 @@ fn generate_gemini_review(
 
     anyhow::ensure!(
         output.status().success() && !output.stdout().trim().is_empty(),
-        "❌ Failed to generate PR review with Gemini"
+        "❌ Failed to generate PR review with Gemini: {}",
+        output.stderr()
     );
 
     Ok(output.stdout().to_string())
