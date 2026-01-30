@@ -1,5 +1,3 @@
-use std::io::IsTerminal as _;
-
 use camino::Utf8Path;
 use serde_json::{Map, Value};
 
@@ -16,20 +14,11 @@ pub fn review_pr(
     let diff = fetch_pr_diff(repo_root, pr_url)?;
     let prompt = build_review_prompt(&metadata, &diff);
 
-    let review = match agent {
+    match agent {
         Some(Agent::Gemini) => generate_gemini_review(repo_root, &prompt, model),
         Some(Agent::Copilot) | None => generate_copilot_review(repo_root, &prompt, model),
     }?;
 
-    // Print the review; if stdout is a TTY and NO_COLOR isn't set, colorize the Markdown
-    if std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none() {
-        match colorize_markdown_ansi(&review) {
-            Ok(colored) => println!("{colored}"),
-            Err(_) => println!("{review}"),
-        }
-    } else {
-        println!("{review}");
-    }
     Ok(())
 }
 
@@ -121,16 +110,18 @@ fn generate_copilot_review(
     let model = model.unwrap_or("gpt-5.2-codex");
     let output = Cmd::new(
         "copilot",
-        ["--silent", "--model", model, "--prompt", prompt],
+        ["--silent", "--model", model, "--interactive", prompt],
     )
-    .hide_stdout()
-    .with_title(format!("🚀 copilot --silent --model {model} --prompt ..."))
+    .with_title(format!(
+        "🚀 copilot --silent --model {model} --interactive ..."
+    ))
     .with_current_dir(repo_root)
-    .run();
+    .run_interactive();
 
     anyhow::ensure!(
         output.status().success() && !output.stdout().trim().is_empty(),
-        "❌ Failed to generate PR review with Copilot"
+        "❌ Failed to generate PR review with Copilot: {}",
+        output.stderr()
     );
 
     Ok(output.stdout().to_string())
@@ -150,106 +141,21 @@ fn generate_gemini_review(
             "--sandbox",
             "--output-format",
             "text",
-            "--prompt",
+            "--prompt-interactive",
             prompt,
         ],
     )
-    .hide_stdout()
     .with_title(format!(
-        "🚀 gemini --model {model} --sandbox --output-format text --prompt ..."
+        "🚀 gemini --model {model} --sandbox --output-format text ..."
     ))
     .with_current_dir(repo_root)
-    .run();
+    .run_interactive();
 
     anyhow::ensure!(
         output.status().success() && !output.stdout().trim().is_empty(),
-        "❌ Failed to generate PR review with Gemini"
+        "❌ Failed to generate PR review with Gemini: {}",
+        output.stderr()
     );
 
     Ok(output.stdout().to_string())
-}
-
-fn colorize_markdown_ansi(md: &str) -> anyhow::Result<String> {
-    use syntect::easy::HighlightLines;
-    use syntect::highlighting::ThemeSet;
-    use syntect::parsing::SyntaxSet;
-    use syntect::util::as_24_bit_terminal_escaped;
-
-    // Load default syntaxes/themes (includes Markdown)
-    let ps = SyntaxSet::load_defaults_newlines();
-    let ts = ThemeSet::load_defaults();
-
-    let syntax = ps.find_syntax_by_name("Markdown").unwrap();
-
-    let theme = ts
-        .themes
-        .get("base16-ocean.dark")
-        .or_else(|| ts.themes.get("Solarized (dark)"))
-        .or_else(|| ts.themes.get("InspiredGitHub"))
-        .or_else(|| ts.themes.values().next())
-        .expect("syntect default themes present");
-
-    let mut h = HighlightLines::new(syntax, theme);
-    let mut out = String::with_capacity(md.len());
-    for line in md.lines() {
-        let ranges = h.highlight_line(line, &ps)?;
-        out.push_str(&as_24_bit_terminal_escaped(&ranges[..], true));
-        out.push('\n');
-    }
-    // Reset terminal colors
-    out.push_str("\x1b[0m");
-    Ok(out)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// You can use this test to visually inspect the ANSI colorization output
-    /// without needing to run the full application.
-    #[test]
-    fn test_colorize_markdown_ansi() {
-        let md = r#"# PR Review Summary
-
-This PR adds a **new feature** to the codebase.
-
-## Issues
-
-- **BLOCKER**: Missing error handling in `src/main.rs:42`
-- *MINOR*: Consider renaming `foo` to `bar`
-
-## Suggestions
-
-1. Add unit tests for the new function
-2. Update the README
-
-```rust
-fn example() {
-    println!("Hello, world!");
-}
-```
-
-> This is a blockquote
-
-[Link to docs](https://example.com)
-"#;
-
-        let colored = colorize_markdown_ansi(md).expect("colorization should succeed");
-
-        // Print the colored output so it's visible when running `cargo test -- --nocapture`
-        println!("\n--- Colored Markdown Output ---");
-        print!("{colored}");
-        println!("--- End of Colored Output ---\n");
-
-        // Basic sanity checks
-        assert!(!colored.is_empty());
-        // Should contain ANSI escape sequences (ESC [ ...)
-        assert!(
-            colored.contains("\x1b["),
-            "output should contain ANSI codes"
-        );
-        // The raw text should still be present
-        assert!(colored.contains("PR Review Summary"));
-        assert!(colored.contains("BLOCKER"));
-    }
 }
