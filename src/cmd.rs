@@ -186,6 +186,27 @@ impl Cmd {
             stderr: output_stderr,
         }
     }
+
+    pub fn run_interactive(&self) -> CmdOutput {
+        if is_verbose() {
+            println!("{}", self.build_command_description());
+        }
+
+        let status = self
+            .configure_command()
+            .args(&self.args)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .unwrap();
+
+        CmdOutput {
+            status,
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
 }
 
 #[cfg(test)]
