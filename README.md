@@ -88,6 +88,14 @@ Examples:
 - `gigi review https://github.com/OWNER/REPO/pull/123`
 - `gigi review --agent gemini --model gemini-3-flash-preview https://github.com/OWNER/REPO/pull/123`
 
+### Sync
+
+Sync a fork with its upstream repository and update the local default branch.
+
+Examples:
+
+- `gigi sync`
+
 ## Alias
 
 You can set an alias to recompile and run `gigi` from your local project.

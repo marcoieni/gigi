@@ -47,4 +47,6 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Sync a fork with the upstream repository and update local default branch
+    Sync,
 }

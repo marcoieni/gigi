@@ -11,6 +11,7 @@ use clap::Parser as _;
 use cmd::Cmd;
 use git_cmd::Repo;
 use review::review_pr;
+use serde_json::Value;
 
 use crate::commit::{check_commit_message, generate_commit_message, prompt_commit_message};
 
@@ -32,7 +33,152 @@ fn main() -> anyhow::Result<()> {
             review_pr(&repo_root, &pr, agent.as_ref(), model.as_deref())
         }
         args::Command::Squash { dry_run } => squash(&repo_root, &repo, dry_run),
+        args::Command::Sync => sync_fork(&repo_root),
     }?;
+    Ok(())
+}
+
+fn ensure_clean_repo(repo_root: &Utf8Path) -> anyhow::Result<()> {
+    let output = Cmd::new("git", ["status", "--porcelain"])
+        .with_current_dir(repo_root)
+        .run();
+    anyhow::ensure!(
+        output.status().success(),
+        "❌ Failed to check repository status"
+    );
+    anyhow::ensure!(
+        output.stdout().trim().is_empty(),
+        "❌ Repository is not clean. Commit or stash changes first."
+    );
+    Ok(())
+}
+
+struct RepoInfo {
+    is_fork: bool,
+    default_branch: String,
+    parent_name_with_owner: Option<String>,
+    parent_default_branch: Option<String>,
+}
+
+fn fetch_repo_info(repo_root: &Utf8Path) -> anyhow::Result<RepoInfo> {
+    let output = Cmd::new(
+        "gh",
+        ["repo", "view", "--json", "isFork,parent,defaultBranchRef"],
+    )
+    .with_current_dir(repo_root)
+    .run();
+    anyhow::ensure!(
+        output.status().success() && !output.stdout().trim().is_empty(),
+        "❌ Failed to fetch repository info"
+    );
+
+    let value: Value = serde_json::from_str(output.stdout())?;
+    let is_fork = value
+        .get("isFork")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let default_branch = value
+        .get("defaultBranchRef")
+        .and_then(|v| v.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or("main")
+        .to_string();
+
+    let (parent_name_with_owner, parent_default_branch) = if is_fork {
+        let parent = value.get("parent");
+        let name = parent
+            .and_then(|v| v.get("nameWithOwner"))
+            .and_then(Value::as_str)
+            .map(|s| s.to_string());
+        let branch = parent
+            .and_then(|v| v.get("defaultBranchRef"))
+            .and_then(|v| v.get("name"))
+            .and_then(Value::as_str)
+            .map(|s| s.to_string());
+        (name, branch)
+    } else {
+        (None, None)
+    };
+
+    Ok(RepoInfo {
+        is_fork,
+        default_branch,
+        parent_name_with_owner,
+        parent_default_branch,
+    })
+}
+
+fn ensure_upstream_remote(
+    repo_root: &Utf8Path,
+    parent_name_with_owner: &str,
+) -> anyhow::Result<()> {
+    let output = Cmd::new("git", ["remote", "get-url", "upstream"])
+        .with_current_dir(repo_root)
+        .run();
+    if output.status().success() && !output.stdout().trim().is_empty() {
+        return Ok(());
+    }
+
+    let upstream_url = format!("https://github.com/{parent_name_with_owner}.git");
+    let add_output = Cmd::new("git", ["remote", "add", "upstream", &upstream_url])
+        .with_current_dir(repo_root)
+        .run();
+    anyhow::ensure!(
+        add_output.status().success(),
+        "❌ Failed to add upstream remote"
+    );
+    Ok(())
+}
+
+fn sync_fork(repo_root: &Utf8Path) -> anyhow::Result<()> {
+    ensure_clean_repo(repo_root)?;
+
+    let repo_info = fetch_repo_info(repo_root)?;
+    if !repo_info.is_fork {
+        println!("ℹ️ Repository is not a fork. Nothing to sync.");
+        return Ok(());
+    }
+
+    let parent_name_with_owner = repo_info
+        .parent_name_with_owner
+        .ok_or_else(|| anyhow::anyhow!("❌ Failed to detect parent repository"))?;
+    let parent_default_branch = repo_info
+        .parent_default_branch
+        .ok_or_else(|| anyhow::anyhow!("❌ Failed to detect parent default branch"))?;
+
+    ensure_upstream_remote(repo_root, &parent_name_with_owner)?;
+
+    let current = current_branch(repo_root);
+    Cmd::new("git", ["fetch", "upstream"])
+        .with_current_dir(repo_root)
+        .run();
+    Cmd::new("git", ["checkout", &repo_info.default_branch])
+        .with_current_dir(repo_root)
+        .run();
+    let pull_output = Cmd::new(
+        "git",
+        ["pull", "--ff-only", "upstream", &parent_default_branch],
+    )
+    .with_current_dir(repo_root)
+    .run();
+    anyhow::ensure!(
+        pull_output.status().success(),
+        "❌ Failed to sync default branch from upstream"
+    );
+    let push_output = Cmd::new("git", ["push", "origin", &repo_info.default_branch])
+        .with_current_dir(repo_root)
+        .run();
+    anyhow::ensure!(
+        push_output.status().success(),
+        "❌ Failed to push synced default branch to origin"
+    );
+
+    if current != repo_info.default_branch {
+        Cmd::new("git", ["checkout", &current])
+            .with_current_dir(repo_root)
+            .run();
+    }
+
     Ok(())
 }
 
