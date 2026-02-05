@@ -33,8 +33,7 @@ fn main() -> anyhow::Result<()> {
                 set_default_repo();
             }
             let repo_root = repo_root();
-            let repo = Repo::new(repo_root.clone()).unwrap();
-            open_pr(&repo_root, &repo, message, agent.as_ref(), model.as_deref())
+            open_pr(&repo_root, message, agent.as_ref(), model.as_deref())
         }
 
         args::Command::Review { pr, agent, model } => {
@@ -506,16 +505,12 @@ fn create_feature_branch_from_default(
         .run();
 }
 
-fn stage_and_commit_changes(
-    repo_root: &Utf8Path,
-    repo: &Repo,
-    commit_message: &str,
-) -> anyhow::Result<()> {
+fn stage_and_commit_changes(repo_root: &Utf8Path, commit_message: &str) -> anyhow::Result<()> {
     let staged_files = get_staged_files(repo_root);
     if staged_files.is_empty() {
-        run_git_add(&changed_files(repo), repo.directory());
-    } else {
-        run_git_add(&staged_files, repo_root);
+        Cmd::new("git", ["add", "-A"])
+            .with_current_dir(repo_root)
+            .run();
     }
 
     commit(repo_root, commit_message)?;
@@ -558,7 +553,6 @@ fn push_branch_and_open_pr(repo_root: &Utf8Path, branch_name: &str, commit_messa
 
 fn open_pr(
     repo_root: &Utf8Path,
-    repo: &Repo,
     message: Option<String>,
     agent: Option<&args::Agent>,
     model: Option<&str>,
@@ -569,7 +563,7 @@ fn open_pr(
 
     ensure_branch_does_not_exist(repo_root, &branch_name)?;
     create_feature_branch_from_default(repo_root, &default_branch_name, &branch_name);
-    stage_and_commit_changes(repo_root, repo, &commit_message)?;
+    stage_and_commit_changes(repo_root, &commit_message)?;
     ensure_not_on_default_branch(repo_root, &default_branch_name)?;
     push_branch_and_open_pr(repo_root, &branch_name, &commit_message);
 
@@ -588,25 +582,6 @@ fn get_staged_files(curr_dir: &Utf8Path) -> Vec<Utf8PathBuf> {
         .with_current_dir(curr_dir)
         .run();
     output.stdout().lines().map(Utf8PathBuf::from).collect()
-}
-
-fn changed_files(repo: &Repo) -> Vec<Utf8PathBuf> {
-    let git_root = repo.git(&["rev-parse", "--show-toplevel"]).unwrap();
-    let git_root = camino::Utf8Path::new(&git_root);
-    let changed_files = repo.changes_except_typechanges().unwrap();
-    assert!(!changed_files.is_empty(), "Run git add first");
-    changed_files.iter().map(|f| git_root.join(f)).collect()
-}
-
-fn run_git_add(changed_files: &[Utf8PathBuf], repo_root: &Utf8Path) {
-    assert!(!changed_files.is_empty(), "No files to add");
-    let mut git_add_args = vec!["add".to_string()];
-    let changed_files: Vec<String> = changed_files.iter().map(|f| f.to_string()).collect();
-    git_add_args.extend(changed_files);
-
-    Cmd::new("git", &git_add_args)
-        .with_current_dir(repo_root)
-        .run();
 }
 
 fn branch_name_from_commit_message(commit_message: &str) -> String {
