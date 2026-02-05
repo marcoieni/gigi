@@ -79,6 +79,14 @@ main ──●─┐
          ▼  PR: "feat: add caching" (#123)
 ```
 
+### Checkout PR
+
+Clone a GitHub PR repository into `~/proj/<owner>/<repo>` (if missing), pull the default branch, checkout the PR locally, and open VS Code.
+
+Examples:
+
+- `gigi checkout-pr https://github.com/OWNER/REPO/pull/123`
+
 ### Review
 
 Review a GitHub PR with an AI agent. The first positional argument is the PR URL.

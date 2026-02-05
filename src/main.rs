@@ -1,5 +1,6 @@
 mod args;
 mod authors;
+mod checkout;
 mod cmd;
 mod commit;
 mod review;
@@ -13,28 +14,55 @@ use git_cmd::Repo;
 use review::review_pr;
 use serde_json::Value;
 
+use crate::checkout::checkout_pr;
 use crate::commit::{check_commit_message, generate_commit_message, prompt_commit_message};
 
 fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
     cmd::set_verbose(args.verbose);
-    if !is_default_repo_set() {
-        set_default_repo();
-    }
-    let repo_root = repo_root();
-    let repo = Repo::new(repo_root.clone()).unwrap();
+
     match args.command {
+        args::Command::CheckoutPr { pr } => checkout_pr(&pr),
+
         args::Command::OpenPr {
             message,
             agent,
             model,
-        } => open_pr(&repo_root, &repo, message, agent.as_ref(), model.as_deref()),
+        } => {
+            if !is_default_repo_set() {
+                set_default_repo();
+            }
+            let repo_root = repo_root();
+            let repo = Repo::new(repo_root.clone()).unwrap();
+            open_pr(&repo_root, &repo, message, agent.as_ref(), model.as_deref())
+        }
+
         args::Command::Review { pr, agent, model } => {
+            if !is_default_repo_set() {
+                set_default_repo();
+            }
+            let repo_root = repo_root();
             review_pr(&repo_root, &pr, agent.as_ref(), model.as_deref())
         }
-        args::Command::Squash { dry_run } => squash(&repo_root, &repo, dry_run),
-        args::Command::Sync => sync_fork(&repo_root),
+
+        args::Command::Squash { dry_run } => {
+            if !is_default_repo_set() {
+                set_default_repo();
+            }
+            let repo_root = repo_root();
+            let repo = Repo::new(repo_root.clone()).unwrap();
+            squash(&repo_root, &repo, dry_run)
+        }
+
+        args::Command::Sync => {
+            if !is_default_repo_set() {
+                set_default_repo();
+            }
+            let repo_root = repo_root();
+            sync_fork(&repo_root)
+        }
     }?;
+
     Ok(())
 }
 

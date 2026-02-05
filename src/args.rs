@@ -30,6 +30,14 @@ pub enum Command {
         #[arg(long)]
         model: Option<String>,
     },
+
+    /// Clone the PR repo into ~/proj/<owner>/<repo>, update default branch, checkout PR, and open VS Code
+    CheckoutPr {
+        /// GitHub PR URL to checkout
+        #[arg(value_name = "PR_URL")]
+        pr: String,
+    },
+
     /// Review a GitHub pull request using an AI agent
     Review {
         /// GitHub PR URL to review
