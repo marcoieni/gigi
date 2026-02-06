@@ -133,7 +133,12 @@ fn process_model_output(output: &CmdOutput) -> anyhow::Result<String> {
         if msg.is_empty() {
             anyhow::bail!("❌ Generated commit message is empty")
         } else {
-            check_commit_message(&msg)?;
+            if !is_commit_message_valid(&msg) {
+                eprintln!(
+                    "⚠️ {} Please adjust it before submitting.",
+                    commit_message_size_rule(&msg)
+                );
+            }
             Ok(msg)
         }
     } else {
@@ -199,13 +204,7 @@ pub fn prompt_commit_message(initial_value: &str) -> anyhow::Result<String> {
             if is_commit_message_valid(input) {
                 Ok(Validation::Valid)
             } else {
-                Ok(Validation::Invalid(
-                    format!(
-                        "Commit message size should be between 1 and 70 characters. Current size: {}",
-                        input.len()
-                    )
-                    .into(),
-                ))
+                Ok(Validation::Invalid(commit_message_size_rule(input).into()))
             }
         })
         .prompt()
@@ -216,10 +215,17 @@ pub fn prompt_commit_message(initial_value: &str) -> anyhow::Result<String> {
 pub fn check_commit_message(message: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         is_commit_message_valid(message),
-        "Commit message size should be between 1 and 70 characters. Current size: {}",
-        message.len()
+        "{}",
+        commit_message_size_rule(message)
     );
     Ok(())
+}
+
+fn commit_message_size_rule(message: &str) -> String {
+    format!(
+        "Commit message size should be between 1 and 70 characters. Current size: {}",
+        message.len()
+    )
 }
 
 fn is_commit_message_valid(message: &str) -> bool {
@@ -271,5 +277,13 @@ mod tests {
     fn test_check_commit_message_too_long() {
         let msg = "a".repeat(71);
         assert!(check_commit_message(&msg).is_err());
+    }
+
+    #[test]
+    fn test_commit_message_size_rule() {
+        assert_eq!(
+            commit_message_size_rule("abc"),
+            "Commit message size should be between 1 and 70 characters. Current size: 3"
+        );
     }
 }
