@@ -107,7 +107,7 @@ fn generate_copilot_review(
     prompt: &str,
     model: Option<&str>,
 ) -> anyhow::Result<String> {
-    let model = model.unwrap_or("gpt-5.2-codex");
+    let model = model.unwrap_or("gpt-5.3-codex");
     let output = Cmd::new(
         "copilot",
         ["--silent", "--model", model, "--interactive", prompt],
