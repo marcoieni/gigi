@@ -286,13 +286,6 @@ fn branch_exists_locally(repo_root: &Utf8Path, branch_name: &str) -> bool {
     !output.stdout().trim().is_empty()
 }
 
-fn branch_exists_remotely(repo_root: &Utf8Path, branch_name: &str) -> bool {
-    let output = Cmd::new("git", ["ls-remote", "--heads", "origin", branch_name])
-        .with_current_dir(repo_root)
-        .run();
-    !output.stdout().trim().is_empty()
-}
-
 fn branch_has_associated_pr(repo_root: &Utf8Path, branch_name: &str) -> bool {
     let output = Cmd::new(
         "gh",
