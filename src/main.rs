@@ -293,6 +293,52 @@ fn branch_exists_remotely(repo_root: &Utf8Path, branch_name: &str) -> bool {
     !output.stdout().trim().is_empty()
 }
 
+fn branch_has_associated_pr(repo_root: &Utf8Path, branch_name: &str) -> bool {
+    let output = Cmd::new(
+        "gh",
+        [
+            "pr",
+            "list",
+            "--state",
+            "all",
+            "--head",
+            branch_name,
+            "--json",
+            "number",
+            "--limit",
+            "1",
+            "-q",
+            ".[0].number",
+        ],
+    )
+    .with_current_dir(repo_root)
+    .hide_stderr()
+    .run();
+    output.status().success() && !output.stdout().trim().is_empty()
+}
+
+fn current_utc_branch_timestamp() -> anyhow::Result<String> {
+    let output = Cmd::new("date", ["-u", "+%Y-%m-%dT%H-%M-%SZ"]).run();
+    anyhow::ensure!(
+        output.status().success() && !output.stdout().trim().is_empty(),
+        "❌ Failed to generate timestamp for unique branch name"
+    );
+    Ok(output.stdout().to_string())
+}
+
+fn branch_name_with_timestamp(branch_name: &str, timestamp: &str) -> String {
+    format!("{branch_name}-{timestamp}")
+}
+
+fn branch_name_for_new_pr(repo_root: &Utf8Path, branch_name: &str) -> anyhow::Result<String> {
+    if !branch_has_associated_pr(repo_root, branch_name) {
+        return Ok(branch_name.to_string());
+    }
+
+    let timestamp = current_utc_branch_timestamp()?;
+    Ok(branch_name_with_timestamp(branch_name, &timestamp))
+}
+
 fn ensure_not_on_default_branch(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Result<()> {
     let current_branch = current_branch(repo_root);
     anyhow::ensure!(
@@ -559,7 +605,8 @@ fn open_pr(
 ) -> anyhow::Result<()> {
     let commit_message = resolve_commit_message(repo_root, message, agent, model)?;
     let default_branch_name = default_branch(repo_root);
-    let branch_name = branch_name_from_commit_message(&commit_message);
+    let branch_name =
+        branch_name_for_new_pr(repo_root, &branch_name_from_commit_message(&commit_message))?;
 
     ensure_branch_does_not_exist(repo_root, &branch_name)?;
     create_feature_branch_from_default(repo_root, &default_branch_name, &branch_name);
@@ -644,5 +691,13 @@ mod tests {
     #[test]
     fn test_branch_name_trims_whitespace() {
         assert_eq!(branch_name_from_commit_message("  Fix bug  "), "fix-bug");
+    }
+
+    #[test]
+    fn test_branch_name_with_timestamp() {
+        assert_eq!(
+            branch_name_with_timestamp("feat-add-cache", "2026-02-16T00-14-36Z"),
+            "feat-add-cache-2026-02-16T00-14-36Z"
+        );
     }
 }
