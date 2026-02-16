@@ -527,11 +527,6 @@ fn ensure_branch_does_not_exist(repo_root: &Utf8Path, branch_name: &str) -> anyh
             "❌ Branch '{branch_name}' already exists locally. Please use a different commit message or delete the existing branch."
         );
     }
-    if branch_exists_remotely(repo_root, branch_name) {
-        anyhow::bail!(
-            "❌ Branch '{branch_name}' already exists on remote. Please use a different commit message or delete the remote branch."
-        );
-    }
     Ok(())
 }
 
