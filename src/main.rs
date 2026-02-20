@@ -420,18 +420,47 @@ fn perform_squash_and_push(
     commit_message: &str,
     default_branch: &str,
 ) -> anyhow::Result<()> {
-    Cmd::new("git", ["reset", "--soft", merge_base])
+    let reset_output = Cmd::new("git", ["reset", "--soft", merge_base])
         .with_current_dir(repo_root)
         .run();
-    Cmd::new("git", ["add", "."])
+    anyhow::ensure!(
+        reset_output.status().success(),
+        "❌ git reset --soft failed: {}",
+        if reset_output.stderr().is_empty() {
+            reset_output.stdout()
+        } else {
+            reset_output.stderr()
+        }
+    );
+
+    let add_output = Cmd::new("git", ["add", "."])
         .with_current_dir(repo_root)
         .run();
+    anyhow::ensure!(
+        add_output.status().success(),
+        "❌ git add failed: {}",
+        if add_output.stderr().is_empty() {
+            add_output.stdout()
+        } else {
+            add_output.stderr()
+        }
+    );
+
     commit(repo_root, commit_message)?;
 
     ensure_not_on_default_branch(repo_root, default_branch)?;
-    Cmd::new("git", ["push", "--force-with-lease"])
+    let push_output = Cmd::new("git", ["push", "--force-with-lease"])
         .with_current_dir(repo_root)
         .run();
+    anyhow::ensure!(
+        push_output.status().success(),
+        "❌ git push --force-with-lease failed: {}",
+        if push_output.stderr().is_empty() {
+            push_output.stdout()
+        } else {
+            push_output.stderr()
+        }
+    );
     Ok(())
 }
 
