@@ -496,7 +496,7 @@ fn squash(repo_root: &Utf8Path, repo: &Repo, dry_run: bool) -> anyhow::Result<()
         "❌ You are on the main branch. Switch to a feature branch to squash"
     );
 
-    sync_feature_branch_with_default(repo_root, feature_branch, &default_branch)?;
+    sync_feature_branch_with_default(repo_root, &default_branch)?;
     let merge_base = compute_merge_base(repo_root, &default_branch)?;
 
     let co_authors = authors::get_co_authors(repo_root, &merge_base)?;
