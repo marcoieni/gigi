@@ -343,17 +343,19 @@ fn ensure_not_on_default_branch(repo_root: &Utf8Path, default_branch: &str) -> a
 
 fn sync_feature_branch_with_default(
     repo_root: &Utf8Path,
-    feature_branch: &str,
     default_branch: &str,
 ) -> anyhow::Result<()> {
-    Cmd::new("git", ["checkout", default_branch])
+    let fetch_output = Cmd::new("git", ["fetch", "origin", default_branch])
         .with_current_dir(repo_root)
         .run();
-    Cmd::new("git", ["pull"]).with_current_dir(repo_root).run();
-    Cmd::new("git", ["checkout", feature_branch])
-        .with_current_dir(repo_root)
-        .run();
-    let merge_output = Cmd::new("git", ["merge", "origin", default_branch])
+    anyhow::ensure!(
+        fetch_output.status().success(),
+        "git fetch failed. Error {:?}",
+        fetch_output.stderr()
+    );
+
+    let merge_ref = format!("origin/{default_branch}");
+    let merge_output = Cmd::new("git", ["merge", "--no-edit", &merge_ref])
         .with_current_dir(repo_root)
         .run();
     anyhow::ensure!(
@@ -365,7 +367,8 @@ fn sync_feature_branch_with_default(
 }
 
 fn compute_merge_base(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Result<String> {
-    let merge_base = Cmd::new("git", ["merge-base", "HEAD", default_branch])
+    let merge_ref = format!("origin/{default_branch}");
+    let merge_base = Cmd::new("git", ["merge-base", "HEAD", &merge_ref])
         .with_current_dir(repo_root)
         .run();
     anyhow::ensure!(
