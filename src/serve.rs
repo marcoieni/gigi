@@ -86,9 +86,14 @@ async fn run_serve_async() -> anyhow::Result<()> {
     println!("📄 Config: {}", paths.config_path.display());
     println!("🗄️  DB: {}", paths.db_path.display());
 
-    if let Err(err) = state.poll_once_startup().await {
-        eprintln!("⚠️ Initial poll cycle failed: {err}");
-    }
+    let startup_state = Arc::clone(&state);
+    let startup_handle = tokio::spawn(async move {
+        println!("🔄 Starting initial poll cycle...");
+        match startup_state.poll_once_startup().await {
+            Ok(stats) => print_poll_stats("✅ Initial poll complete:", &stats),
+            Err(err) => eprintln!("⚠️ Initial poll cycle failed: {err}"),
+        }
+    });
 
     let poll_state = Arc::clone(&state);
     let poll_handle = tokio::spawn(async move {
@@ -108,10 +113,12 @@ async fn run_serve_async() -> anyhow::Result<()> {
     tokio::select! {
         server_result = web::run_server(state, &cfg, &paths.dashboard_dir) => {
             poll_handle.abort();
+            startup_handle.abort();
             server_result
         }
         signal_result = tokio::signal::ctrl_c() => {
             poll_handle.abort();
+            startup_handle.abort();
             match signal_result {
                 Ok(()) => {
                     println!("\n🛑 Received Ctrl+C, shutting down gigi serve...");
@@ -121,6 +128,13 @@ async fn run_serve_async() -> anyhow::Result<()> {
             }
         }
     }
+}
+
+fn print_poll_stats(prefix: &str, stats: &PollStats) {
+    println!(
+        "{prefix} notifications={}, my_prs={}, prs={}, reviews={}",
+        stats.notifications_fetched, stats.authored_prs_fetched, stats.prs_seen, stats.reviews_run
+    );
 }
 
 impl AppState {

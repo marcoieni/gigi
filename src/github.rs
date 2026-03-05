@@ -108,13 +108,17 @@ pub fn fetch_notifications() -> anyhow::Result<Vec<NotificationThread>> {
                 .and_then(Value::as_str)
                 .unwrap_or("(untitled)")
                 .to_string();
-            let subject_url = entry
+            let raw_subject_url = entry
                 .get("subject")
                 .and_then(|v| v.get("url"))
                 .and_then(Value::as_str)
                 .map(ToString::to_string);
 
-            let pr_url = subject_url.as_deref().and_then(api_url_to_pr_url);
+            let pr_url = raw_subject_url.as_deref().and_then(api_url_to_pr_url);
+            let subject_url = raw_subject_url
+                .as_deref()
+                .and_then(api_url_to_html_url)
+                .or(raw_subject_url);
 
             results.push(NotificationThread {
                 thread_id,
@@ -408,6 +412,37 @@ fn api_url_to_pr_url(api_url: &str) -> Option<String> {
     ))
 }
 
+fn api_url_to_html_url(api_url: &str) -> Option<String> {
+    let path = api_url
+        .trim()
+        .strip_prefix("https://api.github.com/")
+        .unwrap_or(api_url);
+
+    if let Some(path) = path.strip_prefix("repos/") {
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.len() < 4 {
+            return None;
+        }
+
+        let owner = parts[0];
+        let repo = parts[1];
+        let kind = parts[2];
+        let number = parts[3];
+
+        let route = match kind {
+            "pulls" => format!("pull/{number}"),
+            "issues" => format!("issues/{number}"),
+            "discussions" => format!("discussions/{number}"),
+            "commits" => format!("commit/{number}"),
+            _ => return None,
+        };
+
+        return Some(format!("https://github.com/{owner}/{repo}/{route}"));
+    }
+
+    Some(api_url.to_string())
+}
+
 fn parse_repo_from_pr_url(pr_url: &str) -> Option<String> {
     let parsed = parse_github_pr_url(pr_url).ok()?;
     Some(format!("{}/{}", parsed.owner, parsed.repo))
@@ -421,6 +456,18 @@ mod tests {
     fn converts_api_pr_url() {
         let pr = api_url_to_pr_url("https://api.github.com/repos/o/r/pulls/123").unwrap();
         assert_eq!(pr, "https://github.com/o/r/pull/123");
+    }
+
+    #[test]
+    fn converts_api_issue_url() {
+        let issue = api_url_to_html_url("https://api.github.com/repos/o/r/issues/123").unwrap();
+        assert_eq!(issue, "https://github.com/o/r/issues/123");
+    }
+
+    #[test]
+    fn leaves_html_url_unchanged() {
+        let issue = api_url_to_html_url("https://github.com/o/r/issues/123").unwrap();
+        assert_eq!(issue, "https://github.com/o/r/issues/123");
     }
 
     #[test]

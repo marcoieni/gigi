@@ -83,8 +83,19 @@ function threadCard(thread) {
   const card = document.createElement("article");
   card.className = "thread";
 
+  const titleHref = thread.subject_url || thread.pr_url;
   const title = document.createElement("h3");
-  title.textContent = thread.subject_title;
+  if (titleHref) {
+    const titleLink = document.createElement("a");
+    titleLink.className = "thread-link";
+    titleLink.href = titleHref;
+    titleLink.target = "_blank";
+    titleLink.rel = "noreferrer";
+    titleLink.textContent = thread.subject_title;
+    title.appendChild(titleLink);
+  } else {
+    title.textContent = thread.subject_title;
+  }
   card.appendChild(title);
 
   const meta = document.createElement("p");
@@ -137,10 +148,13 @@ function threadCard(thread) {
     row.appendChild(doneBtn);
   }
 
-  const unread = document.createElement("span");
-  unread.className = "badge";
-  unread.textContent = thread.unread ? "Unread" : "Seen";
-  row.appendChild(unread);
+  if (thread.unread) {
+    const unread = document.createElement("span");
+    unread.className = "unread-dot";
+    unread.setAttribute("aria-label", "Unread");
+    unread.title = "Unread";
+    row.appendChild(unread);
+  }
 
   card.appendChild(row);
   return card;
