@@ -132,10 +132,10 @@ fn fetch_repo_info(repo_root: &Utf8Path) -> anyhow::Result<RepoInfo> {
             .and_then(Value::as_str)
             .map(|s| s.to_string());
 
-        if branch.is_none() {
-            if let Some(parent_repo) = name.as_deref() {
-                branch = Some(fetch_default_branch(repo_root, parent_repo)?);
-            }
+        if branch.is_none()
+            && let Some(parent_repo) = name.as_deref()
+        {
+            branch = Some(fetch_default_branch(repo_root, parent_repo)?);
         }
         (name, branch)
     } else {

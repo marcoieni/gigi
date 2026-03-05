@@ -73,7 +73,7 @@ async fn get_threads(
     let threads = state
         .db
         .list_dashboard_threads()
-        .map_err(ApiErrorResponse::internal)?;
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
     Ok(Json(threads))
 }
 
@@ -84,7 +84,7 @@ async fn get_latest_review(
     let review = state
         .db
         .latest_review_for_pr(&owner, &repo, number)
-        .map_err(ApiErrorResponse::internal)?;
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
     Ok(Json(review))
 }
 
@@ -95,7 +95,7 @@ async fn mark_done(
     state
         .mark_done(thread_id)
         .await
-        .map_err(ApiErrorResponse::internal)?;
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
     Ok(StatusCode::OK)
 }
 
@@ -106,7 +106,7 @@ async fn run_fix(
     let output = state
         .run_fix(owner, repo, number)
         .await
-        .map_err(ApiErrorResponse::internal)?;
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
 
     Ok(Json(FixResponse { output }))
 }
@@ -117,7 +117,7 @@ async fn refresh(
     let stats = state
         .poll_once()
         .await
-        .map_err(ApiErrorResponse::internal)?;
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
     Ok(Json(stats))
 }
 
@@ -134,7 +134,7 @@ struct ApiError {
 struct ApiErrorResponse(StatusCode, String);
 
 impl ApiErrorResponse {
-    fn internal(err: anyhow::Error) -> Self {
+    fn internal(err: &anyhow::Error) -> Self {
         Self(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
     }
 }

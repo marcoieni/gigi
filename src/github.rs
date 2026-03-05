@@ -237,6 +237,8 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         .to_string();
 
     let parsed = parse_github_pr_url(&canonical_pr_url)?;
+    let number = i64::try_from(parsed.number)
+        .with_context(|| format!("PR number is too large for i64: {}", parsed.number))?;
     let state = value
         .get("state")
         .and_then(Value::as_str)
@@ -273,7 +275,7 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         pr_url: canonical_pr_url,
         owner: parsed.owner,
         repo: parsed.repo,
-        number: parsed.number as i64,
+        number,
         state,
         title,
         head_ref,

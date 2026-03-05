@@ -219,7 +219,7 @@ fn poll_once_blocking(
         pr_urls.insert(authored.pr_url.clone());
     }
 
-    let mut reviews_run = 0usize;
+    let mut reviews_run = 0_usize;
 
     for pr_url in &pr_urls {
         let details = match github::fetch_pr_details(pr_url) {
@@ -340,8 +340,7 @@ fn handle_closed_pr_branch_sync(db: &Db, details: &github::PrDetails) -> anyhow:
     github::pull_ff_only(&repo_dir)?;
 
     let message = format!(
-        "Switched to default branch '{}' and pulled latest changes after PR closed.",
-        default_branch
+        "Switched to default branch '{default_branch}' and pulled latest changes after PR closed."
     );
     db.insert_sync_event(&details.pr_url, "success", &message)?;
 
