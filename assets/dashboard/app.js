@@ -4,8 +4,17 @@ const refreshBtn = document.getElementById("refresh-btn");
 const modal = document.getElementById("review-modal");
 const closeModal = document.getElementById("close-modal");
 const reviewContent = document.getElementById("review-content");
+const pendingReviews = new Set();
+const pendingFixes = new Set();
+const pendingDone = new Set();
+
+let threadsState = [];
+let activeReviewPrUrl = null;
 
 closeModal.addEventListener("click", () => modal.close());
+modal.addEventListener("close", () => {
+  activeReviewPrUrl = null;
+});
 refreshBtn.addEventListener("click", async () => {
   await refreshNow();
   await loadThreads();
@@ -13,6 +22,39 @@ refreshBtn.addEventListener("click", async () => {
 
 function setStatus(text) {
   statusEl.textContent = text;
+}
+
+function renderThreads() {
+  threadsEl.replaceChildren();
+  for (const thread of threadsState) {
+    threadsEl.appendChild(threadCard(thread));
+  }
+}
+
+function updateThreadsForPr(prUrl, mutate) {
+  let changed = false;
+  threadsState = threadsState.map((thread) => {
+    if (thread.pr_url !== prUrl) return thread;
+    changed = true;
+    return mutate(thread);
+  });
+  if (changed) {
+    renderThreads();
+  }
+}
+
+function setButtonContent(button, label, isLoading) {
+  button.replaceChildren();
+  if (isLoading) {
+    const spinner = document.createElement("span");
+    spinner.className = "spinner";
+    spinner.setAttribute("aria-hidden", "true");
+    button.appendChild(spinner);
+  }
+
+  const text = document.createElement("span");
+  text.textContent = label;
+  button.appendChild(text);
 }
 
 async function api(path, options = {}) {
@@ -40,6 +82,7 @@ function parsePrUrl(prUrl) {
 async function openReview(prUrl) {
   const parsed = parsePrUrl(prUrl);
   if (!parsed) return;
+  activeReviewPrUrl = prUrl;
   const review = await api(
     `/api/prs/${parsed.owner}/${parsed.repo}/${parsed.number}/review/latest`
   );
@@ -62,21 +105,46 @@ async function doFixes(prUrl) {
 async function runReview(prUrl) {
   const parsed = parsePrUrl(prUrl);
   if (!parsed) return;
+  pendingReviews.add(prUrl);
+  renderThreads();
   setStatus("Running review...");
   try {
     await api(`/api/prs/${parsed.owner}/${parsed.repo}/${parsed.number}/review`, {
       method: "POST",
     });
+    const latestReview = await api(
+      `/api/prs/${parsed.owner}/${parsed.repo}/${parsed.number}/review/latest`
+    );
+    updateThreadsForPr(prUrl, (thread) => ({
+      ...thread,
+      latest_requires_code_changes: latestReview?.requires_code_changes ?? null,
+    }));
+    if (activeReviewPrUrl === prUrl && modal.open) {
+      reviewContent.textContent = latestReview?.content_md || "No review stored yet.";
+    }
     setStatus("Review completed");
   } catch (err) {
     setStatus(`Review failed: ${err.message}`);
+  } finally {
+    pendingReviews.delete(prUrl);
+    renderThreads();
   }
 }
 
 async function markDone(threadId) {
+  pendingDone.add(threadId);
+  renderThreads();
   setStatus("Marking done...");
-  await api(`/api/threads/${threadId}/done`, { method: "POST" });
-  setStatus("Marked done");
+  try {
+    await api(`/api/threads/${threadId}/done`, { method: "POST" });
+    threadsState = threadsState.filter((thread) => thread.github_thread_id !== threadId);
+    setStatus("Marked done");
+  } catch (err) {
+    setStatus(`Mark done failed: ${err.message}`);
+  } finally {
+    pendingDone.delete(threadId);
+    renderThreads();
+  }
 }
 
 function threadCard(thread) {
@@ -109,41 +177,56 @@ function threadCard(thread) {
   if (thread.pr_url) {
     const hasReview = thread.latest_requires_code_changes !== null;
     const needsChanges = thread.latest_requires_code_changes === true;
+    const reviewPending = pendingReviews.has(thread.pr_url);
+    const fixPending = pendingFixes.has(thread.pr_url);
     const reviewBtn = document.createElement("button");
     reviewBtn.className = `pill ${needsChanges ? "unsafe" : "safe"}`;
     reviewBtn.textContent = hasReview ? (needsChanges ? "Fixes needed" : "Safe") : "No review";
     reviewBtn.addEventListener("click", () => openReview(thread.pr_url));
+    reviewBtn.disabled = reviewPending;
     row.appendChild(reviewBtn);
 
     const runReviewBtn = document.createElement("button");
-    runReviewBtn.className = "btn";
-    runReviewBtn.textContent = hasReview ? "Re-review" : "Review now";
+    runReviewBtn.className = `btn ${reviewPending ? "loading" : ""}`;
+    runReviewBtn.disabled = reviewPending || fixPending;
+    setButtonContent(
+      runReviewBtn,
+      reviewPending ? "Reviewing..." : hasReview ? "Re-review" : "Review now",
+      reviewPending
+    );
     runReviewBtn.addEventListener("click", async () => {
       await runReview(thread.pr_url);
-      await loadThreads();
     });
     row.appendChild(runReviewBtn);
 
     if (needsChanges) {
       const fixBtn = document.createElement("button");
-      fixBtn.className = "btn";
-      fixBtn.textContent = "Do fixes";
+      fixBtn.className = `btn ${fixPending ? "loading" : ""}`;
+      fixBtn.disabled = fixPending || reviewPending;
+      setButtonContent(fixBtn, fixPending ? "Fixing..." : "Do fixes", fixPending);
       fixBtn.addEventListener("click", async () => {
-        await doFixes(thread.pr_url);
-        await loadThreads();
+        pendingFixes.add(thread.pr_url);
+        renderThreads();
+        try {
+          await doFixes(thread.pr_url);
+          await loadThreads();
+        } finally {
+          pendingFixes.delete(thread.pr_url);
+          renderThreads();
+        }
       });
       row.appendChild(fixBtn);
     }
   }
 
   if (thread.github_thread_id) {
+    const donePending = pendingDone.has(thread.github_thread_id);
     const doneBtn = document.createElement("button");
-    doneBtn.className = "btn";
-    doneBtn.textContent = thread.done ? "Done" : "Mark done";
-    doneBtn.disabled = !!thread.done;
+    doneBtn.className = `btn ${donePending ? "loading" : ""}`;
+    setButtonContent(doneBtn, donePending ? "Saving..." : thread.done ? "Done" : "Mark done", donePending);
+    doneBtn.disabled = !!thread.done || donePending;
     doneBtn.addEventListener("click", async () => {
       await markDone(thread.github_thread_id);
-      await loadThreads();
     });
     row.appendChild(doneBtn);
   }
@@ -163,12 +246,9 @@ function threadCard(thread) {
 async function loadThreads() {
   setStatus("Loading...");
   try {
-    const threads = await api("/api/threads");
-    threadsEl.replaceChildren();
-    for (const thread of threads) {
-      threadsEl.appendChild(threadCard(thread));
-    }
-    setStatus(`Loaded ${threads.length} items`);
+    threadsState = await api("/api/threads");
+    renderThreads();
+    setStatus(`Loaded ${threadsState.length} items`);
   } catch (err) {
     setStatus(`Load failed: ${err.message}`);
   }
