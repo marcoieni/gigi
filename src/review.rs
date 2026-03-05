@@ -20,8 +20,16 @@ pub fn review_pr(
     agent: Option<&Agent>,
     model: Option<&str>,
 ) -> anyhow::Result<()> {
-    let result = generate_review(repo_root, pr_url, agent, model)?;
+    eprintln!("🔍 Review started: {pr_url}");
+    let result = match generate_review(repo_root, pr_url, agent, model) {
+        Ok(result) => result,
+        Err(err) => {
+            eprintln!("❌ Review failed: {pr_url}: {err}");
+            return Err(err);
+        }
+    };
     println!("{}", result.markdown);
+    eprintln!("✅ Review finished: {pr_url}");
     Ok(())
 }
 

@@ -228,9 +228,20 @@ impl AppState {
 
         tokio::task::spawn_blocking(move || {
             let pr_url = format!("https://github.com/{owner}/{repo}/pull/{number}");
-            let details = github::fetch_pr_details(&pr_url)?;
-            upsert_pr_from_details(&db, &details)?;
-            run_review_for_details(&db, &config, &work_dir, &details)
+            println!("🔍 Review started: {pr_url}");
+
+            let result = (|| -> anyhow::Result<()> {
+                let details = github::fetch_pr_details(&pr_url)?;
+                upsert_pr_from_details(&db, &details)?;
+                run_review_for_details(&db, &config, &work_dir, &details)
+            })();
+
+            match &result {
+                Ok(()) => println!("✅ Review finished: {pr_url}"),
+                Err(err) => eprintln!("❌ Review failed: {pr_url}: {err}"),
+            }
+
+            result
         })
         .await
         .context("review task join failure")?
