@@ -1,6 +1,8 @@
 use std::{
     collections::BTreeMap,
+    env,
     io::{BufRead as _, BufReader},
+    path::Path,
     process::{Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -19,8 +21,32 @@ pub fn set_verbose(verbose: bool) {
     VERBOSE.store(verbose, Ordering::SeqCst);
 }
 
+pub fn ensure_command_available(cmd_name: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        is_command_available(cmd_name),
+        "❌ Required command `{cmd_name}` is not installed or not available in PATH"
+    );
+    Ok(())
+}
+
 fn is_verbose() -> bool {
     VERBOSE.load(Ordering::SeqCst)
+}
+
+fn is_command_available(cmd_name: &str) -> bool {
+    if cmd_name.contains(std::path::MAIN_SEPARATOR) {
+        return command_candidate_exists(Path::new(cmd_name));
+    }
+
+    let Some(path_var) = env::var_os("PATH") else {
+        return false;
+    };
+
+    env::split_paths(&path_var).any(|path| command_candidate_exists(&path.join(cmd_name)))
+}
+
+fn command_candidate_exists(path: &Path) -> bool {
+    path.is_file()
 }
 
 #[derive(Debug)]

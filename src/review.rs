@@ -1,7 +1,10 @@
 use camino::Utf8Path;
 use serde_json::{Map, Value};
 
-use crate::{args::Agent, cmd::Cmd};
+use crate::{
+    args::Agent,
+    cmd::{Cmd, ensure_command_available},
+};
 
 #[derive(Debug, Clone)]
 pub struct ReviewResult {
@@ -247,6 +250,8 @@ fn run_kiro(
     prompt: &str,
     model: Option<&str>,
 ) -> anyhow::Result<(String, Option<String>, String)> {
+    ensure_command_available("kiro-cli")?;
+
     let mut args = vec!["chat".to_string(), "--no-interactive".to_string()];
     if let Some(model) = model {
         args.push("--model".to_string());

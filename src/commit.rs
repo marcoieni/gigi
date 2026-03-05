@@ -3,7 +3,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use inquire::validator::Validation;
 
-use crate::cmd::{Cmd, CmdOutput};
+use crate::cmd::{Cmd, CmdOutput, ensure_command_available};
 
 /// Check if copilot CLI is installed.
 fn is_copilot_installed() -> bool {
@@ -193,6 +193,8 @@ pub fn generate_kiro_commit_message(
     repo_root: &Utf8Path,
     model: Option<&str>,
 ) -> anyhow::Result<String> {
+    ensure_command_available("kiro-cli")?;
+
     let diff = get_diff(repo_root)
         .context("can't get repository diff")?
         .context("no changes to generate commit message for")?;
