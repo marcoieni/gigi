@@ -842,7 +842,10 @@ mod tests {
 
         let threads = db.list_dashboard_threads().unwrap();
         assert_eq!(threads.len(), 1);
-        assert_eq!(threads[0].pr_url.as_deref(), Some(current_pr.pr_url.as_str()));
+        assert_eq!(
+            threads[0].pr_url.as_deref(),
+            Some(current_pr.pr_url.as_str())
+        );
         assert_eq!(threads[0].subject_title, "current");
     }
 }
