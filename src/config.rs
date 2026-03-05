@@ -79,6 +79,20 @@ impl Default for DashboardConfig {
     }
 }
 
+pub fn default_config_toml() -> &'static str {
+    r#"watch_period_seconds = 60
+rereview_mode = "on_update" # or "manual"
+
+[ai]
+provider = "copilot" # or "gemini" or "kiro"
+# model = "gpt-5.3-codex"
+
+[dashboard]
+host = "127.0.0.1"
+port = 8787
+"#
+}
+
 pub fn resolve_paths() -> anyhow::Result<AppPaths> {
     let home = std::env::var("HOME").context("HOME env var is not set")?;
     let home = PathBuf::from(home);
@@ -179,5 +193,16 @@ port = 9000
         let paths = resolve_paths().unwrap();
         assert!(paths.config_path.ends_with(".config/gigi/config.toml"));
         assert!(paths.db_path.ends_with(".local/share/gigi/gigi.db"));
+    }
+
+    #[test]
+    fn default_config_template_is_valid() {
+        let cfg: AppConfig = toml::from_str(default_config_toml()).unwrap();
+        assert_eq!(cfg.watch_period_seconds, 60);
+        assert_eq!(cfg.rereview_mode, RereviewMode::OnUpdate);
+        assert_eq!(cfg.ai.provider, AiProvider::Copilot);
+        assert_eq!(cfg.ai.model, None);
+        assert_eq!(cfg.dashboard.host, "127.0.0.1");
+        assert_eq!(cfg.dashboard.port, 8787);
     }
 }

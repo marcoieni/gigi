@@ -51,6 +51,8 @@ pub enum Command {
         #[arg(long)]
         model: Option<String>,
     },
+    /// Initialize the default config file used by `serve`
+    Init,
     /// Start the local server that watches GitHub notifications and PRs
     Serve,
     Squash {

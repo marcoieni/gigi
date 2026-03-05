@@ -96,6 +96,15 @@ Examples:
 - `gigi review https://github.com/OWNER/REPO/pull/123`
 - `gigi review --agent gemini --model gemini-3-flash-preview https://github.com/OWNER/REPO/pull/123`
 
+### Init
+
+Initialize `~/.config/gigi/config.toml` with the default settings used by `serve`.
+If the file already exists, it is left unchanged.
+
+Examples:
+
+- `gigi init`
+
 ### Serve
 
 Run a local server that periodically watches GitHub notifications and your open PRs,

@@ -6,6 +6,7 @@ mod commit;
 mod config;
 mod db;
 mod github;
+mod init;
 mod review;
 mod serve;
 mod web;
@@ -48,6 +49,8 @@ fn main() -> anyhow::Result<()> {
             let repo_root = repo_root();
             review_pr(&repo_root, &pr, agent.as_ref(), model.as_deref())
         }
+
+        args::Command::Init => init::run_init(),
 
         args::Command::Serve => serve::run_serve(),
 
