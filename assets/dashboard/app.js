@@ -59,6 +59,20 @@ async function doFixes(prUrl) {
   }
 }
 
+async function runReview(prUrl) {
+  const parsed = parsePrUrl(prUrl);
+  if (!parsed) return;
+  setStatus("Running review...");
+  try {
+    await api(`/api/prs/${parsed.owner}/${parsed.repo}/${parsed.number}/review`, {
+      method: "POST",
+    });
+    setStatus("Review completed");
+  } catch (err) {
+    setStatus(`Review failed: ${err.message}`);
+  }
+}
+
 async function markDone(threadId) {
   setStatus("Marking done...");
   await api(`/api/threads/${threadId}/done`, { method: "POST" });
@@ -89,6 +103,15 @@ function threadCard(thread) {
     reviewBtn.textContent = hasReview ? (needsChanges ? "Fixes needed" : "Safe") : "No review";
     reviewBtn.addEventListener("click", () => openReview(thread.pr_url));
     row.appendChild(reviewBtn);
+
+    const runReviewBtn = document.createElement("button");
+    runReviewBtn.className = "btn";
+    runReviewBtn.textContent = hasReview ? "Re-review" : "Review now";
+    runReviewBtn.addEventListener("click", async () => {
+      await runReview(thread.pr_url);
+      await loadThreads();
+    });
+    row.appendChild(runReviewBtn);
 
     if (needsChanges) {
       const fixBtn = document.createElement("button");

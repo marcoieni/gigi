@@ -15,6 +15,8 @@ pub struct AppPaths {
 pub struct AppConfig {
     pub watch_period_seconds: u64,
     pub rereview_mode: RereviewMode,
+    pub initial_review_lookback_days: u64,
+    pub initial_review_max_prs: usize,
     pub ai: AiConfig,
     pub dashboard: DashboardConfig,
 }
@@ -55,6 +57,8 @@ impl Default for AppConfig {
         Self {
             watch_period_seconds: 60,
             rereview_mode: RereviewMode::OnUpdate,
+            initial_review_lookback_days: 3,
+            initial_review_max_prs: 10,
             ai: AiConfig::default(),
             dashboard: DashboardConfig::default(),
         }
@@ -82,6 +86,8 @@ impl Default for DashboardConfig {
 pub fn default_config_toml() -> &'static str {
     r#"watch_period_seconds = 60
 rereview_mode = "on_update" # or "manual"
+initial_review_lookback_days = 3
+initial_review_max_prs = 10
 
 [ai]
 provider = "copilot" # or "gemini" or "kiro"
@@ -159,6 +165,8 @@ mod tests {
         let cfg = AppConfig::default();
         assert_eq!(cfg.watch_period_seconds, 60);
         assert_eq!(cfg.rereview_mode, RereviewMode::OnUpdate);
+        assert_eq!(cfg.initial_review_lookback_days, 3);
+        assert_eq!(cfg.initial_review_max_prs, 10);
         assert_eq!(cfg.dashboard.host, "127.0.0.1");
         assert_eq!(cfg.dashboard.port, 8787);
         assert_eq!(cfg.ai.provider, AiProvider::Copilot);
@@ -169,6 +177,8 @@ mod tests {
         let raw = r#"
 watch_period_seconds = 15
 rereview_mode = "manual"
+initial_review_lookback_days = 7
+initial_review_max_prs = 5
 
 [ai]
 provider = "kiro"
@@ -182,6 +192,8 @@ port = 9000
         let cfg: AppConfig = toml::from_str(raw).unwrap();
         assert_eq!(cfg.watch_period_seconds, 15);
         assert_eq!(cfg.rereview_mode, RereviewMode::Manual);
+        assert_eq!(cfg.initial_review_lookback_days, 7);
+        assert_eq!(cfg.initial_review_max_prs, 5);
         assert_eq!(cfg.ai.provider, AiProvider::Kiro);
         assert_eq!(cfg.ai.model.as_deref(), Some("x"));
         assert_eq!(cfg.dashboard.host, "0.0.0.0");
@@ -200,6 +212,8 @@ port = 9000
         let cfg: AppConfig = toml::from_str(default_config_toml()).unwrap();
         assert_eq!(cfg.watch_period_seconds, 60);
         assert_eq!(cfg.rereview_mode, RereviewMode::OnUpdate);
+        assert_eq!(cfg.initial_review_lookback_days, 3);
+        assert_eq!(cfg.initial_review_max_prs, 10);
         assert_eq!(cfg.ai.provider, AiProvider::Copilot);
         assert_eq!(cfg.ai.model, None);
         assert_eq!(cfg.dashboard.host, "127.0.0.1");

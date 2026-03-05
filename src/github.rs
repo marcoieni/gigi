@@ -36,6 +36,7 @@ pub struct PrDetails {
     pub head_ref: String,
     pub base_ref: String,
     pub head_sha: String,
+    pub created_at: String,
     pub updated_at: String,
 }
 
@@ -218,7 +219,7 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
             "view",
             pr_url,
             "--json",
-            "title,url,state,headRefName,headRefOid,baseRefName,updatedAt,number",
+            "title,url,state,headRefName,headRefOid,baseRefName,createdAt,updatedAt,number",
         ],
     )
     .run();
@@ -265,6 +266,11 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let created_at = value
+        .get("createdAt")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     let updated_at = value
         .get("updatedAt")
         .and_then(Value::as_str)
@@ -281,6 +287,7 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         head_ref,
         base_ref,
         head_sha,
+        created_at,
         updated_at,
     })
 }

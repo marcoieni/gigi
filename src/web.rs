@@ -26,6 +26,7 @@ pub async fn run_server(
             "/api/prs/{owner}/{repo}/{number}/review/latest",
             get(get_latest_review),
         )
+        .route("/api/prs/{owner}/{repo}/{number}/review", post(run_review))
         .route("/api/threads/{thread_id}/done", post(mark_done))
         .route("/api/prs/{owner}/{repo}/{number}/fix", post(run_fix))
         .route("/api/refresh", post(refresh))
@@ -109,6 +110,18 @@ async fn run_fix(
         .map_err(|err| ApiErrorResponse::internal(&err))?;
 
     Ok(Json(FixResponse { output }))
+}
+
+async fn run_review(
+    State(state): State<std::sync::Arc<AppState>>,
+    AxumPath((owner, repo, number)): AxumPath<(String, String, i64)>,
+) -> Result<StatusCode, ApiErrorResponse> {
+    state
+        .run_review(owner, repo, number)
+        .await
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
+
+    Ok(StatusCode::OK)
 }
 
 async fn refresh(

@@ -125,6 +125,8 @@ Example `~/.config/gigi/config.toml`:
 ```toml
 watch_period_seconds = 60
 rereview_mode = "on_update" # or "manual"
+initial_review_lookback_days = 3
+initial_review_max_prs = 10
 
 [ai]
 provider = "copilot" # or "gemini" or "kiro"
@@ -134,6 +136,11 @@ provider = "copilot" # or "gemini" or "kiro"
 host = "127.0.0.1"
 port = 8787
 ```
+
+On startup, `serve` only auto-reviews PRs opened or updated within
+`initial_review_lookback_days`, and runs at most `initial_review_max_prs`
+reviews. The dashboard includes a "Review now" button to manually review
+any skipped PR.
 
 ### Sync
 

@@ -1,4 +1,8 @@
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::Context as _;
 use camino::{Utf8Path, Utf8PathBuf};
@@ -24,6 +28,24 @@ pub struct PollStats {
     pub authored_prs_fetched: usize,
     pub prs_seen: usize,
     pub reviews_run: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PollMode {
+    Startup,
+    Regular,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StartupReviewLimits {
+    lookback_days: u64,
+    max_prs: usize,
+}
+
+#[derive(Debug, Default)]
+struct StartupReviewSelection {
+    to_review: Vec<github::PrDetails>,
+    to_mark_baseline: Vec<github::PrDetails>,
 }
 
 pub fn run_serve() -> anyhow::Result<()> {
@@ -64,15 +86,20 @@ async fn run_serve_async() -> anyhow::Result<()> {
     println!("📄 Config: {}", paths.config_path.display());
     println!("🗄️  DB: {}", paths.db_path.display());
 
+    if let Err(err) = state.poll_once_startup().await {
+        eprintln!("⚠️ Initial poll cycle failed: {err}");
+    }
+
     let poll_state = Arc::clone(&state);
     let poll_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(
             poll_state.config.watch_period_seconds.max(1),
         ));
+        interval.tick().await;
 
         loop {
             interval.tick().await;
-            if let Err(err) = poll_state.poll_once().await {
+            if let Err(err) = poll_state.poll_once_regular().await {
                 eprintln!("⚠️ Poll cycle failed: {err}");
             }
         }
@@ -98,6 +125,18 @@ async fn run_serve_async() -> anyhow::Result<()> {
 
 impl AppState {
     pub async fn poll_once(&self) -> anyhow::Result<PollStats> {
+        self.poll_once_regular().await
+    }
+
+    pub async fn poll_once_startup(&self) -> anyhow::Result<PollStats> {
+        self.poll_once_with_mode(PollMode::Startup).await
+    }
+
+    pub async fn poll_once_regular(&self) -> anyhow::Result<PollStats> {
+        self.poll_once_with_mode(PollMode::Regular).await
+    }
+
+    async fn poll_once_with_mode(&self, mode: PollMode) -> anyhow::Result<PollStats> {
         let _guard = self.poll_lock.lock().await;
 
         let db = self.db.clone();
@@ -105,7 +144,7 @@ impl AppState {
         let work_dir = self.work_dir.clone();
 
         let handle =
-            tokio::task::spawn_blocking(move || poll_once_blocking(&db, &config, &work_dir));
+            tokio::task::spawn_blocking(move || poll_once_blocking(&db, &config, &work_dir, mode));
         handle
             .await
             .context("polling task join failure")?
@@ -165,12 +204,30 @@ impl AppState {
         .await
         .context("fix task join failure")?
     }
+
+    pub async fn run_review(&self, owner: String, repo: String, number: i64) -> anyhow::Result<()> {
+        let _guard = self.poll_lock.lock().await;
+
+        let db = self.db.clone();
+        let config = self.config.clone();
+        let work_dir = self.work_dir.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let pr_url = format!("https://github.com/{owner}/{repo}/pull/{number}");
+            let details = github::fetch_pr_details(&pr_url)?;
+            upsert_pr_from_details(&db, &details)?;
+            run_review_for_details(&db, &config, &work_dir, &details)
+        })
+        .await
+        .context("review task join failure")?
+    }
 }
 
 fn poll_once_blocking(
     db: &Db,
     config: &AppConfig,
     work_dir: &Utf8Path,
+    mode: PollMode,
 ) -> anyhow::Result<PollStats> {
     let notifications = github::fetch_notifications()?;
     let authored_prs = github::fetch_authored_open_prs()?;
@@ -219,7 +276,17 @@ fn poll_once_blocking(
         pr_urls.insert(authored.pr_url.clone());
     }
 
+    let startup_limits = if mode == PollMode::Startup {
+        Some(StartupReviewLimits {
+            lookback_days: config.initial_review_lookback_days,
+            max_prs: config.initial_review_max_prs,
+        })
+    } else {
+        None
+    };
+
     let mut reviews_run = 0_usize;
+    let mut review_candidates = Vec::new();
 
     for pr_url in &pr_urls {
         let details = match github::fetch_pr_details(pr_url) {
@@ -230,48 +297,11 @@ fn poll_once_blocking(
             }
         };
 
-        db.upsert_pr(&db::NewPr {
-            pr_url: details.pr_url.clone(),
-            owner: details.owner.clone(),
-            repo: details.repo.clone(),
-            number: details.number,
-            state: details.state.clone(),
-            title: details.title.clone(),
-            head_ref: details.head_ref.clone(),
-            base_ref: details.base_ref.clone(),
-            head_sha: details.head_sha.clone(),
-            updated_at: details.updated_at.clone(),
-        })?;
+        upsert_pr_from_details(db, &details)?;
 
         let stored = db.get_pr(&details.pr_url)?;
-        let should_review = should_review_pr(config.rereview_mode, stored.as_ref(), &details);
-        if should_review {
-            let agent = config.ai.provider.as_agent();
-            match review::generate_review(
-                work_dir,
-                &details.pr_url,
-                Some(&agent),
-                config.ai.model.as_deref(),
-            ) {
-                Ok(review_result) => {
-                    db.insert_review(&db::NewReview {
-                        pr_url: details.pr_url.clone(),
-                        provider: review_result.provider,
-                        model: review_result.model,
-                        requires_code_changes: review_result.requires_code_changes,
-                        content_md: review_result.markdown,
-                    })?;
-                    db.set_pr_review_marker(
-                        &details.pr_url,
-                        &details.head_sha,
-                        &details.updated_at,
-                    )?;
-                    reviews_run += 1;
-                }
-                Err(err) => {
-                    eprintln!("⚠️ Review failed for {}: {err}", details.pr_url);
-                }
-            }
+        if should_review_pr(config.rereview_mode, stored.as_ref(), &details) {
+            review_candidates.push(details.clone());
         }
 
         if details.state != "OPEN"
@@ -285,12 +315,224 @@ fn poll_once_blocking(
         }
     }
 
+    let selection = if let Some(limits) = startup_limits {
+        apply_startup_review_limits(review_candidates, limits, unix_ts())
+    } else {
+        StartupReviewSelection {
+            to_review: review_candidates,
+            to_mark_baseline: Vec::new(),
+        }
+    };
+
+    for details in selection.to_mark_baseline {
+        db.set_pr_review_marker(&details.pr_url, &details.head_sha, &details.updated_at)?;
+    }
+
+    for details in selection.to_review {
+        match run_review_for_details(db, config, work_dir, &details) {
+            Ok(()) => {
+                reviews_run += 1;
+            }
+            Err(err) => {
+                eprintln!("⚠️ Review failed for {}: {err}", details.pr_url);
+            }
+        }
+    }
+
     Ok(PollStats {
         notifications_fetched: notifications.len(),
         authored_prs_fetched: authored_prs.len(),
         prs_seen: pr_urls.len(),
         reviews_run,
     })
+}
+
+fn upsert_pr_from_details(db: &Db, details: &github::PrDetails) -> anyhow::Result<()> {
+    db.upsert_pr(&db::NewPr {
+        pr_url: details.pr_url.clone(),
+        owner: details.owner.clone(),
+        repo: details.repo.clone(),
+        number: details.number,
+        state: details.state.clone(),
+        title: details.title.clone(),
+        head_ref: details.head_ref.clone(),
+        base_ref: details.base_ref.clone(),
+        head_sha: details.head_sha.clone(),
+        updated_at: details.updated_at.clone(),
+    })
+}
+
+fn run_review_for_details(
+    db: &Db,
+    config: &AppConfig,
+    work_dir: &Utf8Path,
+    details: &github::PrDetails,
+) -> anyhow::Result<()> {
+    let agent = config.ai.provider.as_agent();
+    let review_result = review::generate_review(
+        work_dir,
+        &details.pr_url,
+        Some(&agent),
+        config.ai.model.as_deref(),
+    )?;
+
+    db.insert_review(&db::NewReview {
+        pr_url: details.pr_url.clone(),
+        provider: review_result.provider,
+        model: review_result.model,
+        requires_code_changes: review_result.requires_code_changes,
+        content_md: review_result.markdown,
+    })?;
+    db.set_pr_review_marker(&details.pr_url, &details.head_sha, &details.updated_at)?;
+
+    Ok(())
+}
+
+fn apply_startup_review_limits(
+    candidates: Vec<github::PrDetails>,
+    limits: StartupReviewLimits,
+    now_unix_seconds: i64,
+) -> StartupReviewSelection {
+    let lookback_seconds = i64::try_from(limits.lookback_days)
+        .unwrap_or(i64::MAX)
+        .saturating_mul(86_400);
+    let cutoff = now_unix_seconds.saturating_sub(lookback_seconds);
+
+    let mut recent = Vec::new();
+    let mut to_mark_baseline = Vec::new();
+
+    for details in candidates {
+        if is_pr_recent_enough(&details, cutoff) {
+            recent.push(details);
+        } else {
+            to_mark_baseline.push(details);
+        }
+    }
+
+    recent.sort_by(|a, b| pr_timestamp_for_sort(b).cmp(&pr_timestamp_for_sort(a)));
+
+    let mut to_review = Vec::new();
+    for details in recent {
+        if to_review.len() < limits.max_prs {
+            to_review.push(details);
+        } else {
+            to_mark_baseline.push(details);
+        }
+    }
+
+    StartupReviewSelection {
+        to_review,
+        to_mark_baseline,
+    }
+}
+
+fn is_pr_recent_enough(details: &github::PrDetails, cutoff_unix_seconds: i64) -> bool {
+    let created_recent = parse_github_timestamp_to_unix_seconds(&details.created_at)
+        .is_some_and(|ts| ts >= cutoff_unix_seconds);
+    let updated_recent = parse_github_timestamp_to_unix_seconds(&details.updated_at)
+        .is_some_and(|ts| ts >= cutoff_unix_seconds);
+
+    created_recent || updated_recent
+}
+
+fn pr_timestamp_for_sort(details: &github::PrDetails) -> i64 {
+    parse_github_timestamp_to_unix_seconds(&details.updated_at).unwrap_or(0)
+}
+
+fn parse_github_timestamp_to_unix_seconds(timestamp: &str) -> Option<i64> {
+    let (date_part, time_part) = timestamp.split_once('T')?;
+    let (year, month, day) = parse_date_parts(date_part)?;
+    let (hour, minute, second, tz_offset_seconds) = parse_time_and_offset(time_part)?;
+
+    let days = days_from_civil(year, month, day)?;
+    let day_seconds = i64::from(hour) * 3600 + i64::from(minute) * 60 + i64::from(second);
+    days.saturating_mul(86_400)
+        .checked_add(day_seconds)
+        .and_then(|local_seconds| local_seconds.checked_sub(i64::from(tz_offset_seconds)))
+}
+
+fn parse_date_parts(date_part: &str) -> Option<(i32, u32, u32)> {
+    let mut parts = date_part.split('-');
+    let year = parts.next()?.parse::<i32>().ok()?;
+    let month = parts.next()?.parse::<u32>().ok()?;
+    let day = parts.next()?.parse::<u32>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    Some((year, month, day))
+}
+
+fn parse_time_and_offset(time_part: &str) -> Option<(u32, u32, u32, i32)> {
+    if let Some(clock) = time_part.strip_suffix('Z') {
+        let (hour, minute, second) = parse_hms(clock)?;
+        return Some((hour, minute, second, 0));
+    }
+
+    let tz_pos = time_part.rfind(['+', '-'])?;
+    let (clock, offset_part) = time_part.split_at(tz_pos);
+    let sign = if offset_part.starts_with('-') { -1 } else { 1 };
+    let offset = &offset_part[1..];
+    let (offset_hour, offset_minute) = parse_hm(offset)?;
+    let tz_offset_seconds = sign * (offset_hour * 3600 + offset_minute * 60);
+    let (hour, minute, second) = parse_hms(clock)?;
+    Some((hour, minute, second, tz_offset_seconds))
+}
+
+fn parse_hms(clock: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = clock.split(':');
+    let hour = parts.next()?.parse::<u32>().ok()?;
+    let minute = parts.next()?.parse::<u32>().ok()?;
+    let second_raw = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+
+    let second_text = second_raw
+        .split_once('.')
+        .map_or(second_raw, |(sec, _)| sec);
+    let second = second_text.parse::<u32>().ok()?;
+    if hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    Some((hour, minute, second))
+}
+
+fn parse_hm(clock: &str) -> Option<(i32, i32)> {
+    let mut parts = clock.split(':');
+    let hour = parts.next()?.parse::<i32>().ok()?;
+    let minute = parts.next()?.parse::<i32>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) {
+        return None;
+    }
+    Some((hour, minute))
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
+    let adjusted_year = year - i32::from(month <= 2);
+    let era = if adjusted_year >= 0 {
+        adjusted_year / 400
+    } else {
+        (adjusted_year - 399) / 400
+    };
+    let yoe = adjusted_year - era * 400;
+    let month_i32 = i32::try_from(month).ok()?;
+    let day_i32 = i32::try_from(day).ok()?;
+    let m = month_i32 + if month > 2 { -3 } else { 9 };
+    let doy = (153 * m + 2) / 5 + day_i32 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(i64::from(era) * 146_097 + i64::from(doe) - 719_468)
+}
+
+fn unix_ts() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
 fn should_review_pr(
@@ -379,6 +621,7 @@ mod tests {
             head_ref: "feat".to_string(),
             base_ref: "main".to_string(),
             head_sha: "sha2".to_string(),
+            created_at: "2025-12-31T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         };
         let stored = db::StoredPr {
@@ -415,6 +658,7 @@ mod tests {
             head_ref: "feat".to_string(),
             base_ref: "main".to_string(),
             head_sha: "sha1".to_string(),
+            created_at: "2025-12-31T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         };
         let stored = db::StoredPr {
@@ -450,5 +694,71 @@ mod tests {
         };
 
         assert_eq!(dashboard_browser_url(&cfg), "http://localhost:8787");
+    }
+
+    #[test]
+    fn parses_github_timestamps() {
+        let ts = parse_github_timestamp_to_unix_seconds("1970-01-01T00:00:00Z").unwrap();
+        assert_eq!(ts, 0);
+
+        let with_offset =
+            parse_github_timestamp_to_unix_seconds("2026-01-10T02:30:00+02:00").unwrap();
+        let utc = parse_github_timestamp_to_unix_seconds("2026-01-10T00:30:00Z").unwrap();
+        assert_eq!(with_offset, utc);
+    }
+
+    #[test]
+    fn startup_limits_filter_and_cap_reviews() {
+        let now = parse_github_timestamp_to_unix_seconds("2026-01-10T00:00:00Z").unwrap();
+        let limits = StartupReviewLimits {
+            lookback_days: 3,
+            max_prs: 1,
+        };
+        let candidates = vec![
+            github::PrDetails {
+                pr_url: "https://github.com/o/r/pull/1".to_string(),
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                number: 1,
+                state: "OPEN".to_string(),
+                title: "old".to_string(),
+                head_ref: "feat1".to_string(),
+                base_ref: "main".to_string(),
+                head_sha: "sha1".to_string(),
+                created_at: "2025-12-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            },
+            github::PrDetails {
+                pr_url: "https://github.com/o/r/pull/2".to_string(),
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                number: 2,
+                state: "OPEN".to_string(),
+                title: "recent".to_string(),
+                head_ref: "feat2".to_string(),
+                base_ref: "main".to_string(),
+                head_sha: "sha2".to_string(),
+                created_at: "2026-01-09T00:00:00Z".to_string(),
+                updated_at: "2026-01-09T12:00:00Z".to_string(),
+            },
+            github::PrDetails {
+                pr_url: "https://github.com/o/r/pull/3".to_string(),
+                owner: "o".to_string(),
+                repo: "r".to_string(),
+                number: 3,
+                state: "OPEN".to_string(),
+                title: "recent newer".to_string(),
+                head_ref: "feat3".to_string(),
+                base_ref: "main".to_string(),
+                head_sha: "sha3".to_string(),
+                created_at: "2026-01-09T00:00:00Z".to_string(),
+                updated_at: "2026-01-09T20:00:00Z".to_string(),
+            },
+        ];
+
+        let selected = apply_startup_review_limits(candidates, limits, now);
+        assert_eq!(selected.to_review.len(), 1);
+        assert_eq!(selected.to_review[0].number, 3);
+        assert_eq!(selected.to_mark_baseline.len(), 2);
     }
 }
