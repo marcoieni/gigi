@@ -5,6 +5,8 @@ use anyhow::Context as _;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
+use crate::review::sanitize_review_markdown;
+
 #[derive(Debug, Clone)]
 pub struct Db {
     path: PathBuf,
@@ -109,6 +111,7 @@ impl Db {
             run_migrations(conn)?;
             Ok(())
         })?;
+        db.sanitize_stored_reviews()?;
 
         Ok(db)
     }
@@ -259,6 +262,7 @@ impl Db {
 
     pub fn insert_review(&self, row: &NewReview) -> anyhow::Result<()> {
         let now = unix_ts();
+        let content_md = sanitize_review_markdown(&row.content_md);
         self.with_conn(|conn| {
             conn.execute(
                 r#"
@@ -271,7 +275,7 @@ impl Db {
                     row.provider,
                     row.model,
                     bool_to_int(row.requires_code_changes),
-                    row.content_md,
+                    content_md,
                     now,
                 ],
             )?;
@@ -357,7 +361,7 @@ impl Db {
                         provider: row.get(2)?,
                         model: row.get(3)?,
                         requires_code_changes: requires_code_changes != 0,
-                        content_md: row.get(5)?,
+                        content_md: sanitize_review_markdown(&row.get::<_, String>(5)?),
                         created_at: row.get(6)?,
                     })
                 },
@@ -426,6 +430,34 @@ impl Db {
                 out.push(row?);
             }
             Ok(deduplicate_dashboard_threads(out))
+        })
+    }
+
+    fn sanitize_stored_reviews(&self) -> anyhow::Result<()> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare("SELECT id, content_md FROM reviews")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+
+            let mut updates = Vec::new();
+            for row in rows {
+                let (id, content_md) = row?;
+                let sanitized = sanitize_review_markdown(&content_md);
+                if sanitized != content_md {
+                    updates.push((id, sanitized));
+                }
+            }
+            drop(stmt);
+
+            for (id, sanitized) in updates {
+                conn.execute(
+                    "UPDATE reviews SET content_md = ?2 WHERE id = ?1",
+                    params![id, sanitized],
+                )?;
+            }
+
+            Ok(())
         })
     }
 }
@@ -689,6 +721,84 @@ mod tests {
 
         let review = db.latest_review_for_pr("a", "b", 1).unwrap().unwrap();
         assert!(review.requires_code_changes);
+        assert_eq!(review.content_md, "review");
+    }
+
+    #[test]
+    fn insert_review_strips_control_sequences() {
+        let db = test_db();
+
+        db.upsert_pr(&NewPr {
+            pr_url: "https://github.com/a/b/pull/1".to_string(),
+            owner: "a".to_string(),
+            repo: "b".to_string(),
+            number: 1,
+            state: "OPEN".to_string(),
+            title: "Title".to_string(),
+            head_ref: "feat".to_string(),
+            base_ref: "main".to_string(),
+            head_sha: "sha1".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        })
+        .unwrap();
+
+        db.insert_review(&NewReview {
+            pr_url: "https://github.com/a/b/pull/1".to_string(),
+            provider: "copilot".to_string(),
+            model: None,
+            requires_code_changes: false,
+            content_md: "\u{1b}[38;5;141mSummary\u{1b}[0m".to_string(),
+        })
+        .unwrap();
+
+        let review = db.latest_review_for_pr("a", "b", 1).unwrap().unwrap();
+        assert_eq!(review.content_md, "Summary");
+    }
+
+    #[test]
+    fn db_init_cleans_existing_reviews() {
+        let mut path = std::env::temp_dir();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("gigi-test-clean-{ts}.sqlite"));
+
+        {
+            let db = Db::new(&path).unwrap();
+            db.upsert_pr(&NewPr {
+                pr_url: "https://github.com/a/b/pull/1".to_string(),
+                owner: "a".to_string(),
+                repo: "b".to_string(),
+                number: 1,
+                state: "OPEN".to_string(),
+                title: "Title".to_string(),
+                head_ref: "feat".to_string(),
+                base_ref: "main".to_string(),
+                head_sha: "sha1".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            })
+            .unwrap();
+            db.with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO reviews (pr_url, provider, model, requires_code_changes, content_md, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        "https://github.com/a/b/pull/1",
+                        "copilot",
+                        Option::<String>::None,
+                        0_i64,
+                        "\u{1b}[38;5;141mSummary\u{1b}[0m",
+                        0_i64,
+                    ],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        let db = Db::new(&path).unwrap();
+        let review = db.latest_review_for_pr("a", "b", 1).unwrap().unwrap();
+        assert_eq!(review.content_md, "Summary");
     }
 
     #[test]

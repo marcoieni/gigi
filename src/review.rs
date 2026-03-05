@@ -4,6 +4,7 @@ use serde_json::{Map, Value};
 use crate::{
     args::Agent,
     cmd::{Cmd, ensure_command_available},
+    terminal::strip_control_sequences,
 };
 
 #[derive(Debug, Clone)]
@@ -82,6 +83,33 @@ pub fn parse_requires_code_changes(review_markdown: &str) -> Option<bool> {
         }
     }
     None
+}
+
+pub fn sanitize_review_markdown(review_markdown: &str) -> String {
+    let stripped = strip_control_sequences(review_markdown);
+    let mut lines = Vec::new();
+
+    for line in stripped.lines() {
+        lines.push(normalize_requires_code_changes_line(line));
+    }
+
+    if stripped.ends_with('\n') {
+        format!("{}\n", lines.join("\n"))
+    } else {
+        lines.join("\n")
+    }
+}
+
+fn normalize_requires_code_changes_line(line: &str) -> String {
+    let trimmed = line.trim_start();
+    if let Some(rest) = trimmed.strip_prefix('>') {
+        let rest = rest.trim_start();
+        if rest.starts_with("REQUIRES_CODE_CHANGES:") {
+            return rest.to_string();
+        }
+    }
+
+    line.to_string()
 }
 
 fn fetch_pr_metadata(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<String> {
@@ -211,7 +239,7 @@ fn run_copilot(
     Ok((
         "copilot".to_string(),
         Some(resolved_model),
-        output.stdout().to_string(),
+        sanitize_review_markdown(output.stdout()),
     ))
 }
 
@@ -249,7 +277,7 @@ fn run_gemini(
     Ok((
         "gemini".to_string(),
         Some(resolved_model),
-        output.stdout().to_string(),
+        sanitize_review_markdown(output.stdout()),
     ))
 }
 
@@ -288,7 +316,7 @@ fn run_kiro(
     Ok((
         "kiro".to_string(),
         Some(resolved_model),
-        output.stdout().to_string(),
+        sanitize_review_markdown(output.stdout()),
     ))
 }
 
@@ -311,5 +339,13 @@ mod tests {
     #[test]
     fn returns_none_when_missing_field() {
         assert!(parse_requires_code_changes("No header").is_none());
+    }
+
+    #[test]
+    fn parses_requires_code_changes_with_ansi_sequences() {
+        let value = parse_requires_code_changes(&sanitize_review_markdown(
+            "\u{1b}[38;5;141m> \u{1b}[0mREQUIRES_CODE_CHANGES: NO\u{1b}[0m\nrest",
+        ));
+        assert_eq!(value, Some(false));
     }
 }

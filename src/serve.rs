@@ -350,12 +350,14 @@ fn poll_once_blocking(
     }
 
     for details in selection.to_review {
+        println!("🔍 Auto-review started: {}", details.pr_url);
         match run_review_for_details(db, config, work_dir, &details) {
             Ok(()) => {
+                println!("✅ Auto-review finished: {}", details.pr_url);
                 reviews_run += 1;
             }
             Err(err) => {
-                eprintln!("⚠️ Review failed for {}: {err}", details.pr_url);
+                eprintln!("❌ Auto-review failed: {}: {err}", details.pr_url);
             }
         }
     }

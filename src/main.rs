@@ -9,6 +9,7 @@ mod github;
 mod init;
 mod review;
 mod serve;
+mod terminal;
 mod web;
 
 use anyhow::Context;
