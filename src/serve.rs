@@ -256,6 +256,7 @@ fn poll_once_blocking(
 ) -> anyhow::Result<PollStats> {
     let notifications = github::fetch_notifications()?;
     let authored_prs = github::fetch_authored_open_prs()?;
+    sync_authored_pr_threads(db, &authored_prs)?;
 
     let mut pr_urls = HashSet::new();
 
@@ -282,22 +283,6 @@ fn poll_once_blocking(
     }
 
     for authored in &authored_prs {
-        let thread_key = format!("mypr:{}", authored.pr_url);
-        db.upsert_thread(&db::NewThread {
-            thread_key,
-            github_thread_id: None,
-            source: "my_pr".to_string(),
-            repository: authored.repository.clone(),
-            subject_type: Some("PullRequest".to_string()),
-            subject_title: authored.title.clone(),
-            subject_url: Some(authored.pr_url.clone()),
-            reason: Some("authored".to_string()),
-            pr_url: Some(authored.pr_url.clone()),
-            unread: false,
-            done: false,
-            updated_at: authored.updated_at.clone(),
-        })?;
-
         pr_urls.insert(authored.pr_url.clone());
     }
 
@@ -368,6 +353,37 @@ fn poll_once_blocking(
         prs_seen: pr_urls.len(),
         reviews_run,
     })
+}
+
+fn sync_authored_pr_threads(
+    db: &Db,
+    authored_prs: &[github::AuthoredPrSummary],
+) -> anyhow::Result<()> {
+    let keep_pr_urls = authored_prs
+        .iter()
+        .map(|authored| authored.pr_url.clone())
+        .collect::<Vec<_>>();
+    db.delete_threads_by_source_except_pr_urls("my_pr", &keep_pr_urls)?;
+
+    for authored in authored_prs {
+        let thread_key = format!("mypr:{}", authored.pr_url);
+        db.upsert_thread(&db::NewThread {
+            thread_key,
+            github_thread_id: None,
+            source: "my_pr".to_string(),
+            repository: authored.repository.clone(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: authored.title.clone(),
+            subject_url: Some(authored.pr_url.clone()),
+            reason: Some("authored".to_string()),
+            pr_url: Some(authored.pr_url.clone()),
+            unread: false,
+            done: false,
+            updated_at: authored.updated_at.clone(),
+        })?;
+    }
+
+    Ok(())
 }
 
 fn upsert_pr_from_details(db: &Db, details: &github::PrDetails) -> anyhow::Result<()> {
@@ -632,6 +648,16 @@ fn dashboard_browser_url(config: &AppConfig) -> String {
 mod tests {
     use super::*;
 
+    fn test_db() -> Db {
+        let mut path = std::env::temp_dir();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("gigi-serve-test-{ts}.sqlite"));
+        Db::new(path).unwrap()
+    }
+
     #[test]
     fn rereview_on_update() {
         let details = github::PrDetails {
@@ -783,5 +809,40 @@ mod tests {
         assert_eq!(selected.to_review.len(), 1);
         assert_eq!(selected.to_review[0].number, 3);
         assert_eq!(selected.to_mark_baseline.len(), 2);
+    }
+
+    #[test]
+    fn sync_authored_pr_threads_removes_stale_entries() {
+        let db = test_db();
+        let stale_pr_url = "https://github.com/o/r/pull/1".to_string();
+        db.upsert_thread(&db::NewThread {
+            thread_key: format!("mypr:{stale_pr_url}"),
+            github_thread_id: None,
+            source: "my_pr".to_string(),
+            repository: "o/r".to_string(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: "stale".to_string(),
+            subject_url: Some(stale_pr_url.clone()),
+            reason: Some("authored".to_string()),
+            pr_url: Some(stale_pr_url),
+            unread: false,
+            done: false,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        })
+        .unwrap();
+
+        let current_pr = github::AuthoredPrSummary {
+            pr_url: "https://github.com/o/r/pull/2".to_string(),
+            repository: "o/r".to_string(),
+            title: "current".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+        };
+
+        sync_authored_pr_threads(&db, std::slice::from_ref(&current_pr)).unwrap();
+
+        let threads = db.list_dashboard_threads().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].pr_url.as_deref(), Some(current_pr.pr_url.as_str()));
+        assert_eq!(threads[0].subject_title, "current");
     }
 }

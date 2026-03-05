@@ -169,6 +169,34 @@ impl Db {
         })
     }
 
+    pub fn delete_threads_by_source_except_pr_urls(
+        &self,
+        source: &str,
+        keep_pr_urls: &[String],
+    ) -> anyhow::Result<()> {
+        self.with_conn(|conn| {
+            let mut sql = String::from("DELETE FROM threads WHERE source = ?1");
+            if !keep_pr_urls.is_empty() {
+                sql.push_str(" AND pr_url NOT IN (");
+                for idx in 0..keep_pr_urls.len() {
+                    if idx > 0 {
+                        sql.push_str(", ");
+                    }
+                    sql.push('?');
+                    sql.push_str(&(idx + 2).to_string());
+                }
+                sql.push(')');
+            }
+
+            let mut stmt = conn.prepare(&sql)?;
+            let params = std::iter::once(source.to_string())
+                .chain(keep_pr_urls.iter().cloned())
+                .collect::<Vec<_>>();
+            stmt.execute(rusqlite::params_from_iter(params))?;
+            Ok(())
+        })
+    }
+
     pub fn upsert_pr(&self, row: &NewPr) -> anyhow::Result<()> {
         let now = unix_ts();
         self.with_conn(|conn| {
@@ -922,5 +950,38 @@ mod tests {
         assert_eq!(threads[0].updated_at, "2026-01-02T00:00:00Z");
         assert_eq!(threads[0].pr_state.as_deref(), Some("MERGED"));
         assert!(threads[0].unread);
+    }
+
+    #[test]
+    fn delete_threads_by_source_except_pr_urls_removes_stale_my_pr_rows() {
+        let db = test_db();
+        let keep_pr_url = "https://github.com/a/b/pull/1".to_string();
+        let stale_pr_url = "https://github.com/a/b/pull/2".to_string();
+
+        for pr_url in [&keep_pr_url, &stale_pr_url] {
+            db.upsert_thread(&NewThread {
+                thread_key: format!("mypr:{pr_url}"),
+                github_thread_id: None,
+                source: "my_pr".to_string(),
+                repository: "a/b".to_string(),
+                subject_type: Some("PullRequest".to_string()),
+                subject_title: format!("PR {pr_url}"),
+                subject_url: Some(pr_url.clone()),
+                reason: Some("authored".to_string()),
+                pr_url: Some(pr_url.clone()),
+                unread: false,
+                done: false,
+                updated_at: "2026-01-02T00:00:00Z".to_string(),
+            })
+            .unwrap();
+        }
+
+        db.delete_threads_by_source_except_pr_urls("my_pr", std::slice::from_ref(&keep_pr_url))
+            .unwrap();
+
+        let threads = db.list_dashboard_threads().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].pr_url.as_deref(), Some(keep_pr_url.as_str()));
+        assert_eq!(threads[0].source, "my_pr");
     }
 }
