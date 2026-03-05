@@ -35,9 +35,10 @@ fn fetch_pr_metadata(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<Strin
     )
     .with_current_dir(repo_root)
     .run();
+    output.ensure_success("❌ Failed to fetch PR metadata")?;
     anyhow::ensure!(
-        output.status().success() && !output.stdout().trim().is_empty(),
-        "❌ Failed to fetch PR metadata"
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to fetch PR metadata: command returned empty output"
     );
     minimize_pr_metadata(output.stdout())
 }
@@ -89,9 +90,10 @@ fn fetch_pr_diff(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<String> {
     let output = Cmd::new("gh", ["pr", "diff", pr_url, "--color=never"])
         .with_current_dir(repo_root)
         .run();
+    output.ensure_success("❌ Failed to fetch PR diff")?;
     anyhow::ensure!(
-        output.status().success() && !output.stdout().trim().is_empty(),
-        "❌ Failed to fetch PR diff"
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to fetch PR diff: command returned empty output"
     );
     Ok(output.stdout().to_string())
 }
@@ -118,10 +120,10 @@ fn generate_copilot_review(
     .with_current_dir(repo_root)
     .run_interactive();
 
+    output.ensure_success("❌ Failed to generate PR review with Copilot")?;
     anyhow::ensure!(
-        output.status().success() && !output.stdout().trim().is_empty(),
-        "❌ Failed to generate PR review with Copilot: {}",
-        output.stderr()
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to generate PR review with Copilot: command returned empty output"
     );
 
     Ok(output.stdout().to_string())
@@ -151,10 +153,10 @@ fn generate_gemini_review(
     .with_current_dir(repo_root)
     .run_interactive();
 
+    output.ensure_success("❌ Failed to generate PR review with Gemini")?;
     anyhow::ensure!(
-        output.status().success() && !output.stdout().trim().is_empty(),
-        "❌ Failed to generate PR review with Gemini: {}",
-        output.stderr()
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to generate PR review with Gemini: command returned empty output"
     );
 
     Ok(output.stdout().to_string())

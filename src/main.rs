@@ -69,10 +69,7 @@ fn ensure_clean_repo(repo_root: &Utf8Path) -> anyhow::Result<()> {
     let output = Cmd::new("git", ["status", "--porcelain"])
         .with_current_dir(repo_root)
         .run();
-    anyhow::ensure!(
-        output.status().success(),
-        "❌ Failed to check repository status"
-    );
+    output.ensure_success("❌ Failed to check repository status")?;
     anyhow::ensure!(
         output.stdout().trim().is_empty(),
         "❌ Repository is not clean. Commit or stash changes first."
@@ -88,15 +85,23 @@ struct RepoInfo {
 }
 
 fn fetch_repo_info(repo_root: &Utf8Path) -> anyhow::Result<RepoInfo> {
+    let origin_repo = origin_name_with_owner(repo_root)?;
     let output = Cmd::new(
         "gh",
-        ["repo", "view", "--json", "isFork,parent,defaultBranchRef"],
+        [
+            "repo",
+            "view",
+            &origin_repo,
+            "--json",
+            "isFork,parent,defaultBranchRef",
+        ],
     )
     .with_current_dir(repo_root)
     .run();
+    output.ensure_success("❌ Failed to fetch repository info")?;
     anyhow::ensure!(
-        output.status().success() && !output.stdout().trim().is_empty(),
-        "❌ Failed to fetch repository info"
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to fetch repository info: command returned empty output"
     );
 
     let value: Value = serde_json::from_str(output.stdout())?;
@@ -135,6 +140,51 @@ fn fetch_repo_info(repo_root: &Utf8Path) -> anyhow::Result<RepoInfo> {
     })
 }
 
+fn origin_name_with_owner(repo_root: &Utf8Path) -> anyhow::Result<String> {
+    let output = Cmd::new("git", ["remote", "get-url", "origin"])
+        .with_current_dir(repo_root)
+        .run();
+    output.ensure_success("❌ Failed to detect origin remote URL")?;
+    anyhow::ensure!(
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to detect origin remote URL: command returned empty output"
+    );
+
+    parse_github_name_with_owner(output.stdout()).ok_or_else(|| {
+        anyhow::anyhow!(
+            "❌ Failed to parse origin remote URL as GitHub repository: {}",
+            output.stdout()
+        )
+    })
+}
+
+fn parse_github_name_with_owner(url: &str) -> Option<String> {
+    let trimmed = url.trim().trim_end_matches('/');
+    let path = if let Some(path) = trimmed.strip_prefix("git@github.com:") {
+        path
+    } else if let Some(path) = trimmed.strip_prefix("ssh://git@github.com/") {
+        path
+    } else if let Some(path) = trimmed.strip_prefix("https://github.com/") {
+        path
+    } else if let Some(path) = trimmed.strip_prefix("http://github.com/") {
+        path
+    } else if let Some(path) = trimmed.strip_prefix("git://github.com/") {
+        path
+    } else {
+        return None;
+    };
+
+    let normalized = path.strip_suffix(".git").unwrap_or(path).trim_matches('/');
+    let mut parts = normalized.split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    if parts.next().is_some() || owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+
+    Some(format!("{owner}/{repo}"))
+}
+
 fn ensure_upstream_remote(
     repo_root: &Utf8Path,
     parent_name_with_owner: &str,
@@ -150,10 +200,7 @@ fn ensure_upstream_remote(
     let add_output = Cmd::new("git", ["remote", "add", "upstream", &upstream_url])
         .with_current_dir(repo_root)
         .run();
-    anyhow::ensure!(
-        add_output.status().success(),
-        "❌ Failed to add upstream remote"
-    );
+    add_output.ensure_success("❌ Failed to add upstream remote")?;
     Ok(())
 }
 
@@ -188,17 +235,11 @@ fn sync_fork(repo_root: &Utf8Path) -> anyhow::Result<()> {
     )
     .with_current_dir(repo_root)
     .run();
-    anyhow::ensure!(
-        pull_output.status().success(),
-        "❌ Failed to sync default branch from upstream"
-    );
+    pull_output.ensure_success("❌ Failed to sync default branch from upstream")?;
     let push_output = Cmd::new("git", ["push", "origin", &repo_info.default_branch])
         .with_current_dir(repo_root)
         .run();
-    anyhow::ensure!(
-        push_output.status().success(),
-        "❌ Failed to push synced default branch to origin"
-    );
+    push_output.ensure_success("❌ Failed to push synced default branch to origin")?;
 
     if current != repo_info.default_branch {
         Cmd::new("git", ["checkout", &current])
@@ -246,9 +287,10 @@ fn pr_title(repo_root: &Utf8Path) -> anyhow::Result<String> {
     )
     .with_current_dir(repo_root)
     .run();
+    output.ensure_success("❌ Failed to get PR title")?;
     anyhow::ensure!(
-        output.status().success() && !output.stdout().is_empty(),
-        "❌ Failed to get PR title"
+        !output.stdout().is_empty(),
+        "❌ Failed to get PR title: command returned empty output"
     );
     Ok(output.stdout().to_string())
 }
@@ -312,9 +354,10 @@ fn branch_has_associated_pr(repo_root: &Utf8Path, branch_name: &str) -> bool {
 
 fn current_utc_branch_timestamp() -> anyhow::Result<String> {
     let output = Cmd::new("date", ["-u", "+%Y-%m-%dT%H-%M-%SZ"]).run();
+    output.ensure_success("❌ Failed to generate timestamp for unique branch name")?;
     anyhow::ensure!(
-        output.status().success() && !output.stdout().trim().is_empty(),
-        "❌ Failed to generate timestamp for unique branch name"
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to generate timestamp for unique branch name: command returned empty output"
     );
     Ok(output.stdout().to_string())
 }
@@ -348,21 +391,13 @@ fn sync_feature_branch_with_default(
     let fetch_output = Cmd::new("git", ["fetch", "origin", default_branch])
         .with_current_dir(repo_root)
         .run();
-    anyhow::ensure!(
-        fetch_output.status().success(),
-        "git fetch failed. Error {:?}",
-        fetch_output.stderr()
-    );
+    fetch_output.ensure_success("git fetch failed")?;
 
     let merge_ref = format!("origin/{default_branch}");
     let merge_output = Cmd::new("git", ["merge", "--no-edit", &merge_ref])
         .with_current_dir(repo_root)
         .run();
-    anyhow::ensure!(
-        merge_output.status().success(),
-        "git merge failed. Error {:?}",
-        merge_output.stderr()
-    );
+    merge_output.ensure_success("git merge failed")?;
     Ok(())
 }
 
@@ -371,10 +406,7 @@ fn compute_merge_base(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
     let merge_base = Cmd::new("git", ["merge-base", "HEAD", &merge_ref])
         .with_current_dir(repo_root)
         .run();
-    anyhow::ensure!(
-        merge_base.status().success(),
-        "❌ Failed to find merge base"
-    );
+    merge_base.ensure_success("❌ Failed to find merge base")?;
     Ok(merge_base.stdout().to_string())
 }
 
@@ -426,28 +458,12 @@ fn perform_squash_and_push(
     let reset_output = Cmd::new("git", ["reset", "--soft", merge_base])
         .with_current_dir(repo_root)
         .run();
-    anyhow::ensure!(
-        reset_output.status().success(),
-        "❌ git reset --soft failed: {}",
-        if reset_output.stderr().is_empty() {
-            reset_output.stdout()
-        } else {
-            reset_output.stderr()
-        }
-    );
+    reset_output.ensure_success("❌ git reset --soft failed")?;
 
     let add_output = Cmd::new("git", ["add", "."])
         .with_current_dir(repo_root)
         .run();
-    anyhow::ensure!(
-        add_output.status().success(),
-        "❌ git add failed: {}",
-        if add_output.stderr().is_empty() {
-            add_output.stdout()
-        } else {
-            add_output.stderr()
-        }
-    );
+    add_output.ensure_success("❌ git add failed")?;
 
     commit(repo_root, commit_message)?;
 
@@ -455,15 +471,7 @@ fn perform_squash_and_push(
     let push_output = Cmd::new("git", ["push", "--force-with-lease"])
         .with_current_dir(repo_root)
         .run();
-    anyhow::ensure!(
-        push_output.status().success(),
-        "❌ git push --force-with-lease failed: {}",
-        if push_output.stderr().is_empty() {
-            push_output.stdout()
-        } else {
-            push_output.stderr()
-        }
-    );
+    push_output.ensure_success("❌ git push --force-with-lease failed")?;
     Ok(())
 }
 
@@ -471,14 +479,7 @@ fn commit(repo_root: &Utf8Path, commit_message: &str) -> anyhow::Result<()> {
     let output = Cmd::new("git", ["commit", "-m", commit_message])
         .with_current_dir(repo_root)
         .run();
-    if !output.status().success() {
-        let error_msg = if output.stderr().is_empty() {
-            output.stdout().to_string()
-        } else {
-            output.stderr().to_string()
-        };
-        anyhow::bail!("❌ git commit failed: {error_msg}");
-    }
+    output.ensure_success("❌ git commit failed")?;
 
     if output.stdout().contains("nothing to commit") {
         anyhow::bail!("❌ Nothing to commit");
@@ -718,6 +719,30 @@ mod tests {
         assert_eq!(
             branch_name_with_timestamp("feat-add-cache", "2026-02-16T00-14-36Z"),
             "feat-add-cache-2026-02-16T00-14-36Z"
+        );
+    }
+
+    #[test]
+    fn test_parse_github_name_with_owner_ssh_style() {
+        assert_eq!(
+            parse_github_name_with_owner("git@github.com:marcoieni/rust-forge.git"),
+            Some("marcoieni/rust-forge".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_github_name_with_owner_https_style() {
+        assert_eq!(
+            parse_github_name_with_owner("https://github.com/marcoieni/rust-forge.git"),
+            Some("marcoieni/rust-forge".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_github_name_with_owner_rejects_non_github() {
+        assert_eq!(
+            parse_github_name_with_owner("git@gitlab.com:marcoieni/rust-forge.git"),
+            None
         );
     }
 }
