@@ -184,6 +184,34 @@ pub fn generate_gemini_commit_message(
     process_model_output(&output)
 }
 
+/// Generate a commit message using Kiro CLI.
+pub fn generate_kiro_commit_message(
+    repo_root: &Utf8Path,
+    model: Option<&str>,
+) -> anyhow::Result<String> {
+    let diff = get_diff(repo_root)
+        .context("can't get repository diff")?
+        .context("no changes to generate commit message for")?;
+
+    println!("🤖 Generating commit message with Kiro...");
+
+    let prompt = build_commit_prompt(&diff);
+    let mut args = vec!["chat".to_string(), "--no-interactive".to_string()];
+    if let Some(model) = model {
+        args.push("--model".to_string());
+        args.push(model.to_string());
+    }
+    args.push(prompt);
+
+    let output = Cmd::new("kiro-cli", args)
+        .hide_stdout()
+        .with_title("🚀 kiro-cli chat --no-interactive ...")
+        .with_current_dir(repo_root)
+        .run();
+
+    process_model_output(&output)
+}
+
 pub fn generate_commit_message(
     repo_root: &Utf8Path,
     agent: Option<&crate::args::Agent>,
@@ -191,6 +219,7 @@ pub fn generate_commit_message(
 ) -> anyhow::Result<String> {
     match agent {
         Some(crate::args::Agent::Gemini) => generate_gemini_commit_message(repo_root, model),
+        Some(crate::args::Agent::Kiro) => generate_kiro_commit_message(repo_root, model),
         Some(crate::args::Agent::Copilot) => generate_copilot_commit_message(repo_root, model),
         None => Ok("".to_string()),
     }

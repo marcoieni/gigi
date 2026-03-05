@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>gigi dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <header class="header">
+        <h1>gigi dashboard</h1>
+        <div class="actions">
+          <button id="refresh-btn" class="btn">Refresh</button>
+          <span id="status" class="status">Idle</span>
+        </div>
+      </header>
+      <section>
+        <div id="threads" class="threads"></div>
+      </section>
+    </main>
+
+    <dialog id="review-modal">
+      <article>
+        <header class="modal-head">
+          <h2>Review</h2>
+          <button id="close-modal" class="btn">Close</button>
+        </header>
+        <pre id="review-content"></pre>
+      </article>
+    </dialog>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

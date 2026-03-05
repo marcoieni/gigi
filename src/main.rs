@@ -3,7 +3,12 @@ mod authors;
 mod checkout;
 mod cmd;
 mod commit;
+mod config;
+mod db;
+mod github;
 mod review;
+mod serve;
+mod web;
 
 use anyhow::Context;
 use args::CliArgs;
@@ -43,6 +48,8 @@ fn main() -> anyhow::Result<()> {
             let repo_root = repo_root();
             review_pr(&repo_root, &pr, agent.as_ref(), model.as_deref())
         }
+
+        args::Command::Serve => serve::run_serve(),
 
         args::Command::Squash { dry_run } => {
             if !is_default_repo_set() {

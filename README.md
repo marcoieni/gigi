@@ -96,6 +96,36 @@ Examples:
 - `gigi review https://github.com/OWNER/REPO/pull/123`
 - `gigi review --agent gemini --model gemini-3-flash-preview https://github.com/OWNER/REPO/pull/123`
 
+### Serve
+
+Run a local server that periodically watches GitHub notifications and your open PRs,
+stores data and reviews in SQLite, and exposes a dashboard.
+
+Defaults:
+
+- Config file: `~/.config/gigi/config.toml`
+- DB file: `~/.local/share/gigi/gigi.db`
+- Dashboard: `http://127.0.0.1:8787`
+
+Example:
+
+- `gigi serve`
+
+Example `~/.config/gigi/config.toml`:
+
+```toml
+watch_period_seconds = 60
+rereview_mode = "on_update" # or "manual"
+
+[ai]
+provider = "copilot" # or "gemini" or "kiro"
+# model = "gpt-5.3-codex"
+
+[dashboard]
+host = "127.0.0.1"
+port = 8787
+```
+
 ### Sync
 
 Sync a fork with its upstream repository and update the local default branch.
