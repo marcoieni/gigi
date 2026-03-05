@@ -141,7 +141,7 @@ impl Db {
                     reason = excluded.reason,
                     pr_url = excluded.pr_url,
                     unread = excluded.unread,
-                    done = excluded.done,
+                    done = MAX(threads.done, excluded.done),
                     updated_at = excluded.updated_at,
                     last_seen_at = excluded.last_seen_at
                 "#,
@@ -393,6 +393,7 @@ impl Db {
                     p.state
                 FROM threads t
                 LEFT JOIN prs p ON p.pr_url = t.pr_url
+                WHERE t.done = 0
                 ORDER BY t.updated_at DESC
                 "#,
             )?;
@@ -584,5 +585,66 @@ mod tests {
 
         let review = db.latest_review_for_pr("a", "b", 1).unwrap().unwrap();
         assert!(review.requires_code_changes);
+    }
+
+    #[test]
+    fn done_threads_are_hidden_from_dashboard() {
+        let db = test_db();
+        let row = NewThread {
+            thread_key: "thread-1".to_string(),
+            github_thread_id: Some("1".to_string()),
+            source: "notification".to_string(),
+            repository: "a/b".to_string(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: "t".to_string(),
+            subject_url: Some("u".to_string()),
+            reason: Some("review_requested".to_string()),
+            pr_url: Some("https://github.com/a/b/pull/1".to_string()),
+            unread: true,
+            done: false,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+
+        db.upsert_thread(&row).unwrap();
+        db.mark_thread_done_local("1").unwrap();
+
+        let threads = db.list_dashboard_threads().unwrap();
+        assert!(threads.is_empty());
+    }
+
+    #[test]
+    fn done_threads_stay_done_after_upsert() {
+        let db = test_db();
+        let row = NewThread {
+            thread_key: "thread-1".to_string(),
+            github_thread_id: Some("1".to_string()),
+            source: "notification".to_string(),
+            repository: "a/b".to_string(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: "t".to_string(),
+            subject_url: Some("u".to_string()),
+            reason: Some("review_requested".to_string()),
+            pr_url: Some("https://github.com/a/b/pull/1".to_string()),
+            unread: true,
+            done: false,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+
+        db.upsert_thread(&row).unwrap();
+        db.mark_thread_done_local("1").unwrap();
+        db.upsert_thread(&row).unwrap();
+
+        let done = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT done FROM threads WHERE thread_key = ?1",
+                    [&row.thread_key],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(anyhow::Error::from)
+            })
+            .unwrap();
+
+        assert_eq!(done, 1);
     }
 }

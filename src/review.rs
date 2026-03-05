@@ -184,6 +184,10 @@ fn run_copilot(
         "copilot",
         ["--silent", "--model", &resolved_model, "--prompt", prompt],
     )
+    .hide_stdout()
+    .with_title(format!(
+        "🚀 copilot --silent --model {resolved_model} --prompt ..."
+    ))
     .with_current_dir(repo_root)
     .run()?;
 
@@ -218,6 +222,10 @@ fn run_gemini(
             prompt,
         ],
     )
+    .hide_stdout()
+    .with_title(format!(
+        "🚀 gemini --model {resolved_model} --sandbox --output-format text --prompt ..."
+    ))
     .with_current_dir(repo_root)
     .run()?;
 
@@ -247,6 +255,8 @@ fn run_kiro(
     args.push(prompt.to_string());
 
     let output = Cmd::new("kiro-cli", args)
+        .hide_stdout()
+        .with_title("🚀 kiro-cli chat --no-interactive ...")
         .with_current_dir(repo_root)
         .run()?;
 
