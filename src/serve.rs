@@ -276,14 +276,10 @@ fn poll_once_blocking(
         pr_urls.insert(authored.pr_url.clone());
     }
 
-    let startup_limits = if mode == PollMode::Startup {
-        Some(StartupReviewLimits {
-            lookback_days: config.initial_review_lookback_days,
-            max_prs: config.initial_review_max_prs,
-        })
-    } else {
-        None
-    };
+    let startup_limits = (mode == PollMode::Startup).then_some(StartupReviewLimits {
+        lookback_days: config.initial_review_lookback_days,
+        max_prs: config.initial_review_max_prs,
+    });
 
     let mut reviews_run = 0_usize;
     let mut review_candidates = Vec::new();
@@ -409,7 +405,7 @@ fn apply_startup_review_limits(
         }
     }
 
-    recent.sort_by(|a, b| pr_timestamp_for_sort(b).cmp(&pr_timestamp_for_sort(a)));
+    recent.sort_by_key(|b| std::cmp::Reverse(pr_timestamp_for_sort(b)));
 
     let mut to_review = Vec::new();
     for details in recent {
