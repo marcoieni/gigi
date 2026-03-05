@@ -91,10 +91,9 @@ fn fetch_repo_info(repo_root: &Utf8Path) -> anyhow::Result<RepoInfo> {
         [
             "repo",
             "view",
+            &origin_repo,
             "--json",
             "isFork,parent,defaultBranchRef",
-            "--repo",
-            &origin_repo,
         ],
     )
     .with_current_dir(repo_root)
