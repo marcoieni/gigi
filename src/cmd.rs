@@ -41,6 +41,23 @@ impl CmdOutput {
     pub fn stderr(&self) -> &str {
         self.stderr.trim()
     }
+
+    pub fn stderr_or_stdout(&self) -> &str {
+        if self.stderr().is_empty() {
+            self.stdout()
+        } else {
+            self.stderr()
+        }
+    }
+
+    pub fn ensure_success(&self, context: impl std::fmt::Display) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.status().success(),
+            "{context}: {}",
+            self.stderr_or_stdout()
+        );
+        Ok(())
+    }
 }
 
 pub struct Cmd {

@@ -23,11 +23,7 @@ pub fn checkout_pr(pr_url: &str) -> anyhow::Result<()> {
         .with_title("📥 gh pr checkout ...")
         .with_current_dir(&repo_dir)
         .run();
-    anyhow::ensure!(
-        checkout.status().success(),
-        "❌ Failed to checkout PR: {}",
-        checkout.stderr()
-    );
+    checkout.ensure_success("❌ Failed to checkout PR")?;
 
     open_vscode(&repo_dir)?;
     Ok(())
@@ -57,11 +53,7 @@ fn ensure_repo_cloned(owner: &str, repo: &str, repo_dir: &Utf8Path) -> anyhow::R
         .with_title(format!("📦 gh repo clone {repo_name} ..."))
         .run();
 
-    anyhow::ensure!(
-        clone.status().success(),
-        "❌ Failed to clone repository: {}",
-        clone.stderr()
-    );
+    clone.ensure_success("❌ Failed to clone repository")?;
 
     Ok(())
 }
@@ -70,10 +62,7 @@ fn ensure_clean_repo(repo_dir: &Utf8Path) -> anyhow::Result<()> {
     let output = Cmd::new("git", ["status", "--porcelain"])
         .with_current_dir(repo_dir)
         .run();
-    anyhow::ensure!(
-        output.status().success(),
-        "❌ Failed to check repository status"
-    );
+    output.ensure_success("❌ Failed to check repository status")?;
     anyhow::ensure!(
         output.stdout().trim().is_empty(),
         "❌ Repository is not clean. Commit or stash changes first."
@@ -96,33 +85,31 @@ fn update_default_branch(repo_dir: &Utf8Path) -> anyhow::Result<()> {
     .with_current_dir(repo_dir)
     .run();
 
+    default_branch.ensure_success("❌ Failed to detect default branch")?;
     anyhow::ensure!(
-        default_branch.status().success() && !default_branch.stdout().trim().is_empty(),
-        "❌ Failed to detect default branch: {}",
-        default_branch.stderr()
+        !default_branch.stdout().trim().is_empty(),
+        "❌ Failed to detect default branch: command returned empty output"
     );
     let default_branch = default_branch.stdout().to_string();
 
     let fetch = Cmd::new("git", ["fetch", "--prune"])
         .with_current_dir(repo_dir)
         .run();
-    anyhow::ensure!(fetch.status().success(), "❌ git fetch failed");
+    fetch.ensure_success("❌ git fetch failed")?;
 
     let checkout = Cmd::new("git", ["checkout", &default_branch])
         .with_current_dir(repo_dir)
         .run();
-    anyhow::ensure!(
-        checkout.status().success(),
+    checkout.ensure_success(format!(
         "❌ Failed to checkout default branch '{default_branch}'"
-    );
+    ))?;
 
     let pull = Cmd::new("git", ["pull", "--ff-only"])
         .with_current_dir(repo_dir)
         .run();
-    anyhow::ensure!(
-        pull.status().success(),
+    pull.ensure_success(format!(
         "❌ Failed to pull default branch '{default_branch}'"
-    );
+    ))?;
 
     Ok(())
 }
@@ -142,10 +129,9 @@ fn open_vscode(repo_dir: &Utf8Path) -> anyhow::Result<()> {
         .with_title("🧑‍💻 open -a \"Visual Studio Code\" .")
         .with_current_dir(repo_dir)
         .run();
-    anyhow::ensure!(
-        open.status().success(),
-        "❌ Failed to open VS Code (tried `code .` and `open -a 'Visual Studio Code' .`)"
-    );
+    open.ensure_success(
+        "❌ Failed to open VS Code (tried `code .` and `open -a 'Visual Studio Code' .`)",
+    )?;
 
     Ok(())
 }
