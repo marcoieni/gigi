@@ -22,7 +22,7 @@ pub fn checkout_pr(pr_url: &str) -> anyhow::Result<()> {
     let checkout = Cmd::new("gh", ["pr", "checkout", pr_url])
         .with_title("📥 gh pr checkout ...")
         .with_current_dir(&repo_dir)
-        .run();
+        .run()?;
     checkout.ensure_success("❌ Failed to checkout PR")?;
 
     open_vscode(&repo_dir)?;
@@ -51,7 +51,7 @@ fn ensure_repo_cloned(owner: &str, repo: &str, repo_dir: &Utf8Path) -> anyhow::R
     let repo_name = format!("{owner}/{repo}");
     let clone = Cmd::new("gh", ["repo", "clone", &repo_name, repo_dir.as_str()])
         .with_title(format!("📦 gh repo clone {repo_name} ..."))
-        .run();
+        .run()?;
 
     clone.ensure_success("❌ Failed to clone repository")?;
 
@@ -61,7 +61,7 @@ fn ensure_repo_cloned(owner: &str, repo: &str, repo_dir: &Utf8Path) -> anyhow::R
 fn ensure_clean_repo(repo_dir: &Utf8Path) -> anyhow::Result<()> {
     let output = Cmd::new("git", ["status", "--porcelain"])
         .with_current_dir(repo_dir)
-        .run();
+        .run()?;
     output.ensure_success("❌ Failed to check repository status")?;
     anyhow::ensure!(
         output.stdout().trim().is_empty(),
@@ -83,7 +83,7 @@ fn update_default_branch(repo_dir: &Utf8Path) -> anyhow::Result<()> {
         ],
     )
     .with_current_dir(repo_dir)
-    .run();
+    .run()?;
 
     default_branch.ensure_success("❌ Failed to detect default branch")?;
     anyhow::ensure!(
@@ -94,19 +94,19 @@ fn update_default_branch(repo_dir: &Utf8Path) -> anyhow::Result<()> {
 
     let fetch = Cmd::new("git", ["fetch", "--prune"])
         .with_current_dir(repo_dir)
-        .run();
+        .run()?;
     fetch.ensure_success("❌ git fetch failed")?;
 
     let checkout = Cmd::new("git", ["checkout", &default_branch])
         .with_current_dir(repo_dir)
-        .run();
+        .run()?;
     checkout.ensure_success(format!(
         "❌ Failed to checkout default branch '{default_branch}'"
     ))?;
 
     let pull = Cmd::new("git", ["pull", "--ff-only"])
         .with_current_dir(repo_dir)
-        .run();
+        .run()?;
     pull.ensure_success(format!(
         "❌ Failed to pull default branch '{default_branch}'"
     ))?;
@@ -120,7 +120,9 @@ fn open_vscode(repo_dir: &Utf8Path) -> anyhow::Result<()> {
         .with_current_dir(repo_dir)
         .run();
 
-    if code.status().success() {
+    if let Ok(code) = code
+        && code.status().success()
+    {
         return Ok(());
     }
 
@@ -128,7 +130,7 @@ fn open_vscode(repo_dir: &Utf8Path) -> anyhow::Result<()> {
     let open = Cmd::new("open", ["-a", "Visual Studio Code", "."])
         .with_title("🧑‍💻 open -a \"Visual Studio Code\" .")
         .with_current_dir(repo_dir)
-        .run();
+        .run()?;
     open.ensure_success(
         "❌ Failed to open VS Code (tried `code .` and `open -a 'Visual Studio Code' .`)",
     )?;

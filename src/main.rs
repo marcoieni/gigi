@@ -35,18 +35,18 @@ fn main() -> anyhow::Result<()> {
             agent,
             model,
         } => {
-            if !is_default_repo_set() {
-                set_default_repo();
+            if !is_default_repo_set()? {
+                set_default_repo()?;
             }
-            let repo_root = repo_root();
+            let repo_root = repo_root()?;
             open_pr(&repo_root, message, agent.as_ref(), model.as_deref())
         }
 
         args::Command::Review { pr, agent, model } => {
-            if !is_default_repo_set() {
-                set_default_repo();
+            if !is_default_repo_set()? {
+                set_default_repo()?;
             }
-            let repo_root = repo_root();
+            let repo_root = repo_root()?;
             review_pr(&repo_root, &pr, agent.as_ref(), model.as_deref())
         }
 
@@ -55,19 +55,20 @@ fn main() -> anyhow::Result<()> {
         args::Command::Serve => serve::run_serve(),
 
         args::Command::Squash { dry_run } => {
-            if !is_default_repo_set() {
-                set_default_repo();
+            if !is_default_repo_set()? {
+                set_default_repo()?;
             }
-            let repo_root = repo_root();
-            let repo = Repo::new(repo_root.clone()).unwrap();
+            let repo_root = repo_root()?;
+            let repo = Repo::new(repo_root.clone())
+                .context("❌ Failed to open git repository for squash")?;
             squash(&repo_root, &repo, dry_run)
         }
 
         args::Command::Sync => {
-            if !is_default_repo_set() {
-                set_default_repo();
+            if !is_default_repo_set()? {
+                set_default_repo()?;
             }
-            let repo_root = repo_root();
+            let repo_root = repo_root()?;
             sync_fork(&repo_root)
         }
     }?;
@@ -78,7 +79,7 @@ fn main() -> anyhow::Result<()> {
 fn ensure_clean_repo(repo_root: &Utf8Path) -> anyhow::Result<()> {
     let output = Cmd::new("git", ["status", "--porcelain"])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     output.ensure_success("❌ Failed to check repository status")?;
     anyhow::ensure!(
         output.stdout().trim().is_empty(),
@@ -107,7 +108,7 @@ fn fetch_repo_info(repo_root: &Utf8Path) -> anyhow::Result<RepoInfo> {
         ],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()?;
     output.ensure_success("❌ Failed to fetch repository info")?;
     anyhow::ensure!(
         !output.stdout().trim().is_empty(),
@@ -184,7 +185,7 @@ fn fetch_default_branch(
         ],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()?;
     output.ensure_success("❌ Failed to fetch repository default branch")?;
     anyhow::ensure!(
         !output.stdout().trim().is_empty(),
@@ -203,7 +204,7 @@ fn fetch_default_branch(
 fn origin_name_with_owner(repo_root: &Utf8Path) -> anyhow::Result<String> {
     let output = Cmd::new("git", ["remote", "get-url", "origin"])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     output.ensure_success("❌ Failed to detect origin remote URL")?;
     anyhow::ensure!(
         !output.stdout().trim().is_empty(),
@@ -251,7 +252,7 @@ fn ensure_upstream_remote(
 ) -> anyhow::Result<()> {
     let output = Cmd::new("git", ["remote", "get-url", "upstream"])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     if output.status().success() && !output.stdout().trim().is_empty() {
         return Ok(());
     }
@@ -259,7 +260,7 @@ fn ensure_upstream_remote(
     let upstream_url = format!("https://github.com/{parent_name_with_owner}.git");
     let add_output = Cmd::new("git", ["remote", "add", "upstream", &upstream_url])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     add_output.ensure_success("❌ Failed to add upstream remote")?;
     Ok(())
 }
@@ -282,56 +283,67 @@ fn sync_fork(repo_root: &Utf8Path) -> anyhow::Result<()> {
 
     ensure_upstream_remote(repo_root, &parent_name_with_owner)?;
 
-    let current = current_branch(repo_root);
+    let current = current_branch(repo_root)?;
     Cmd::new("git", ["fetch", "upstream"])
         .with_current_dir(repo_root)
-        .run();
+        .run()?
+        .ensure_success("❌ Failed to fetch upstream remote")?;
     Cmd::new("git", ["checkout", &repo_info.default_branch])
         .with_current_dir(repo_root)
-        .run();
+        .run()?
+        .ensure_success(format!(
+            "❌ Failed to checkout default branch '{}'",
+            repo_info.default_branch
+        ))?;
     let pull_output = Cmd::new(
         "git",
         ["pull", "--ff-only", "upstream", &parent_default_branch],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()?;
     pull_output.ensure_success("❌ Failed to sync default branch from upstream")?;
     let push_output = Cmd::new("git", ["push", "origin", &repo_info.default_branch])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     push_output.ensure_success("❌ Failed to push synced default branch to origin")?;
 
     if current != repo_info.default_branch {
         Cmd::new("git", ["checkout", &current])
             .with_current_dir(repo_root)
-            .run();
+            .run()?
+            .ensure_success(format!("❌ Failed to switch back to branch '{current}'"))?;
     }
 
     Ok(())
 }
 
-fn is_default_repo_set() -> bool {
+fn is_default_repo_set() -> anyhow::Result<bool> {
     let output = Cmd::new("gh", ["repo", "set-default", "--view"])
         .hide_stdout()
         .hide_stderr()
-        .run();
-    !output.stdout().trim().is_empty()
+        .run()?;
+    Ok(!output.stdout().trim().is_empty())
 }
 
-fn set_default_repo() {
+fn set_default_repo() -> anyhow::Result<()> {
     // Check if "upstream" remote exists
-    let remotes_output = Cmd::new("git", ["remote"]).hide_stdout().run();
+    let remotes_output = Cmd::new("git", ["remote"]).hide_stdout().run()?;
     let has_upstream = remotes_output
         .stdout()
         .lines()
         .any(|line| line.trim() == "upstream");
 
     let remote = if has_upstream { "upstream" } else { "origin" };
-    Cmd::new("gh", ["repo", "set-default", remote]).run();
+    Cmd::new("gh", ["repo", "set-default", remote])
+        .run()?
+        .ensure_success(format!(
+            "❌ Failed to set default GitHub repo to remote '{remote}'"
+        ))?;
+    Ok(())
 }
 
 fn pr_title(repo_root: &Utf8Path) -> anyhow::Result<String> {
-    let current_branch = current_branch(repo_root);
+    let current_branch = current_branch(repo_root)?;
     let output = Cmd::new(
         "gh",
         [
@@ -346,7 +358,7 @@ fn pr_title(repo_root: &Utf8Path) -> anyhow::Result<String> {
         ],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()?;
     output.ensure_success("❌ Failed to get PR title")?;
     anyhow::ensure!(
         !output.stdout().is_empty(),
@@ -355,8 +367,8 @@ fn pr_title(repo_root: &Utf8Path) -> anyhow::Result<String> {
     Ok(output.stdout().to_string())
 }
 
-fn default_branch(repo_root: &Utf8Path) -> String {
-    Cmd::new(
+fn default_branch(repo_root: &Utf8Path) -> anyhow::Result<String> {
+    let output = Cmd::new(
         "gh",
         [
             "repo",
@@ -368,27 +380,38 @@ fn default_branch(repo_root: &Utf8Path) -> String {
         ],
     )
     .with_current_dir(repo_root)
-    .run()
-    .stdout()
-    .to_string()
+    .run()?;
+    output.ensure_success("❌ Failed to detect default branch")?;
+    anyhow::ensure!(
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to detect default branch: command returned empty output"
+    );
+    Ok(output.stdout().to_string())
 }
 
-fn current_branch(repo_root: &Utf8Path) -> String {
-    Cmd::new("git", ["branch", "--show-current"])
+fn current_branch(repo_root: &Utf8Path) -> anyhow::Result<String> {
+    let output = Cmd::new("git", ["branch", "--show-current"])
         .with_current_dir(repo_root)
-        .run()
-        .stdout()
-        .to_string()
+        .run()?;
+    output.ensure_success("❌ Failed to detect current branch")?;
+    anyhow::ensure!(
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to detect current branch: command returned empty output"
+    );
+    Ok(output.stdout().to_string())
 }
 
-fn branch_exists_locally(repo_root: &Utf8Path, branch_name: &str) -> bool {
+fn branch_exists_locally(repo_root: &Utf8Path, branch_name: &str) -> anyhow::Result<bool> {
     let output = Cmd::new("git", ["branch", "--list", branch_name])
         .with_current_dir(repo_root)
-        .run();
-    !output.stdout().trim().is_empty()
+        .run()?;
+    output.ensure_success(format!(
+        "❌ Failed to check whether branch '{branch_name}' exists"
+    ))?;
+    Ok(!output.stdout().trim().is_empty())
 }
 
-fn branch_has_associated_pr(repo_root: &Utf8Path, branch_name: &str) -> bool {
+fn branch_has_associated_pr(repo_root: &Utf8Path, branch_name: &str) -> anyhow::Result<bool> {
     let output = Cmd::new(
         "gh",
         [
@@ -408,12 +431,12 @@ fn branch_has_associated_pr(repo_root: &Utf8Path, branch_name: &str) -> bool {
     )
     .with_current_dir(repo_root)
     .hide_stderr()
-    .run();
-    output.status().success() && !output.stdout().trim().is_empty()
+    .run()?;
+    Ok(output.status().success() && !output.stdout().trim().is_empty())
 }
 
 fn current_utc_branch_timestamp() -> anyhow::Result<String> {
-    let output = Cmd::new("date", ["-u", "+%Y-%m-%dT%H-%M-%SZ"]).run();
+    let output = Cmd::new("date", ["-u", "+%Y-%m-%dT%H-%M-%SZ"]).run()?;
     output.ensure_success("❌ Failed to generate timestamp for unique branch name")?;
     anyhow::ensure!(
         !output.stdout().trim().is_empty(),
@@ -427,7 +450,7 @@ fn branch_name_with_timestamp(branch_name: &str, timestamp: &str) -> String {
 }
 
 fn branch_name_for_new_pr(repo_root: &Utf8Path, branch_name: &str) -> anyhow::Result<String> {
-    if !branch_has_associated_pr(repo_root, branch_name) {
+    if !branch_has_associated_pr(repo_root, branch_name)? {
         return Ok(branch_name.to_string());
     }
 
@@ -436,7 +459,7 @@ fn branch_name_for_new_pr(repo_root: &Utf8Path, branch_name: &str) -> anyhow::Re
 }
 
 fn ensure_not_on_default_branch(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Result<()> {
-    let current_branch = current_branch(repo_root);
+    let current_branch = current_branch(repo_root)?;
     anyhow::ensure!(
         current_branch != default_branch,
         "❌ Cannot push to default branch '{default_branch}'. Switch to a feature branch first."
@@ -450,13 +473,13 @@ fn sync_feature_branch_with_default(
 ) -> anyhow::Result<()> {
     let fetch_output = Cmd::new("git", ["fetch", "origin", default_branch])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     fetch_output.ensure_success("git fetch failed")?;
 
     let merge_ref = format!("origin/{default_branch}");
     let merge_output = Cmd::new("git", ["merge", "--no-edit", &merge_ref])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     merge_output.ensure_success("git merge failed")?;
     Ok(())
 }
@@ -465,7 +488,7 @@ fn compute_merge_base(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Res
     let merge_ref = format!("origin/{default_branch}");
     let merge_base = Cmd::new("git", ["merge-base", "HEAD", &merge_ref])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     merge_base.ensure_success("❌ Failed to find merge base")?;
     Ok(merge_base.stdout().to_string())
 }
@@ -517,12 +540,12 @@ fn perform_squash_and_push(
 ) -> anyhow::Result<()> {
     let reset_output = Cmd::new("git", ["reset", "--soft", merge_base])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     reset_output.ensure_success("❌ git reset --soft failed")?;
 
     let add_output = Cmd::new("git", ["add", "."])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     add_output.ensure_success("❌ git add failed")?;
 
     commit(repo_root, commit_message)?;
@@ -530,7 +553,7 @@ fn perform_squash_and_push(
     ensure_not_on_default_branch(repo_root, default_branch)?;
     let push_output = Cmd::new("git", ["push", "--force-with-lease"])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     push_output.ensure_success("❌ git push --force-with-lease failed")?;
     Ok(())
 }
@@ -538,7 +561,7 @@ fn perform_squash_and_push(
 fn commit(repo_root: &Utf8Path, commit_message: &str) -> anyhow::Result<()> {
     let output = Cmd::new("git", ["commit", "-m", commit_message])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     output.ensure_success("❌ git commit failed")?;
 
     if output.stdout().contains("nothing to commit") {
@@ -550,7 +573,7 @@ fn commit(repo_root: &Utf8Path, commit_message: &str) -> anyhow::Result<()> {
 fn squash(repo_root: &Utf8Path, repo: &Repo, dry_run: bool) -> anyhow::Result<()> {
     anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
     let feature_branch = repo.original_branch();
-    let default_branch = default_branch(repo_root);
+    let default_branch = default_branch(repo_root)?;
     let pr_title = pr_title(repo_root)?;
     anyhow::ensure!(
         feature_branch != default_branch,
@@ -575,17 +598,17 @@ fn squash(repo_root: &Utf8Path, repo: &Repo, dry_run: bool) -> anyhow::Result<()
 
     let commit_message = format!("{pr_title}{co_authors_text}");
     perform_squash_and_push(repo_root, &merge_base, &commit_message, &default_branch)?;
-    view_pr_in_browser(repo_root);
+    view_pr_in_browser(repo_root)?;
 
     Ok(())
 }
 
-fn view_pr_in_browser(repo_root: &Utf8Path) {
+fn view_pr_in_browser(repo_root: &Utf8Path) -> anyhow::Result<()> {
     Cmd::new("gh", ["pr", "view", "-w", "pr", "show"])
         .with_current_dir(repo_root)
-        .run()
-        .stdout()
-        .to_string();
+        .run()?
+        .ensure_success("❌ Failed to open PR in browser")?;
+    Ok(())
 }
 
 fn resolve_commit_message(
@@ -608,7 +631,7 @@ fn resolve_commit_message(
 }
 
 fn ensure_branch_does_not_exist(repo_root: &Utf8Path, branch_name: &str) -> anyhow::Result<()> {
-    if branch_exists_locally(repo_root, branch_name) {
+    if branch_exists_locally(repo_root, branch_name)? {
         anyhow::bail!(
             "❌ Branch '{branch_name}' already exists locally. Please use a different commit message or delete the existing branch."
         );
@@ -620,24 +643,33 @@ fn create_feature_branch_from_default(
     repo_root: &Utf8Path,
     default_branch_name: &str,
     branch_name: &str,
-) {
+) -> anyhow::Result<()> {
     Cmd::new("git", ["checkout", default_branch_name])
         .with_current_dir(repo_root)
-        .run();
+        .run()?
+        .ensure_success(format!(
+            "❌ Failed to checkout default branch '{default_branch_name}'"
+        ))?;
     Cmd::new("git", ["pull", "--ff-only"])
         .with_current_dir(repo_root)
-        .run();
+        .run()?
+        .ensure_success(format!(
+            "❌ Failed to update default branch '{default_branch_name}'"
+        ))?;
     Cmd::new("git", ["checkout", "-b", branch_name])
         .with_current_dir(repo_root)
-        .run();
+        .run()?
+        .ensure_success(format!("❌ Failed to create branch '{branch_name}'"))?;
+    Ok(())
 }
 
 fn stage_and_commit_changes(repo_root: &Utf8Path, commit_message: &str) -> anyhow::Result<()> {
-    let staged_files = get_staged_files(repo_root);
+    let staged_files = get_staged_files(repo_root)?;
     if staged_files.is_empty() {
         Cmd::new("git", ["add", "-A"])
             .with_current_dir(repo_root)
-            .run();
+            .run()?
+            .ensure_success("❌ Failed to stage changes with `git add -A`")?;
     }
 
     commit(repo_root, commit_message)?;
@@ -645,21 +677,29 @@ fn stage_and_commit_changes(repo_root: &Utf8Path, commit_message: &str) -> anyho
     Ok(())
 }
 
-fn push_branch_and_open_pr(repo_root: &Utf8Path, branch_name: &str, commit_message: &str) {
+fn push_branch_and_open_pr(
+    repo_root: &Utf8Path,
+    branch_name: &str,
+    commit_message: &str,
+) -> anyhow::Result<()> {
     Cmd::new("git", ["push", "-u", "origin", branch_name])
         .with_current_dir(repo_root)
-        .run();
+        .run()?
+        .ensure_success(format!(
+            "❌ Failed to push branch '{branch_name}' to origin"
+        ))?;
 
     let pr_exists = Cmd::new("gh", ["pr", "view", "--json", "number", "-q", ".number"])
         .with_current_dir(repo_root)
-        .run()
+        .run()?
         .status()
         .success();
 
     if pr_exists {
         Cmd::new("gh", ["pr", "view", "--web"])
             .with_current_dir(repo_root)
-            .run();
+            .run()?
+            .ensure_success("❌ Failed to open existing PR in browser")?;
     } else {
         Cmd::new(
             "gh",
@@ -674,8 +714,11 @@ fn push_branch_and_open_pr(repo_root: &Utf8Path, branch_name: &str, commit_messa
             ],
         )
         .with_current_dir(repo_root)
-        .run();
+        .run()?
+        .ensure_success("❌ Failed to create PR in browser")?;
     }
+
+    Ok(())
 }
 
 fn open_pr(
@@ -685,31 +728,37 @@ fn open_pr(
     model: Option<&str>,
 ) -> anyhow::Result<()> {
     let commit_message = resolve_commit_message(repo_root, message, agent, model)?;
-    let default_branch_name = default_branch(repo_root);
+    let default_branch_name = default_branch(repo_root)?;
     let branch_name =
         branch_name_for_new_pr(repo_root, &branch_name_from_commit_message(&commit_message))?;
 
     ensure_branch_does_not_exist(repo_root, &branch_name)?;
-    create_feature_branch_from_default(repo_root, &default_branch_name, &branch_name);
+    create_feature_branch_from_default(repo_root, &default_branch_name, &branch_name)?;
     stage_and_commit_changes(repo_root, &commit_message)?;
     ensure_not_on_default_branch(repo_root, &default_branch_name)?;
-    push_branch_and_open_pr(repo_root, &branch_name, &commit_message);
+    push_branch_and_open_pr(repo_root, &branch_name, &commit_message)?;
 
     Ok(())
 }
 
-fn repo_root() -> Utf8PathBuf {
+fn repo_root() -> anyhow::Result<Utf8PathBuf> {
     let git_root = Cmd::new("git", ["rev-parse", "--show-toplevel"])
         .hide_stdout()
-        .run();
-    camino::Utf8PathBuf::from(git_root.stdout())
+        .run()?;
+    git_root.ensure_success("❌ Failed to resolve git repository root")?;
+    anyhow::ensure!(
+        !git_root.stdout().trim().is_empty(),
+        "❌ Failed to resolve git repository root: command returned empty output"
+    );
+    Ok(camino::Utf8PathBuf::from(git_root.stdout()))
 }
 
-fn get_staged_files(curr_dir: &Utf8Path) -> Vec<Utf8PathBuf> {
+fn get_staged_files(curr_dir: &Utf8Path) -> anyhow::Result<Vec<Utf8PathBuf>> {
     let output = Cmd::new("git", ["diff", "--name-only", "--cached"])
         .with_current_dir(curr_dir)
-        .run();
-    output.stdout().lines().map(Utf8PathBuf::from).collect()
+        .run()?;
+    output.ensure_success("❌ Failed to list staged files")?;
+    Ok(output.stdout().lines().map(Utf8PathBuf::from).collect())
 }
 
 fn branch_name_from_commit_message(commit_message: &str) -> String {

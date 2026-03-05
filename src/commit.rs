@@ -20,6 +20,10 @@ fn get_untracked_files(repo_root: &Utf8Path) -> Vec<String> {
         .hide_stdout()
         .run();
 
+    let Ok(status_output) = status_output else {
+        return Vec::new();
+    };
+
     if !status_output.status().success() {
         return Vec::new();
     }
@@ -63,7 +67,7 @@ fn get_diff(repo_root: &Utf8Path) -> anyhow::Result<Option<String>> {
     let diff_output = Cmd::new("git", ["diff", "--cached"])
         .with_current_dir(repo_root)
         .hide_stdout()
-        .run();
+        .run()?;
     let diff = diff_output.stdout();
 
     // If no staged changes, check unstaged changes
@@ -71,7 +75,7 @@ fn get_diff(repo_root: &Utf8Path) -> anyhow::Result<Option<String>> {
         Cmd::new("git", ["diff"])
             .with_current_dir(repo_root)
             .hide_stdout()
-            .run()
+            .run()?
             .stdout()
             .to_string()
     } else {
@@ -122,7 +126,7 @@ pub fn generate_copilot_commit_message(
     .hide_stdout()
     .with_title(format!("🚀 copilot --silent --model {model} --prompt ..."))
     .with_current_dir(repo_root)
-    .run();
+    .run()?;
 
     process_model_output(&output)
 }
@@ -179,7 +183,7 @@ pub fn generate_gemini_commit_message(
         "🚀 gemini --model {model} --sandbox --output-format text --prompt ..."
     ))
     .with_current_dir(repo_root)
-    .run();
+    .run()?;
 
     process_model_output(&output)
 }
@@ -207,7 +211,7 @@ pub fn generate_kiro_commit_message(
         .hide_stdout()
         .with_title("🚀 kiro-cli chat --no-interactive ...")
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
 
     process_model_output(&output)
 }

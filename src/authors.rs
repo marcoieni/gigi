@@ -22,7 +22,7 @@ fn get_commit_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<
         ["log", "--format=%an <%ae>", &format!("{merge_base}..HEAD")],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()?;
     output.ensure_success("Failed to get commit authors")?;
     Ok(output.stdout().to_string())
 }
@@ -33,7 +33,7 @@ fn get_commit_messages(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result
         ["log", "--format=%B", &format!("{merge_base}..HEAD")],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()?;
     output.ensure_success("Failed to get commit messages")?;
     Ok(output.stdout().to_string())
 }
@@ -41,7 +41,7 @@ fn get_commit_messages(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result
 fn get_current_user_email(repo_root: &Utf8Path) -> anyhow::Result<String> {
     let output = Cmd::new("git", ["config", "user.email"])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     output.ensure_success("Failed to get current git user email")?;
     Ok(output.stdout().trim().to_string())
 }
@@ -127,7 +127,7 @@ pub fn get_commits_to_squash(
         ],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()?;
 
     commits_output.ensure_success("Failed to get commits")?;
 

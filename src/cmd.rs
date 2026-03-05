@@ -9,6 +9,7 @@ use std::{
     thread,
 };
 
+use anyhow::Context as _;
 use camino::Utf8PathBuf;
 use secrecy::{ExposeSecret, SecretString};
 
@@ -27,6 +28,8 @@ pub struct CmdOutput {
     status: ExitStatus,
     stdout: String,
     stderr: String,
+    invocation: String,
+    current_dir: Option<Utf8PathBuf>,
 }
 
 impl CmdOutput {
@@ -50,13 +53,28 @@ impl CmdOutput {
         }
     }
 
+    fn command_summary(&self) -> String {
+        match &self.current_dir {
+            Some(dir) => format!("`{}` (cwd: {})", self.invocation, dir),
+            None => format!("`{}`", self.invocation),
+        }
+    }
+
     pub fn ensure_success(&self, context: impl std::fmt::Display) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            self.status().success(),
-            "{context}: {}",
-            self.stderr_or_stdout()
-        );
-        Ok(())
+        if self.status().success() {
+            return Ok(());
+        }
+
+        let command = self.command_summary();
+        let details = self.stderr_or_stdout();
+        if details.is_empty() {
+            anyhow::bail!(
+                "{context}: command {command} exited with status {}",
+                self.status
+            );
+        }
+
+        anyhow::bail!("{context}: command {command} failed: {details}");
     }
 }
 
@@ -127,6 +145,26 @@ impl Cmd {
         description
     }
 
+    fn format_invocation(&self) -> String {
+        let mut invocation = self.name.clone();
+        if !self.args.is_empty() {
+            invocation.push(' ');
+            invocation.push_str(&self.args.join(" "));
+        }
+        invocation
+    }
+
+    fn spawn_context(&self) -> String {
+        match &self.current_dir {
+            Some(dir) => format!(
+                "failed to spawn command `{}` in {}",
+                self.format_invocation(),
+                dir
+            ),
+            None => format!("failed to spawn command `{}`", self.format_invocation()),
+        }
+    }
+
     fn configure_command(&self) -> Command {
         let mut command = Command::new(&self.name);
         if let Some(dir) = &self.current_dir {
@@ -142,14 +180,18 @@ impl Cmd {
         reader: R,
         tx: mpsc::Sender<(String, bool)>,
         is_stdout: bool,
-    ) {
+    ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             let reader = BufReader::new(reader);
             for line in reader.lines() {
-                let line = line.unwrap();
-                tx.send((line, is_stdout)).unwrap();
+                let Ok(line) = line else {
+                    break;
+                };
+                if tx.send((line, is_stdout)).is_err() {
+                    break;
+                }
             }
-        });
+        })
     }
 
     fn collect_output(&self, rx: mpsc::Receiver<(String, bool)>) -> (String, String) {
@@ -174,7 +216,7 @@ impl Cmd {
         (output_stdout, output_stderr)
     }
 
-    pub fn run(&self) -> CmdOutput {
+    pub fn run(&self) -> anyhow::Result<CmdOutput> {
         if is_verbose() {
             println!("{}", self.build_command_description());
         }
@@ -185,27 +227,43 @@ impl Cmd {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .unwrap();
+            .with_context(|| self.spawn_context())?;
 
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let stdout = child
+            .stdout
+            .take()
+            .context("spawned command did not expose stdout pipe")?;
+        let stderr = child
+            .stderr
+            .take()
+            .context("spawned command did not expose stderr pipe")?;
         let (tx, rx) = mpsc::channel();
 
-        Self::spawn_output_reader(stdout, tx.clone(), true);
-        Self::spawn_output_reader(stderr, tx, false);
+        let stdout_reader = Self::spawn_output_reader(stdout, tx.clone(), true);
+        let stderr_reader = Self::spawn_output_reader(stderr, tx, false);
 
         let (output_stdout, output_stderr) = self.collect_output(rx);
-        let status = child.wait().unwrap();
+        stdout_reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("stdout reader thread panicked"))?;
+        stderr_reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("stderr reader thread panicked"))?;
+        let status = child.wait().with_context(|| {
+            format!("failed to wait for command `{}`", self.format_invocation())
+        })?;
 
-        CmdOutput {
+        Ok(CmdOutput {
             status,
             stdout: output_stdout,
             stderr: output_stderr,
-        }
+            invocation: self.format_invocation(),
+            current_dir: self.current_dir.clone(),
+        })
     }
 
     #[allow(dead_code)]
-    pub fn run_interactive(&self) -> CmdOutput {
+    pub fn run_interactive(&self) -> anyhow::Result<CmdOutput> {
         if is_verbose() {
             println!("{}", self.build_command_description());
         }
@@ -217,13 +275,15 @@ impl Cmd {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .status()
-            .unwrap();
+            .with_context(|| self.spawn_context())?;
 
-        CmdOutput {
+        Ok(CmdOutput {
             status,
             stdout: String::new(),
             stderr: String::new(),
-        }
+            invocation: self.format_invocation(),
+            current_dir: self.current_dir.clone(),
+        })
     }
 }
 
@@ -289,6 +349,8 @@ mod tests {
             status,
             stdout: "  hello world  \n".to_string(),
             stderr: String::new(),
+            invocation: "echo hello world".to_string(),
+            current_dir: None,
         };
         assert_eq!(output.stdout(), "hello world");
     }

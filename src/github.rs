@@ -41,7 +41,7 @@ pub struct PrDetails {
 }
 
 pub fn fetch_notifications() -> anyhow::Result<Vec<NotificationThread>> {
-    let output = Cmd::new("gh", ["api", "/notifications", "--paginate", "--slurp"]).run();
+    let output = Cmd::new("gh", ["api", "/notifications", "--paginate", "--slurp"]).run()?;
     output.ensure_success("❌ Failed to fetch notifications")?;
 
     if output.stdout().trim().is_empty() {
@@ -153,7 +153,7 @@ pub fn fetch_authored_open_prs() -> anyhow::Result<Vec<AuthoredPrSummary>> {
             "url,title,updatedAt,repository",
         ],
     )
-    .run();
+    .run()?;
 
     output.ensure_success("❌ Failed to fetch authored pull requests")?;
     if output.stdout().trim().is_empty() {
@@ -226,7 +226,7 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
             "title,url,state,headRefName,headRefOid,baseRefName,createdAt,updatedAt,number",
         ],
     )
-    .run();
+    .run()?;
 
     output.ensure_success(format!("❌ Failed to fetch PR details for {pr_url}"))?;
     anyhow::ensure!(
@@ -298,7 +298,7 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
 
 pub fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {
     let endpoint = format!("/notifications/threads/{thread_id}");
-    let output = Cmd::new("gh", ["api", "-X", "DELETE", &endpoint]).run();
+    let output = Cmd::new("gh", ["api", "-X", "DELETE", &endpoint]).run()?;
     output.ensure_success("❌ Failed to mark notification thread as done")?;
     Ok(())
 }
@@ -319,7 +319,7 @@ pub fn ensure_local_repo(owner: &str, repo: &str) -> anyhow::Result<Utf8PathBuf>
     std::fs::create_dir_all(parent).with_context(|| format!("Failed to create {parent}"))?;
 
     let repo_name = format!("{owner}/{repo}");
-    let output = Cmd::new("gh", ["repo", "clone", &repo_name, repo_dir.as_str()]).run();
+    let output = Cmd::new("gh", ["repo", "clone", &repo_name, repo_dir.as_str()]).run()?;
     output.ensure_success(format!("❌ Failed to clone repository {repo_name}"))?;
 
     Ok(repo_dir)
@@ -333,7 +333,7 @@ pub fn local_repo_dir(owner: &str, repo: &str) -> anyhow::Result<Utf8PathBuf> {
 pub fn checkout_pr(repo_dir: &Utf8Path, pr_url: &str) -> anyhow::Result<()> {
     let output = Cmd::new("gh", ["pr", "checkout", pr_url])
         .with_current_dir(repo_dir)
-        .run();
+        .run()?;
     output.ensure_success("❌ Failed to checkout PR")?;
     Ok(())
 }
@@ -341,7 +341,7 @@ pub fn checkout_pr(repo_dir: &Utf8Path, pr_url: &str) -> anyhow::Result<()> {
 pub fn current_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
     let output = Cmd::new("git", ["branch", "--show-current"])
         .with_current_dir(repo_dir)
-        .run();
+        .run()?;
     output.ensure_success("❌ Failed to get current branch")?;
     Ok(output.stdout().to_string())
 }
@@ -349,7 +349,7 @@ pub fn current_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
 pub fn is_clean_repo(repo_dir: &Utf8Path) -> anyhow::Result<bool> {
     let output = Cmd::new("git", ["status", "--porcelain"])
         .with_current_dir(repo_dir)
-        .run();
+        .run()?;
     output.ensure_success("❌ Failed to check repository status")?;
     Ok(output.stdout().trim().is_empty())
 }
@@ -367,7 +367,7 @@ pub fn default_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
         ],
     )
     .with_current_dir(repo_dir)
-    .run();
+    .run()?;
 
     output.ensure_success("❌ Failed to detect default branch")?;
     anyhow::ensure!(
@@ -381,7 +381,7 @@ pub fn default_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
 pub fn checkout_branch(repo_dir: &Utf8Path, branch: &str) -> anyhow::Result<()> {
     let output = Cmd::new("git", ["checkout", branch])
         .with_current_dir(repo_dir)
-        .run();
+        .run()?;
     output.ensure_success(format!("❌ Failed to checkout branch '{branch}'"))?;
     Ok(())
 }
@@ -389,7 +389,7 @@ pub fn checkout_branch(repo_dir: &Utf8Path, branch: &str) -> anyhow::Result<()> 
 pub fn pull_ff_only(repo_dir: &Utf8Path) -> anyhow::Result<()> {
     let output = Cmd::new("git", ["pull", "--ff-only"])
         .with_current_dir(repo_dir)
-        .run();
+        .run()?;
     output.ensure_success("❌ Failed to pull default branch")?;
     Ok(())
 }

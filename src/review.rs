@@ -85,7 +85,7 @@ fn fetch_pr_metadata(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<Strin
         ],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()?;
     output.ensure_success("❌ Failed to fetch PR metadata")?;
     anyhow::ensure!(
         !output.stdout().trim().is_empty(),
@@ -140,7 +140,7 @@ fn minimize_pr_metadata(metadata: &str) -> anyhow::Result<String> {
 fn fetch_pr_diff(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<String> {
     let output = Cmd::new("gh", ["pr", "diff", pr_url, "--color=never"])
         .with_current_dir(repo_root)
-        .run();
+        .run()?;
     output.ensure_success("❌ Failed to fetch PR diff")?;
     anyhow::ensure!(
         !output.stdout().trim().is_empty(),
@@ -185,7 +185,7 @@ fn run_copilot(
         ["--silent", "--model", &resolved_model, "--prompt", prompt],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()?;
 
     output.ensure_success("❌ Failed to generate output with Copilot")?;
     anyhow::ensure!(
@@ -219,7 +219,7 @@ fn run_gemini(
         ],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()?;
 
     output.ensure_success("❌ Failed to generate output with Gemini")?;
     anyhow::ensure!(
@@ -246,7 +246,9 @@ fn run_kiro(
     }
     args.push(prompt.to_string());
 
-    let output = Cmd::new("kiro-cli", args).with_current_dir(repo_root).run();
+    let output = Cmd::new("kiro-cli", args)
+        .with_current_dir(repo_root)
+        .run()?;
 
     output.ensure_success("❌ Failed to generate output with Kiro")?;
     anyhow::ensure!(
