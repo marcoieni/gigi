@@ -252,16 +252,22 @@ fn run_kiro(
 ) -> anyhow::Result<(String, Option<String>, String)> {
     ensure_command_available("kiro-cli")?;
 
-    let mut args = vec!["chat".to_string(), "--no-interactive".to_string()];
-    if let Some(model) = model {
-        args.push("--model".to_string());
-        args.push(model.to_string());
-    }
+    let resolved_model = model
+        .unwrap_or(crate::config::DEFAULT_KIRO_MODEL)
+        .to_string();
+    let mut args = vec![
+        "chat".to_string(),
+        "--no-interactive".to_string(),
+        "--model".to_string(),
+        resolved_model.clone(),
+    ];
     args.push(prompt.to_string());
 
     let output = Cmd::new("kiro-cli", args)
         .hide_stdout()
-        .with_title("🚀 kiro-cli chat --no-interactive ...")
+        .with_title(format!(
+            "🚀 kiro-cli chat --no-interactive --model {resolved_model} ..."
+        ))
         .with_current_dir(repo_root)
         .run()?;
 
@@ -273,7 +279,7 @@ fn run_kiro(
 
     Ok((
         "kiro".to_string(),
-        model.map(ToString::to_string),
+        Some(resolved_model),
         output.stdout().to_string(),
     ))
 }

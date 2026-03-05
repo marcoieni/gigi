@@ -3,6 +3,8 @@ use std::{fs, path::PathBuf};
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_KIRO_MODEL: &str = "claude-opus-4.6";
+
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     pub config_path: PathBuf,
@@ -92,6 +94,7 @@ initial_review_max_prs = 10
 [ai]
 provider = "copilot" # or "gemini" or "kiro"
 # model = "gpt-5.3-codex"
+# when provider = "kiro", the default model is "claude-opus-4.6"
 
 [dashboard]
 host = "127.0.0.1"

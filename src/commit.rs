@@ -202,16 +202,20 @@ pub fn generate_kiro_commit_message(
     println!("🤖 Generating commit message with Kiro...");
 
     let prompt = build_commit_prompt(&diff);
-    let mut args = vec!["chat".to_string(), "--no-interactive".to_string()];
-    if let Some(model) = model {
-        args.push("--model".to_string());
-        args.push(model.to_string());
-    }
+    let model = model.unwrap_or(crate::config::DEFAULT_KIRO_MODEL);
+    let mut args = vec![
+        "chat".to_string(),
+        "--no-interactive".to_string(),
+        "--model".to_string(),
+        model.to_string(),
+    ];
     args.push(prompt);
 
     let output = Cmd::new("kiro-cli", args)
         .hide_stdout()
-        .with_title("🚀 kiro-cli chat --no-interactive ...")
+        .with_title(format!(
+            "🚀 kiro-cli chat --no-interactive --model {model} ..."
+        ))
         .with_current_dir(repo_root)
         .run()?;
 

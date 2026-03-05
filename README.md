@@ -131,6 +131,7 @@ initial_review_max_prs = 10
 [ai]
 provider = "copilot" # or "gemini" or "kiro"
 # model = "gpt-5.3-codex"
+# when provider = "kiro", the default model is "claude-opus-4.6"
 
 [dashboard]
 host = "127.0.0.1"
