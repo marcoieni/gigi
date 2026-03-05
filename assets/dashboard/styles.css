@@ -5,6 +5,8 @@
   --muted: #5c675c;
   --accent: #17653a;
   --danger: #9a1e19;
+  --warning: #9b6c11;
+  --violet: #6f56d9;
   --border: #d4d2c9;
 }
 
@@ -90,6 +92,9 @@ body {
 }
 
 .thread h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0 0 8px;
   font-size: 18px;
 }
@@ -135,8 +140,24 @@ body {
   background: var(--accent);
 }
 
+.pill.pending {
+  background: var(--warning);
+}
+
 .pill.unsafe {
   background: var(--danger);
+}
+
+.state-icon {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.state-icon.merged {
+  background: var(--violet);
+  box-shadow: 0 0 0 3px rgba(111, 86, 217, 0.16);
 }
 
 .spinner {

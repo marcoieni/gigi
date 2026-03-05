@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
@@ -424,9 +425,112 @@ impl Db {
             for row in rows {
                 out.push(row?);
             }
-            Ok(out)
+            Ok(deduplicate_dashboard_threads(out))
         })
     }
+}
+
+fn deduplicate_dashboard_threads(threads: Vec<DashboardThread>) -> Vec<DashboardThread> {
+    let mut deduped = Vec::new();
+    let mut pr_indexes = HashMap::new();
+
+    for thread in threads {
+        let Some(pr_url) = thread.pr_url.clone() else {
+            deduped.push(thread);
+            continue;
+        };
+
+        if let Some(index) = pr_indexes.get(&pr_url).copied() {
+            merge_dashboard_thread(&mut deduped[index], thread);
+        } else {
+            pr_indexes.insert(pr_url, deduped.len());
+            deduped.push(thread);
+        }
+    }
+
+    deduped
+}
+
+fn merge_dashboard_thread(existing: &mut DashboardThread, incoming: DashboardThread) {
+    let existing_snapshot = existing.clone();
+    let incoming_preferred =
+        dashboard_thread_priority(&incoming) > dashboard_thread_priority(existing);
+
+    if incoming_preferred {
+        *existing = incoming.clone();
+    }
+
+    existing.source = merge_sources(&existing_snapshot.source, &incoming.source);
+    existing.unread = existing_snapshot.unread || incoming.unread;
+    existing.done = existing_snapshot.done && incoming.done;
+    existing.updated_at = max_string(
+        existing_snapshot.updated_at.clone(),
+        incoming.updated_at.clone(),
+    );
+    existing.latest_requires_code_changes = existing_snapshot
+        .latest_requires_code_changes
+        .or(incoming.latest_requires_code_changes);
+    existing.pr_state = existing_snapshot.pr_state.or(incoming.pr_state);
+    existing.reason = merge_optional_string(
+        incoming_preferred,
+        existing_snapshot.reason,
+        incoming.reason,
+    );
+    existing.subject_url = merge_optional_string(
+        incoming_preferred,
+        existing_snapshot.subject_url,
+        incoming.subject_url,
+    );
+    existing.subject_type = merge_optional_string(
+        incoming_preferred,
+        existing_snapshot.subject_type,
+        incoming.subject_type,
+    );
+}
+
+fn dashboard_thread_priority(thread: &DashboardThread) -> usize {
+    match (thread.github_thread_id.is_some(), thread.source.as_str()) {
+        (true, _) => 2,
+        (false, "my_pr") => 1,
+        _ => 0,
+    }
+}
+
+fn merge_sources(left: &str, right: &str) -> String {
+    if left == right {
+        return left.to_string();
+    }
+
+    let mut sources = Vec::new();
+    for source in [left, right] {
+        if !sources.iter().any(|existing| existing == &source) {
+            sources.push(source);
+        }
+    }
+
+    sources.sort_by_key(|source| match *source {
+        "notification" => 0,
+        "my_pr" => 1,
+        _ => 2,
+    });
+
+    sources.join(" + ")
+}
+
+fn merge_optional_string(
+    incoming_preferred: bool,
+    existing: Option<String>,
+    incoming: Option<String>,
+) -> Option<String> {
+    if incoming_preferred {
+        incoming.or(existing)
+    } else {
+        existing.or(incoming)
+    }
+}
+
+fn max_string(left: String, right: String) -> String {
+    if right > left { right } else { left }
 }
 
 fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
@@ -646,5 +750,67 @@ mod tests {
             .unwrap();
 
         assert_eq!(done, 1);
+    }
+
+    #[test]
+    fn dashboard_threads_deduplicate_notification_and_my_pr() {
+        let db = test_db();
+        let pr_url = "https://github.com/a/b/pull/1".to_string();
+
+        db.upsert_pr(&NewPr {
+            pr_url: pr_url.clone(),
+            owner: "a".to_string(),
+            repo: "b".to_string(),
+            number: 1,
+            state: "MERGED".to_string(),
+            title: "Title".to_string(),
+            head_ref: "feat".to_string(),
+            base_ref: "main".to_string(),
+            head_sha: "sha1".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+        })
+        .unwrap();
+
+        db.upsert_thread(&NewThread {
+            thread_key: format!("mypr:{pr_url}"),
+            github_thread_id: None,
+            source: "my_pr".to_string(),
+            repository: "a/b".to_string(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: "Authored title".to_string(),
+            subject_url: Some(pr_url.clone()),
+            reason: Some("authored".to_string()),
+            pr_url: Some(pr_url.clone()),
+            unread: false,
+            done: false,
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+        })
+        .unwrap();
+
+        db.upsert_thread(&NewThread {
+            thread_key: "notif:123".to_string(),
+            github_thread_id: Some("123".to_string()),
+            source: "notification".to_string(),
+            repository: "a/b".to_string(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: "Notification title".to_string(),
+            subject_url: Some(pr_url.clone()),
+            reason: Some("review_requested".to_string()),
+            pr_url: Some(pr_url.clone()),
+            unread: true,
+            done: false,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        })
+        .unwrap();
+
+        let threads = db.list_dashboard_threads().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].github_thread_id.as_deref(), Some("123"));
+        assert_eq!(threads[0].thread_key, "notif:123");
+        assert_eq!(threads[0].source, "notification + my_pr");
+        assert_eq!(threads[0].subject_title, "Notification title");
+        assert_eq!(threads[0].updated_at, "2026-01-02T00:00:00Z");
+        assert_eq!(threads[0].pr_state.as_deref(), Some("MERGED"));
+        assert!(threads[0].unread);
     }
 }

@@ -24,6 +24,17 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
+function formatSourceLabel(source) {
+  return source
+    .split(" + ")
+    .map((part) => {
+      if (part === "my_pr") return "my PR";
+      if (part === "notification") return "notification";
+      return part;
+    })
+    .join(" + ");
+}
+
 function renderThreads() {
   threadsEl.replaceChildren();
   for (const thread of threadsState) {
@@ -153,6 +164,13 @@ function threadCard(thread) {
 
   const titleHref = thread.subject_url || thread.pr_url;
   const title = document.createElement("h3");
+  if (thread.pr_state === "MERGED") {
+    const mergedIcon = document.createElement("span");
+    mergedIcon.className = "state-icon merged";
+    mergedIcon.setAttribute("aria-label", "Merged pull request");
+    mergedIcon.title = "Merged";
+    title.appendChild(mergedIcon);
+  }
   if (titleHref) {
     const titleLink = document.createElement("a");
     titleLink.className = "thread-link";
@@ -168,7 +186,7 @@ function threadCard(thread) {
 
   const meta = document.createElement("p");
   meta.className = "meta";
-  meta.textContent = `${thread.repository} • ${thread.source} • ${thread.updated_at}`;
+  meta.textContent = `${thread.repository} • ${formatSourceLabel(thread.source)} • ${thread.updated_at}`;
   card.appendChild(meta);
 
   const row = document.createElement("div");
@@ -180,7 +198,7 @@ function threadCard(thread) {
     const reviewPending = pendingReviews.has(thread.pr_url);
     const fixPending = pendingFixes.has(thread.pr_url);
     const reviewBtn = document.createElement("button");
-    reviewBtn.className = `pill ${needsChanges ? "unsafe" : "safe"}`;
+    reviewBtn.className = `pill ${!hasReview ? "pending" : needsChanges ? "unsafe" : "safe"}`;
     reviewBtn.textContent = hasReview ? (needsChanges ? "Fixes needed" : "Safe") : "No review";
     reviewBtn.addEventListener("click", () => openReview(thread.pr_url));
     reviewBtn.disabled = reviewPending;
