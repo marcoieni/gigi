@@ -118,15 +118,18 @@ fn fetch_repo_info(repo_root: &Utf8Path) -> anyhow::Result<RepoInfo> {
 
     let (parent_name_with_owner, parent_default_branch) = if is_fork {
         let parent = value.get("parent");
-        let name = parent
-            .and_then(|v| v.get("nameWithOwner"))
-            .and_then(Value::as_str)
-            .map(|s| s.to_string());
-        let branch = parent
+        let name = parent_name_with_owner_from_json(parent);
+        let mut branch = parent
             .and_then(|v| v.get("defaultBranchRef"))
             .and_then(|v| v.get("name"))
             .and_then(Value::as_str)
             .map(|s| s.to_string());
+
+        if branch.is_none() {
+            if let Some(parent_repo) = name.as_deref() {
+                branch = Some(fetch_default_branch(repo_root, parent_repo)?);
+            }
+        }
         (name, branch)
     } else {
         (None, None)
@@ -138,6 +141,53 @@ fn fetch_repo_info(repo_root: &Utf8Path) -> anyhow::Result<RepoInfo> {
         parent_name_with_owner,
         parent_default_branch,
     })
+}
+
+fn parent_name_with_owner_from_json(parent: Option<&Value>) -> Option<String> {
+    parent.and_then(|v| {
+        v.get("nameWithOwner")
+            .and_then(Value::as_str)
+            .map(|s| s.to_string())
+            .or_else(|| {
+                let owner = v
+                    .get("owner")
+                    .and_then(|o| o.get("login"))
+                    .and_then(Value::as_str)?;
+                let name = v.get("name").and_then(Value::as_str)?;
+                Some(format!("{owner}/{name}"))
+            })
+    })
+}
+
+fn fetch_default_branch(
+    repo_root: &Utf8Path,
+    repo_name_with_owner: &str,
+) -> anyhow::Result<String> {
+    let output = Cmd::new(
+        "gh",
+        [
+            "repo",
+            "view",
+            repo_name_with_owner,
+            "--json",
+            "defaultBranchRef",
+        ],
+    )
+    .with_current_dir(repo_root)
+    .run();
+    output.ensure_success("❌ Failed to fetch repository default branch")?;
+    anyhow::ensure!(
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to fetch repository default branch: command returned empty output"
+    );
+
+    let value: Value = serde_json::from_str(output.stdout())?;
+    Ok(value
+        .get("defaultBranchRef")
+        .and_then(|v| v.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or("main")
+        .to_string())
 }
 
 fn origin_name_with_owner(repo_root: &Utf8Path) -> anyhow::Result<String> {
@@ -663,6 +713,7 @@ fn branch_name_from_commit_message(commit_message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_branch_name_simple() {
@@ -743,6 +794,27 @@ mod tests {
         assert_eq!(
             parse_github_name_with_owner("git@gitlab.com:marcoieni/rust-forge.git"),
             None
+        );
+    }
+
+    #[test]
+    fn test_parent_name_with_owner_from_json_name_with_owner_field() {
+        let parent = json!({"nameWithOwner": "rust-lang/rust-forge"});
+        assert_eq!(
+            parent_name_with_owner_from_json(Some(&parent)),
+            Some("rust-lang/rust-forge".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parent_name_with_owner_from_json_owner_name_fallback() {
+        let parent = json!({
+            "name": "rust-forge",
+            "owner": { "login": "rust-lang" }
+        });
+        assert_eq!(
+            parent_name_with_owner_from_json(Some(&parent)),
+            Some("rust-lang/rust-forge".to_string())
         );
     }
 }
