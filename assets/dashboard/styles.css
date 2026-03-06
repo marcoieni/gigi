@@ -223,6 +223,15 @@ body {
   stroke-linejoin: round;
 }
 
+.header-link {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.header-link:hover {
+  color: var(--accent);
+}
+
 .source-badge {
   display: inline-flex;
   align-items: center;
