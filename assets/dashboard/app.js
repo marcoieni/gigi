@@ -30,6 +30,28 @@ const TERMINAL_ICON_PATHS = [
   "M11.7 13.8h4.9",
 ];
 
+const NOTIFICATION_ICON_PATHS = [
+  // Bell body.
+  "M15.5 17.5h4l-1.1-1.1a2 2 0 0 1-.6-1.4V11a5.8 5.8 0 1 0-11.6 0v4a2 2 0 0 1-.6 1.4l-1.1 1.1h4",
+  // Bell clapper.
+  "M10 17.5a2 2 0 0 0 4 0",
+];
+
+const MY_PR_ICON_PATHS = [
+  // Top node.
+  "M18 6.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 0 1 5 0Z",
+  // Bottom node.
+  "M8 17.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 0 1 5 0Z",
+  // Connector.
+  "M15.5 9v5.5a3 3 0 0 1-3 3H8",
+  // Stem.
+  "M5.5 15V9",
+];
+
+const CHECK_ICON_PATHS = [
+  "m5 12.5 4 4 10-10",
+];
+
 closeModal.addEventListener("click", () => modal.close());
 modal.addEventListener("close", () => {
   activeReviewPrUrl = null;
@@ -43,15 +65,20 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
-function formatSourceLabel(source) {
-  return source
-    .split(" + ")
-    .map((part) => {
-      if (part === "my_pr") return "my PR";
-      if (part === "notification") return "notification";
-      return part;
-    })
-    .join(" + ");
+function repoUrl(repository) {
+  return `https://github.com/${repository}`;
+}
+
+function sourceLabel(part) {
+  if (part === "my_pr") return "My PR";
+  if (part === "notification") return "Notification";
+  return part;
+}
+
+function sourceIconName(part) {
+  if (part === "my_pr") return "my-pr";
+  if (part === "notification") return "notification";
+  return null;
 }
 
 function renderThreads() {
@@ -117,6 +144,12 @@ function iconSvg(name) {
       ? VSCODE_ICON_PATHS
       : name === "terminal"
         ? TERMINAL_ICON_PATHS
+        : name === "notification"
+          ? NOTIFICATION_ICON_PATHS
+          : name === "my-pr"
+            ? MY_PR_ICON_PATHS
+            : name === "check"
+              ? CHECK_ICON_PATHS
         : [];
 
   for (const d of paths) {
@@ -125,6 +158,60 @@ function iconSvg(name) {
     svg.appendChild(path);
   }
   return svg;
+}
+
+function metaSeparator() {
+  const separator = document.createElement("span");
+  separator.className = "meta-separator";
+  separator.textContent = "•";
+  separator.setAttribute("aria-hidden", "true");
+  return separator;
+}
+
+function repositoryLink(repository) {
+  const link = document.createElement("a");
+  link.className = "thread-link repo-link";
+  link.href = repoUrl(repository);
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.textContent = repository;
+  return link;
+}
+
+function sourceBadge(part) {
+  const iconName = sourceIconName(part);
+  if (!iconName) {
+    const text = document.createElement("span");
+    text.textContent = sourceLabel(part);
+    return text;
+  }
+
+  const badge = document.createElement("span");
+  badge.className = "source-badge";
+  badge.title = sourceLabel(part);
+  badge.setAttribute("aria-label", sourceLabel(part));
+  badge.appendChild(iconSvg(iconName));
+  return badge;
+}
+
+function buildMeta(meta, thread) {
+  meta.replaceChildren();
+  meta.appendChild(repositoryLink(thread.repository));
+  meta.appendChild(metaSeparator());
+
+  const sources = thread.source.split(" + ");
+  sources.forEach((part, index) => {
+    meta.appendChild(sourceBadge(part));
+    if (index < sources.length - 1) {
+      meta.appendChild(document.createTextNode(" "));
+    }
+  });
+
+  meta.appendChild(metaSeparator());
+
+  const updated = document.createElement("span");
+  updated.textContent = thread.updated_at;
+  meta.appendChild(updated);
 }
 
 function iconButton(iconName, label, isLoading, onClick) {
@@ -273,7 +360,7 @@ function threadCard(thread) {
 
   const meta = document.createElement("p");
   meta.className = "meta";
-  meta.textContent = `${thread.repository} • ${formatSourceLabel(thread.source)} • ${thread.updated_at}`;
+  buildMeta(meta, thread);
   card.appendChild(meta);
 
   const row = document.createElement("div");
@@ -351,8 +438,19 @@ function threadCard(thread) {
   if (thread.github_thread_id) {
     const donePending = pendingDone.has(thread.github_thread_id);
     const doneBtn = document.createElement("button");
-    doneBtn.className = `btn ${donePending ? "loading" : ""}`;
-    setButtonContent(doneBtn, donePending ? "Saving..." : thread.done ? "Done" : "Mark done", donePending);
+    doneBtn.className = `btn icon-btn ${donePending ? "loading" : ""}`;
+    doneBtn.type = "button";
+    doneBtn.title = thread.done ? "Done" : "Mark done";
+    doneBtn.setAttribute("aria-label", thread.done ? "Done" : "Mark done");
+    doneBtn.replaceChildren();
+    if (donePending) {
+      const spinner = document.createElement("span");
+      spinner.className = "spinner";
+      spinner.setAttribute("aria-hidden", "true");
+      doneBtn.appendChild(spinner);
+    } else {
+      doneBtn.appendChild(iconSvg("check"));
+    }
     doneBtn.disabled = !!thread.done || donePending;
     doneBtn.addEventListener("click", async () => {
       await markDone(thread.github_thread_id);

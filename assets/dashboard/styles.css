@@ -110,9 +110,21 @@ body {
 }
 
 .meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   color: var(--muted);
   font-size: 13px;
   margin-bottom: 10px;
+}
+
+.repo-link {
+  font-weight: 600;
+}
+
+.meta-separator {
+  color: color-mix(in srgb, var(--muted) 75%, white);
 }
 
 .row {
@@ -137,6 +149,25 @@ body {
 }
 
 .icon-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+}
+
+.source-badge svg {
   width: 16px;
   height: 16px;
   fill: none;
