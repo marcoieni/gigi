@@ -142,6 +142,16 @@ impl AppState {
         self.poll_once_regular().await
     }
 
+    pub async fn poll_once_from_dashboard(&self) -> anyhow::Result<PollStats> {
+        println!("🔄 Dashboard refresh requested");
+        let result = self.poll_once().await;
+        match &result {
+            Ok(stats) => print_poll_stats("✅ Dashboard refresh complete:", stats),
+            Err(err) => eprintln!("❌ Dashboard refresh failed: {err}"),
+        }
+        result
+    }
+
     pub async fn poll_once_startup(&self) -> anyhow::Result<PollStats> {
         self.poll_once_with_mode(PollMode::Startup).await
     }
@@ -269,17 +279,29 @@ impl AppState {
         pr_url: Option<String>,
     ) -> anyhow::Result<()> {
         let _guard = self.poll_lock.lock().await;
+        let target_label = describe_open_target(&repository, pr_url.as_deref());
+        println!("🧑‍💻 VS Code open requested: {target_label}");
 
         tokio::task::spawn_blocking(move || {
-            if let Some(pr_url) = pr_url.as_deref() {
+            let result = if let Some(pr_url) = pr_url.as_deref() {
                 let local_pr = github::ensure_local_repo_for_pr(pr_url)?;
+                println!("🔀 Preparing PR for VS Code: {}", local_pr.details.pr_url);
                 github::checkout_pr_for_open_with_details(&local_pr.repo_dir, &local_pr.details)?;
+                println!("📂 Opening VS Code in {}", local_pr.repo_dir);
                 launcher::open_vscode(&local_pr.repo_dir)
             } else {
                 let (owner, repo) = parse_repository_name(&repository)?;
                 let repo_dir = github::ensure_local_repo(&owner, &repo)?;
+                println!("📂 Opening VS Code in {}", repo_dir);
                 launcher::open_vscode(&repo_dir)
+            };
+
+            match &result {
+                Ok(()) => println!("✅ VS Code opened: {target_label}"),
+                Err(err) => eprintln!("❌ Failed to open VS Code for {target_label}: {err}"),
             }
+
+            result
         })
         .await
         .context("open-vscode task join failure")?
@@ -291,17 +313,29 @@ impl AppState {
         pr_url: Option<String>,
     ) -> anyhow::Result<()> {
         let _guard = self.poll_lock.lock().await;
+        let target_label = describe_open_target(&repository, pr_url.as_deref());
+        println!("🖥️ Terminal open requested: {target_label}");
 
         tokio::task::spawn_blocking(move || {
-            if let Some(pr_url) = pr_url.as_deref() {
+            let result = if let Some(pr_url) = pr_url.as_deref() {
                 let local_pr = github::ensure_local_repo_for_pr(pr_url)?;
+                println!("🔀 Preparing PR for Terminal: {}", local_pr.details.pr_url);
                 github::checkout_pr_for_open_with_details(&local_pr.repo_dir, &local_pr.details)?;
+                println!("📂 Opening Terminal in {}", local_pr.repo_dir);
                 launcher::open_terminal(&local_pr.repo_dir)
             } else {
                 let (owner, repo) = parse_repository_name(&repository)?;
                 let repo_dir = github::ensure_local_repo(&owner, &repo)?;
+                println!("📂 Opening Terminal in {}", repo_dir);
                 launcher::open_terminal(&repo_dir)
+            };
+
+            match &result {
+                Ok(()) => println!("✅ Terminal opened: {target_label}"),
+                Err(err) => eprintln!("❌ Failed to open Terminal for {target_label}: {err}"),
             }
+
+            result
         })
         .await
         .context("open-terminal task join failure")?
@@ -705,6 +739,13 @@ fn parse_repository_name(repository: &str) -> anyhow::Result<(String, String)> {
         "Invalid repository name '{repository}' (expected owner/repo)"
     );
     Ok((owner.to_string(), repo.to_string()))
+}
+
+fn describe_open_target(repository: &str, pr_url: Option<&str>) -> String {
+    match pr_url {
+        Some(pr_url) => format!("{repository} ({pr_url})"),
+        None => repository.to_string(),
+    }
 }
 
 fn provider_name(provider: AiProvider) -> &'static str {

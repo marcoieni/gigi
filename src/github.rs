@@ -140,7 +140,9 @@ pub fn fetch_notifications() -> anyhow::Result<Vec<NotificationThread>> {
                 .and_then(Value::as_str)
                 .map(ToString::to_string);
 
-            let pr_url = raw_subject_url.as_deref().and_then(api_url_to_pr_url);
+            let pr_url = raw_subject_url
+                .as_deref()
+                .and_then(|url| api_url_to_pr_url(url, subject_type.as_deref()));
             let subject_url = raw_subject_url
                 .as_deref()
                 .and_then(api_url_to_html_url)
@@ -520,15 +522,36 @@ fn is_diverged_local_branch_error_text(details: &str) -> bool {
         || details.contains("Not possible to fast-forward, aborting.")
 }
 
-fn api_url_to_pr_url(api_url: &str) -> Option<String> {
-    let path = api_url
-        .trim()
-        .strip_prefix("https://api.github.com/")
-        .unwrap_or(api_url)
-        .strip_prefix("repos/")?;
+fn api_url_to_pr_url(api_url: &str, subject_type: Option<&str>) -> Option<String> {
+    let trimmed = api_url.trim();
 
+    if let Some(path) = trimmed
+        .strip_prefix("https://api.github.com/")
+        .unwrap_or(trimmed)
+        .strip_prefix("repos/")
+    {
+        return github_subject_path_to_pr_url(path, subject_type);
+    }
+
+    if let Some(path) = trimmed.strip_prefix("https://github.com/") {
+        return github_subject_path_to_pr_url(path, subject_type);
+    }
+
+    None
+}
+
+fn github_subject_path_to_pr_url(path: &str, subject_type: Option<&str>) -> Option<String> {
     let parts: Vec<&str> = path.split('/').collect();
-    if parts.len() < 4 || parts[2] != "pulls" {
+    if parts.len() < 4 {
+        return None;
+    }
+
+    let is_pull_request = match parts[2] {
+        "pulls" | "pull" => true,
+        "issues" => matches!(subject_type, Some("PullRequest")),
+        _ => false,
+    };
+    if !is_pull_request {
         return None;
     }
 
@@ -677,8 +700,26 @@ mod tests {
 
     #[test]
     fn converts_api_pr_url() {
-        let pr = api_url_to_pr_url("https://api.github.com/repos/o/r/pulls/123").unwrap();
+        let pr = api_url_to_pr_url("https://api.github.com/repos/o/r/pulls/123", None).unwrap();
         assert_eq!(pr, "https://github.com/o/r/pull/123");
+    }
+
+    #[test]
+    fn converts_issue_api_url_for_pull_request_notifications() {
+        let pr = api_url_to_pr_url(
+            "https://api.github.com/repos/o/r/issues/123",
+            Some("PullRequest"),
+        )
+        .unwrap();
+        assert_eq!(pr, "https://github.com/o/r/pull/123");
+    }
+
+    #[test]
+    fn ignores_issue_api_url_for_non_pull_request_notifications() {
+        assert!(
+            api_url_to_pr_url("https://api.github.com/repos/o/r/issues/123", Some("Issue"),)
+                .is_none()
+        );
     }
 
     #[test]

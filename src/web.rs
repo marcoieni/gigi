@@ -140,7 +140,7 @@ async fn refresh(
     State(state): State<std::sync::Arc<AppState>>,
 ) -> Result<Json<PollStats>, ApiErrorResponse> {
     let stats = state
-        .poll_once()
+        .poll_once_from_dashboard()
         .await
         .map_err(|err| ApiErrorResponse::internal(&err))?;
     Ok(Json(stats))

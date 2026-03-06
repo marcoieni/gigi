@@ -5,6 +5,7 @@ const filterNotificationsEl = document.getElementById("filter-notifications");
 const filterPrsEl = document.getElementById("filter-prs");
 const filterDoneEl = document.getElementById("filter-done");
 const filterNotDoneEl = document.getElementById("filter-not-done");
+const groupByRepositoryEl = document.getElementById("group-by-repository");
 const modal = document.getElementById("review-modal");
 const closeModal = document.getElementById("close-modal");
 const reviewContent = document.getElementById("review-content");
@@ -74,6 +75,12 @@ for (const filterEl of [
     await loadThreads();
   });
 }
+groupByRepositoryEl.addEventListener("change", () => {
+  renderThreads();
+  if (threadsState.length > 0) {
+    setStatus(loadedStatusText());
+  }
+});
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -114,8 +121,17 @@ function sourceIconName(part) {
 
 function renderThreads() {
   threadsEl.replaceChildren();
-  for (const thread of threadsState) {
-    threadsEl.appendChild(threadCard(thread));
+  threadsEl.classList.toggle("grouped", groupByRepositoryEl.checked);
+
+  if (!groupByRepositoryEl.checked) {
+    for (const thread of threadsState) {
+      threadsEl.appendChild(threadCard(thread));
+    }
+    return;
+  }
+
+  for (const [repository, repoThreads] of groupThreadsByRepository(threadsState)) {
+    threadsEl.appendChild(repositorySection(repository, repoThreads));
   }
 }
 
@@ -243,6 +259,46 @@ function buildMeta(meta, thread) {
   const updated = document.createElement("span");
   updated.textContent = thread.updated_at;
   meta.appendChild(updated);
+}
+
+function groupThreadsByRepository(threads) {
+  const groups = new Map();
+  for (const thread of threads) {
+    if (!groups.has(thread.repository)) {
+      groups.set(thread.repository, []);
+    }
+    groups.get(thread.repository).push(thread);
+  }
+  return groups;
+}
+
+function repositorySection(repository, repoThreads) {
+  const section = document.createElement("section");
+  section.className = "repo-group";
+
+  const header = document.createElement("header");
+  header.className = "repo-group-header";
+
+  const title = document.createElement("h2");
+  title.className = "repo-group-title";
+  title.appendChild(repositoryLink(repository));
+  header.appendChild(title);
+
+  const count = document.createElement("span");
+  count.className = "repo-group-count";
+  count.textContent = `${repoThreads.length} ${repoThreads.length === 1 ? "item" : "items"}`;
+  header.appendChild(count);
+
+  section.appendChild(header);
+
+  const grid = document.createElement("div");
+  grid.className = "threads repo-group-threads";
+  for (const thread of repoThreads) {
+    grid.appendChild(threadCard(thread));
+  }
+  section.appendChild(grid);
+
+  return section;
 }
 
 function iconButton(iconName, label, isLoading, onClick) {
@@ -512,12 +568,21 @@ function threadCard(thread) {
   return card;
 }
 
+function loadedStatusText() {
+  if (!groupByRepositoryEl.checked) {
+    return `Loaded ${threadsState.length} items`;
+  }
+
+  const repositoryCount = new Set(threadsState.map((thread) => thread.repository)).size;
+  return `Loaded ${threadsState.length} items in ${repositoryCount} ${repositoryCount === 1 ? "repository" : "repositories"}`;
+}
+
 async function loadThreads() {
   setStatus("Loading...");
   try {
     threadsState = await api(threadsPath());
     renderThreads();
-    setStatus(`Loaded ${threadsState.length} items`);
+    setStatus(loadedStatusText());
   } catch (err) {
     setStatus(`Load failed: ${err.message}`);
   }
