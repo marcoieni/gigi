@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::cmd::Cmd;
+use crate::{cmd::Cmd, launcher};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitHubPrRef {
@@ -25,7 +25,7 @@ pub fn checkout_pr(pr_url: &str) -> anyhow::Result<()> {
         .run()?;
     checkout.ensure_success("❌ Failed to checkout PR")?;
 
-    open_vscode(&repo_dir)?;
+    launcher::open_vscode(&repo_dir)?;
     Ok(())
 }
 
@@ -110,30 +110,6 @@ fn update_default_branch(repo_dir: &Utf8Path) -> anyhow::Result<()> {
     pull.ensure_success(format!(
         "❌ Failed to pull default branch '{default_branch}'"
     ))?;
-
-    Ok(())
-}
-
-fn open_vscode(repo_dir: &Utf8Path) -> anyhow::Result<()> {
-    let code = Cmd::new("code", ["."])
-        .with_title("🧑‍💻 code .")
-        .with_current_dir(repo_dir)
-        .run();
-
-    if let Ok(code) = code
-        && code.status().success()
-    {
-        return Ok(());
-    }
-
-    // Fallback for macOS setups where `code` isn't in PATH.
-    let open = Cmd::new("open", ["-a", "Visual Studio Code", "."])
-        .with_title("🧑‍💻 open -a \"Visual Studio Code\" .")
-        .with_current_dir(repo_dir)
-        .run()?;
-    open.ensure_success(
-        "❌ Failed to open VS Code (tried `code .` and `open -a 'Visual Studio Code' .`)",
-    )?;
 
     Ok(())
 }

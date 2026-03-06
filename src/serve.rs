@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::{
     config::{self, AiProvider, AppConfig, RereviewMode},
     db::{self, Db},
-    github, review, web,
+    github, launcher, review, web,
 };
 
 #[derive(Debug, Clone)]
@@ -245,6 +245,44 @@ impl AppState {
         })
         .await
         .context("review task join failure")?
+    }
+
+    pub async fn open_in_vscode(
+        &self,
+        repository: String,
+        pr_url: Option<String>,
+    ) -> anyhow::Result<()> {
+        let _guard = self.poll_lock.lock().await;
+
+        tokio::task::spawn_blocking(move || {
+            let (owner, repo) = parse_repository_name(&repository)?;
+            let repo_dir = github::ensure_local_repo(&owner, &repo)?;
+            if let Some(pr_url) = pr_url.as_deref() {
+                github::checkout_pr(&repo_dir, pr_url)?;
+            }
+            launcher::open_vscode(&repo_dir)
+        })
+        .await
+        .context("open-vscode task join failure")?
+    }
+
+    pub async fn open_in_terminal(
+        &self,
+        repository: String,
+        pr_url: Option<String>,
+    ) -> anyhow::Result<()> {
+        let _guard = self.poll_lock.lock().await;
+
+        tokio::task::spawn_blocking(move || {
+            let (owner, repo) = parse_repository_name(&repository)?;
+            let repo_dir = github::ensure_local_repo(&owner, &repo)?;
+            if let Some(pr_url) = pr_url.as_deref() {
+                github::checkout_pr(&repo_dir, pr_url)?;
+            }
+            launcher::open_terminal(&repo_dir)
+        })
+        .await
+        .context("open-terminal task join failure")?
     }
 }
 
@@ -628,6 +666,17 @@ fn handle_closed_pr_branch_sync(db: &Db, details: &github::PrDetails) -> anyhow:
     Ok(())
 }
 
+fn parse_repository_name(repository: &str) -> anyhow::Result<(String, String)> {
+    let Some((owner, repo)) = repository.split_once('/') else {
+        anyhow::bail!("Invalid repository name '{repository}' (expected owner/repo)");
+    };
+    anyhow::ensure!(
+        !owner.is_empty() && !repo.is_empty() && !repo.contains('/'),
+        "Invalid repository name '{repository}' (expected owner/repo)"
+    );
+    Ok((owner.to_string(), repo.to_string()))
+}
+
 fn provider_name(provider: AiProvider) -> &'static str {
     match provider {
         AiProvider::Copilot => "copilot",
@@ -743,6 +792,20 @@ mod tests {
         };
 
         assert_eq!(dashboard_browser_url(&cfg), "http://localhost:8787");
+    }
+
+    #[test]
+    fn parses_repository_name() {
+        assert_eq!(
+            parse_repository_name("marcoieni/gigi").unwrap(),
+            ("marcoieni".to_string(), "gigi".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_repository_name() {
+        assert!(parse_repository_name("marcoieni").is_err());
+        assert!(parse_repository_name("marcoieni/gigi/extra").is_err());
     }
 
     #[test]

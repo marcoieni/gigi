@@ -7,6 +7,7 @@ mod config;
 mod db;
 mod github;
 mod init;
+mod launcher;
 mod review;
 mod serve;
 mod terminal;

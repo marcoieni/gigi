@@ -7,9 +7,28 @@ const reviewContent = document.getElementById("review-content");
 const pendingReviews = new Set();
 const pendingFixes = new Set();
 const pendingDone = new Set();
+const pendingLaunches = new Set();
 
 let threadsState = [];
 let activeReviewPrUrl = null;
+
+const VSCODE_ICON_PATHS = [
+  // Left chevron.
+  "M9 8 5 12l4 4",
+  // Right chevron.
+  "m15 8 4 4-4 4",
+  // Slash.
+  "M14 6 10 18",
+];
+
+const TERMINAL_ICON_PATHS = [
+  // Terminal window outline.
+  "M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v10A1.5 1.5 0 0 1 20 18.5H4A1.5 1.5 0 0 1 2.5 17V7A1.5 1.5 0 0 1 4 5.5Z",
+  // Prompt chevron.
+  "m6.4 9 2.6 2.3-2.6 2.3",
+  // Command line.
+  "M11.7 13.8h4.9",
+];
 
 closeModal.addEventListener("click", () => modal.close());
 modal.addEventListener("close", () => {
@@ -82,6 +101,74 @@ async function api(path, options = {}) {
     return res.json();
   }
   return null;
+}
+
+function launchKey(kind, threadKey) {
+  return `${kind}:${threadKey}`;
+}
+
+function iconSvg(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+
+  const paths =
+    name === "vscode"
+      ? VSCODE_ICON_PATHS
+      : name === "terminal"
+        ? TERMINAL_ICON_PATHS
+        : [];
+
+  for (const d of paths) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    svg.appendChild(path);
+  }
+  return svg;
+}
+
+function iconButton(iconName, label, isLoading, onClick) {
+  const button = document.createElement("button");
+  button.className = `btn icon-btn ${isLoading ? "loading" : ""}`;
+  button.type = "button";
+  button.disabled = isLoading;
+  button.title = label;
+  button.setAttribute("aria-label", label);
+
+  if (isLoading) {
+    const spinner = document.createElement("span");
+    spinner.className = "spinner";
+    spinner.setAttribute("aria-hidden", "true");
+    button.appendChild(spinner);
+  } else {
+    button.appendChild(iconSvg(iconName));
+  }
+
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+async function launchProject(kind, thread) {
+  const key = launchKey(kind, thread.thread_key);
+  pendingLaunches.add(key);
+  renderThreads();
+  setStatus(kind === "vscode" ? "Opening VS Code..." : "Opening Terminal...");
+
+  try {
+    await api(`/api/open/${kind}`, {
+      method: "POST",
+      body: JSON.stringify({
+        repository: thread.repository,
+        pr_url: thread.pr_url,
+      }),
+    });
+    setStatus(kind === "vscode" ? "VS Code opened" : "Terminal opened");
+  } catch (err) {
+    setStatus(`Open failed: ${err.message}`);
+  } finally {
+    pendingLaunches.delete(key);
+    renderThreads();
+  }
 }
 
 function parsePrUrl(prUrl) {
@@ -191,6 +278,30 @@ function threadCard(thread) {
 
   const row = document.createElement("div");
   row.className = "row";
+
+  const actions = document.createElement("div");
+  actions.className = "icon-actions";
+  actions.appendChild(
+    iconButton(
+      "vscode",
+      thread.pr_url ? "Open PR in VS Code" : "Open project in VS Code",
+      pendingLaunches.has(launchKey("vscode", thread.thread_key)),
+      async () => {
+        await launchProject("vscode", thread);
+      }
+    )
+  );
+  actions.appendChild(
+    iconButton(
+      "terminal",
+      thread.pr_url ? "Open PR in Terminal" : "Open project in Terminal",
+      pendingLaunches.has(launchKey("terminal", thread.thread_key)),
+      async () => {
+        await launchProject("terminal", thread);
+      }
+    )
+  );
+  row.appendChild(actions);
 
   if (thread.pr_url) {
     const hasReview = thread.latest_requires_code_changes !== null;

@@ -7,7 +7,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tower_http::services::ServeDir;
 
 use crate::{
@@ -29,6 +29,8 @@ pub async fn run_server(
         .route("/api/prs/{owner}/{repo}/{number}/review", post(run_review))
         .route("/api/threads/{thread_id}/done", post(mark_done))
         .route("/api/prs/{owner}/{repo}/{number}/fix", post(run_fix))
+        .route("/api/open/vscode", post(open_vscode))
+        .route("/api/open/terminal", post(open_terminal))
         .route("/api/refresh", post(refresh))
         .fallback_service(ServeDir::new(dashboard_dir).append_index_html_on_directories(true))
         .with_state(state);
@@ -134,9 +136,37 @@ async fn refresh(
     Ok(Json(stats))
 }
 
+async fn open_vscode(
+    State(state): State<std::sync::Arc<AppState>>,
+    Json(request): Json<OpenProjectRequest>,
+) -> Result<StatusCode, ApiErrorResponse> {
+    state
+        .open_in_vscode(request.repository, request.pr_url)
+        .await
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
+    Ok(StatusCode::OK)
+}
+
+async fn open_terminal(
+    State(state): State<std::sync::Arc<AppState>>,
+    Json(request): Json<OpenProjectRequest>,
+) -> Result<StatusCode, ApiErrorResponse> {
+    state
+        .open_in_terminal(request.repository, request.pr_url)
+        .await
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
+    Ok(StatusCode::OK)
+}
+
 #[derive(Debug, Serialize)]
 struct FixResponse {
     output: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenProjectRequest {
+    repository: String,
+    pr_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
