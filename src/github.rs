@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::Context as _;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::Value;
@@ -18,6 +20,13 @@ pub struct NotificationThread {
     pub subject_title: String,
     pub subject_url: Option<String>,
     pub pr_url: Option<String>,
+    pub issue_state: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NotificationPollData {
+    pub notifications: Vec<NotificationThread>,
+    pub pr_details: Vec<PrDetails>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,12 +75,15 @@ pub struct PrDetails {
     pub is_cross_repository: bool,
 }
 
-pub fn fetch_notifications() -> anyhow::Result<Vec<NotificationThread>> {
+pub fn fetch_notifications() -> anyhow::Result<NotificationPollData> {
     let output = Cmd::new("gh", ["api", "/notifications", "--paginate", "--slurp"]).run()?;
     output.ensure_success("❌ Failed to fetch notifications")?;
 
     if output.stdout().trim().is_empty() {
-        return Ok(Vec::new());
+        return Ok(NotificationPollData {
+            notifications: Vec::new(),
+            pr_details: Vec::new(),
+        });
     }
 
     let value: Value =
@@ -84,6 +96,7 @@ pub fn fetch_notifications() -> anyhow::Result<Vec<NotificationThread>> {
     };
 
     let mut results = Vec::new();
+    let mut pr_details_by_url = HashMap::new();
     for page in pages {
         let Value::Array(entries) = page else {
             continue;
@@ -143,10 +156,38 @@ pub fn fetch_notifications() -> anyhow::Result<Vec<NotificationThread>> {
             let pr_url = raw_subject_url
                 .as_deref()
                 .and_then(|url| api_url_to_pr_url(url, subject_type.as_deref()));
+            if let Some(pr_url) = pr_url.as_deref()
+                && !pr_details_by_url.contains_key(pr_url)
+            {
+                match fetch_pr_details(pr_url) {
+                    Ok(details) => {
+                        pr_details_by_url.insert(pr_url.to_string(), details);
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "⚠️ Failed to fetch PR details for notification {thread_id}: {err}"
+                        );
+                    }
+                }
+            }
+            let issue_state = match (subject_type.as_deref(), raw_subject_url.as_deref()) {
+                (Some("Issue"), Some(subject_api_url)) => {
+                    match fetch_issue_state(subject_api_url) {
+                        Ok(state) => Some(state),
+                        Err(err) => {
+                            eprintln!(
+                                "⚠️ Failed to fetch issue state for notification {thread_id}: {err}"
+                            );
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            };
             let subject_url = raw_subject_url
                 .as_deref()
                 .and_then(api_url_to_html_url)
-                .or(raw_subject_url);
+                .or(raw_subject_url.clone());
 
             results.push(NotificationThread {
                 thread_id,
@@ -158,11 +199,15 @@ pub fn fetch_notifications() -> anyhow::Result<Vec<NotificationThread>> {
                 subject_title,
                 subject_url,
                 pr_url,
+                issue_state,
             });
         }
     }
 
-    Ok(results)
+    Ok(NotificationPollData {
+        notifications: results,
+        pr_details: pr_details_by_url.into_values().collect(),
+    })
 }
 
 pub fn fetch_authored_open_prs() -> anyhow::Result<Vec<AuthoredPrSummary>> {
@@ -368,6 +413,20 @@ fn fetch_repository_archived(owner: &str, repo: &str) -> anyhow::Result<bool> {
         .unwrap_or(false))
 }
 
+fn fetch_issue_state(subject_api_url: &str) -> anyhow::Result<String> {
+    let endpoint = github_api_endpoint(subject_api_url)
+        .with_context(|| format!("Unsupported GitHub API URL: {subject_api_url}"))?;
+    let output = Cmd::new("gh", ["api", endpoint.as_str(), "--jq", ".state"]).run()?;
+    output.ensure_success(format!(
+        "❌ Failed to fetch issue state for {subject_api_url}"
+    ))?;
+    anyhow::ensure!(
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to fetch issue state for {subject_api_url}: empty output"
+    );
+    Ok(output.stdout().trim().to_ascii_uppercase())
+}
+
 pub fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {
     let endpoint = format!("/notifications/threads/{thread_id}");
     let output = Cmd::new("gh", ["api", "-X", "DELETE", &endpoint]).run()?;
@@ -520,6 +579,24 @@ fn is_diverged_local_branch_error(output: &CmdOutput) -> bool {
 fn is_diverged_local_branch_error_text(details: &str) -> bool {
     details.contains("Diverging branches can't be fast-forwarded")
         || details.contains("Not possible to fast-forward, aborting.")
+}
+
+fn github_api_endpoint(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+
+    if let Some(path) = trimmed.strip_prefix("https://api.github.com/") {
+        return Some(format!("/{}", path.trim_start_matches('/')));
+    }
+
+    if let Some(path) = trimmed.strip_prefix('/') {
+        return Some(format!("/{path}"));
+    }
+
+    if let Some(path) = trimmed.strip_prefix("repos/") {
+        return Some(format!("/{path}"));
+    }
+
+    None
 }
 
 fn api_url_to_pr_url(api_url: &str, subject_type: Option<&str>) -> Option<String> {
@@ -726,6 +803,12 @@ mod tests {
     fn converts_api_issue_url() {
         let issue = api_url_to_html_url("https://api.github.com/repos/o/r/issues/123").unwrap();
         assert_eq!(issue, "https://github.com/o/r/issues/123");
+    }
+
+    #[test]
+    fn converts_api_url_to_gh_endpoint() {
+        let endpoint = github_api_endpoint("https://api.github.com/repos/o/r/issues/123").unwrap();
+        assert_eq!(endpoint, "/repos/o/r/issues/123");
     }
 
     #[test]

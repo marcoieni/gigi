@@ -57,6 +57,54 @@ const CHECK_ICON_PATHS = [
   "m5 12.5 4 4 10-10",
 ];
 
+const PR_OPEN_ICON_PATHS = [
+  "M18 6.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 0 1 5 0Z",
+  "M8 17.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 0 1 5 0Z",
+  "M5.5 15V9",
+  "M8 17.5h4.5a3 3 0 0 0 3-3V8",
+  "m15.5 8 2.8 2.8L21 8",
+];
+
+const PR_MERGED_ICON_PATHS = [
+  "M18 6.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 0 1 5 0Z",
+  "M8 17.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 0 1 5 0Z",
+  "M18 17.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 0 1 5 0Z",
+  "M8 15V9.5a3 3 0 0 1 3-3h2",
+  "M15.5 10.5V15",
+];
+
+const PR_CLOSED_ICON_PATHS = [
+  "M8 17.5a2.5 2.5 0 1 1-5 0a2.5 2.5 0 0 1 5 0Z",
+  "M5.5 15V8.5",
+  "M14.5 8.5 20 14",
+  "M20 8.5 14.5 14",
+];
+
+const ISSUE_OPEN_ICON_PATHS = [
+  "M12 21a9 9 0 1 1 0-18a9 9 0 0 1 0 18Z",
+  "M12 8.5v5",
+  "M12 16.5h.01",
+];
+
+const ISSUE_CLOSED_ICON_PATHS = [
+  "M12 21a9 9 0 1 1 0-18a9 9 0 0 1 0 18Z",
+  "M9 9l6 6",
+  "M15 9l-6 6",
+];
+
+const ICON_PATHS = {
+  vscode: VSCODE_ICON_PATHS,
+  terminal: TERMINAL_ICON_PATHS,
+  notification: NOTIFICATION_ICON_PATHS,
+  "my-pr": MY_PR_ICON_PATHS,
+  check: CHECK_ICON_PATHS,
+  "pr-open": PR_OPEN_ICON_PATHS,
+  "pr-merged": PR_MERGED_ICON_PATHS,
+  "pr-closed": PR_CLOSED_ICON_PATHS,
+  "issue-open": ISSUE_OPEN_ICON_PATHS,
+  "issue-closed": ISSUE_CLOSED_ICON_PATHS,
+};
+
 closeModal.addEventListener("click", () => modal.close());
 modal.addEventListener("close", () => {
   activeReviewPrUrl = null;
@@ -186,18 +234,7 @@ function iconSvg(name) {
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("aria-hidden", "true");
 
-  const paths =
-    name === "vscode"
-      ? VSCODE_ICON_PATHS
-      : name === "terminal"
-        ? TERMINAL_ICON_PATHS
-        : name === "notification"
-          ? NOTIFICATION_ICON_PATHS
-          : name === "my-pr"
-            ? MY_PR_ICON_PATHS
-            : name === "check"
-              ? CHECK_ICON_PATHS
-        : [];
+  const paths = ICON_PATHS[name] || [];
 
   for (const d of paths) {
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -205,6 +242,74 @@ function iconSvg(name) {
     svg.appendChild(path);
   }
   return svg;
+}
+
+function threadStateConfig(thread) {
+  const subjectType = thread.subject_type;
+  const prState = thread.pr_state || (thread.source.includes("my_pr") ? "OPEN" : null);
+
+  if (subjectType === "PullRequest" && prState) {
+    if (prState === "MERGED") {
+      return {
+        iconName: "pr-merged",
+        status: "merged",
+        kind: "pull-request",
+        label: "Merged pull request",
+        title: "Merged pull request",
+      };
+    }
+    if (prState === "CLOSED") {
+      return {
+        iconName: "pr-closed",
+        status: "closed",
+        kind: "pull-request",
+        label: "Closed pull request",
+        title: "Closed pull request",
+      };
+    }
+    return {
+      iconName: "pr-open",
+      status: "open",
+      kind: "pull-request",
+      label: "Open pull request",
+      title: "Open pull request",
+    };
+  }
+
+  if (subjectType === "Issue" && thread.issue_state) {
+    if (thread.issue_state === "CLOSED") {
+      return {
+        iconName: "issue-closed",
+        status: "closed",
+        kind: "issue",
+        label: "Closed issue",
+        title: "Closed issue",
+      };
+    }
+    return {
+      iconName: "issue-open",
+      status: "open",
+      kind: "issue",
+      label: "Open issue",
+      title: "Open issue",
+    };
+  }
+
+  return null;
+}
+
+function threadStateIcon(thread) {
+  const config = threadStateConfig(thread);
+  if (!config) {
+    return null;
+  }
+
+  const icon = document.createElement("span");
+  icon.className = `title-state-icon ${config.kind} ${config.status}`;
+  icon.setAttribute("aria-label", config.label);
+  icon.title = config.title;
+  icon.appendChild(iconSvg(config.iconName));
+  return icon;
 }
 
 function metaSeparator() {
@@ -434,12 +539,9 @@ function threadCard(thread) {
 
   const titleHref = thread.subject_url || thread.pr_url;
   const title = document.createElement("h3");
-  if (thread.pr_state === "MERGED") {
-    const mergedIcon = document.createElement("span");
-    mergedIcon.className = "state-icon merged";
-    mergedIcon.setAttribute("aria-label", "Merged pull request");
-    mergedIcon.title = "Merged";
-    title.appendChild(mergedIcon);
+  const stateIcon = threadStateIcon(thread);
+  if (stateIcon) {
+    title.appendChild(stateIcon);
   }
   if (titleHref) {
     const titleLink = document.createElement("a");

@@ -267,16 +267,35 @@ body {
   background: var(--danger);
 }
 
-.state-icon {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
+.title-state-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
 }
 
-.state-icon.merged {
-  background: var(--violet);
-  box-shadow: 0 0 0 3px rgba(111, 86, 217, 0.16);
+.title-state-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.title-state-icon.open {
+  color: var(--accent);
+}
+
+.title-state-icon.merged {
+  color: var(--violet);
+}
+
+.title-state-icon.closed {
+  color: var(--danger);
 }
 
 .spinner {

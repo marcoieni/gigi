@@ -83,6 +83,7 @@ async fn get_threads(
             show_not_done: query.show_not_done.unwrap_or(true),
         })
         .map_err(|err| ApiErrorResponse::internal(&err))?;
+
     Ok(Json(threads))
 }
 

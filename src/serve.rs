@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -355,10 +355,19 @@ fn poll_once_blocking(
     work_dir: &Utf8Path,
     mode: PollMode,
 ) -> anyhow::Result<PollStats> {
-    let notifications = github::fetch_notifications()?;
+    let notification_data = github::fetch_notifications()?;
+    let notifications = notification_data.notifications;
     let authored_prs = github::fetch_authored_open_prs()?;
     sync_authored_pr_threads(db, &authored_prs)?;
 
+    let mut known_pr_details = notification_data
+        .pr_details
+        .into_iter()
+        .map(|details| {
+            let pr_url = details.pr_url.clone();
+            (pr_url, details)
+        })
+        .collect::<HashMap<_, _>>();
     let mut pr_urls = HashSet::new();
 
     for notification in &notifications {
@@ -371,6 +380,7 @@ fn poll_once_blocking(
             subject_type: notification.subject_type.clone(),
             subject_title: notification.subject_title.clone(),
             subject_url: notification.subject_url.clone(),
+            issue_state: notification.issue_state.clone(),
             reason: notification.reason.clone(),
             pr_url: notification.pr_url.clone(),
             unread: notification.unread,
@@ -396,11 +406,15 @@ fn poll_once_blocking(
     let mut review_candidates = Vec::new();
 
     for pr_url in &pr_urls {
-        let details = match github::fetch_pr_details(pr_url) {
-            Ok(details) => details,
-            Err(err) => {
-                eprintln!("⚠️ Failed to fetch PR details for {pr_url}: {err}");
-                continue;
+        let details = if let Some(details) = known_pr_details.remove(pr_url) {
+            details
+        } else {
+            match github::fetch_pr_details(pr_url) {
+                Ok(details) => details,
+                Err(err) => {
+                    eprintln!("⚠️ Failed to fetch PR details for {pr_url}: {err}");
+                    continue;
+                }
             }
         };
 
@@ -476,6 +490,7 @@ fn sync_authored_pr_threads(
             subject_type: Some("PullRequest".to_string()),
             subject_title: authored.title.clone(),
             subject_url: Some(authored.pr_url.clone()),
+            issue_state: None,
             reason: Some("authored".to_string()),
             pr_url: Some(authored.pr_url.clone()),
             unread: false,
@@ -984,6 +999,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "stale".to_string(),
             subject_url: Some(stale_pr_url.clone()),
+            issue_state: None,
             reason: Some("authored".to_string()),
             pr_url: Some(stale_pr_url),
             unread: false,

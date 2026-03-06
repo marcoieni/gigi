@@ -21,6 +21,7 @@ pub struct NewThread {
     pub subject_type: Option<String>,
     pub subject_title: String,
     pub subject_url: Option<String>,
+    pub issue_state: Option<String>,
     pub reason: Option<String>,
     pub pr_url: Option<String>,
     pub unread: bool,
@@ -90,6 +91,7 @@ pub struct DashboardThread {
     pub subject_type: Option<String>,
     pub subject_title: String,
     pub subject_url: Option<String>,
+    pub issue_state: Option<String>,
     pub reason: Option<String>,
     pub pr_url: Option<String>,
     pub unread: bool,
@@ -154,8 +156,8 @@ impl Db {
                 r#"
                 INSERT INTO threads (
                     thread_key, github_thread_id, source, repository, subject_type, subject_title,
-                    subject_url, reason, pr_url, unread, done, updated_at, last_seen_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                    subject_url, issue_state, reason, pr_url, unread, done, updated_at, last_seen_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                 ON CONFLICT(thread_key) DO UPDATE SET
                     github_thread_id = excluded.github_thread_id,
                     source = excluded.source,
@@ -163,6 +165,7 @@ impl Db {
                     subject_type = excluded.subject_type,
                     subject_title = excluded.subject_title,
                     subject_url = excluded.subject_url,
+                    issue_state = excluded.issue_state,
                     reason = excluded.reason,
                     pr_url = excluded.pr_url,
                     unread = excluded.unread,
@@ -178,6 +181,7 @@ impl Db {
                     row.subject_type,
                     row.subject_title,
                     row.subject_url,
+                    row.issue_state,
                     row.reason,
                     row.pr_url,
                     bool_to_int(row.unread),
@@ -456,6 +460,7 @@ impl Db {
                     t.subject_type,
                     t.subject_title,
                     t.subject_url,
+                    t.issue_state,
                     t.reason,
                     t.pr_url,
                     t.unread,
@@ -477,9 +482,9 @@ impl Db {
             )?;
 
             let rows = stmt.query_map([], |row| {
-                let unread: i64 = row.get(9)?;
-                let done: i64 = row.get(10)?;
-                let latest_requires: Option<i64> = row.get(12)?;
+                let unread: i64 = row.get(10)?;
+                let done: i64 = row.get(11)?;
+                let latest_requires: Option<i64> = row.get(13)?;
                 Ok(DashboardThreadRow {
                     thread_key: row.get(0)?,
                     github_thread_id: row.get(1)?,
@@ -488,14 +493,15 @@ impl Db {
                     subject_type: row.get(4)?,
                     subject_title: row.get(5)?,
                     subject_url: row.get(6)?,
-                    reason: row.get(7)?,
-                    pr_url: row.get(8)?,
+                    issue_state: row.get(7)?,
+                    reason: row.get(8)?,
+                    pr_url: row.get(9)?,
                     unread: unread != 0,
                     done: done != 0,
-                    updated_at: row.get(11)?,
+                    updated_at: row.get(12)?,
                     latest_requires_code_changes: latest_requires.map(|v| v != 0),
-                    pr_state: row.get(13)?,
-                    is_archived_pr: row.get::<_, i64>(14)? != 0,
+                    pr_state: row.get(14)?,
+                    is_archived_pr: row.get::<_, i64>(15)? != 0,
                 })
             })?;
 
@@ -594,6 +600,7 @@ struct DashboardThreadRow {
     subject_type: Option<String>,
     subject_title: String,
     subject_url: Option<String>,
+    issue_state: Option<String>,
     reason: Option<String>,
     pr_url: Option<String>,
     unread: bool,
@@ -614,6 +621,7 @@ impl DashboardThreadRow {
             subject_type: self.subject_type,
             subject_title: self.subject_title,
             subject_url: self.subject_url,
+            issue_state: self.issue_state,
             reason: self.reason,
             pr_url: self.pr_url,
             unread: self.unread,
@@ -659,6 +667,7 @@ fn merge_dashboard_thread(existing: &mut DashboardThread, incoming: DashboardThr
         .latest_requires_code_changes
         .or(incoming.latest_requires_code_changes);
     existing.pr_state = existing_snapshot.pr_state.or(incoming.pr_state);
+    existing.issue_state = existing_snapshot.issue_state.or(incoming.issue_state);
     existing.reason = merge_optional_string(
         incoming_preferred,
         existing_snapshot.reason,
@@ -732,6 +741,7 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
             subject_type TEXT,
             subject_title TEXT NOT NULL,
             subject_url TEXT,
+            issue_state TEXT,
             reason TEXT,
             pr_url TEXT,
             unread INTEGER NOT NULL,
@@ -798,6 +808,7 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
     )?;
 
     add_column_if_missing(conn, "prs", "is_archived", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(conn, "threads", "issue_state", "TEXT")?;
 
     Ok(())
 }
@@ -857,6 +868,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "t".to_string(),
             subject_url: Some("u".to_string()),
+            issue_state: None,
             reason: Some("review_requested".to_string()),
             pr_url: Some("https://github.com/a/b/pull/1".to_string()),
             unread: true,
@@ -1048,6 +1060,7 @@ mod tests {
                 subject_type: Some("PullRequest".to_string()),
                 subject_title: "t".to_string(),
                 subject_url: Some("u".to_string()),
+                issue_state: None,
                 reason: Some("review_requested".to_string()),
                 pr_url: Some("https://github.com/a/b/pull/1".to_string()),
                 unread: true,
@@ -1092,6 +1105,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "t".to_string(),
             subject_url: Some("u".to_string()),
+            issue_state: None,
             reason: Some("review_requested".to_string()),
             pr_url: Some("https://github.com/a/b/pull/1".to_string()),
             unread: true,
@@ -1117,6 +1131,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "t".to_string(),
             subject_url: Some("u".to_string()),
+            issue_state: None,
             reason: Some("review_requested".to_string()),
             pr_url: Some("https://github.com/a/b/pull/1".to_string()),
             unread: true,
@@ -1154,6 +1169,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "t".to_string(),
             subject_url: Some(pr_url.clone()),
+            issue_state: None,
             reason: Some("authored".to_string()),
             pr_url: Some(pr_url.clone()),
             unread: false,
@@ -1180,6 +1196,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "t".to_string(),
             subject_url: Some(pr_url.clone()),
+            issue_state: None,
             reason: Some("authored".to_string()),
             pr_url: Some(pr_url.clone()),
             unread: false,
@@ -1216,6 +1233,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "t".to_string(),
             subject_url: Some("u".to_string()),
+            issue_state: None,
             reason: Some("review_requested".to_string()),
             pr_url: Some("https://github.com/a/b/pull/1".to_string()),
             unread: false,
@@ -1253,6 +1271,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "notification".to_string(),
             subject_url: Some(notification_pr_url.clone()),
+            issue_state: None,
             reason: Some("review_requested".to_string()),
             pr_url: Some(notification_pr_url),
             unread: true,
@@ -1269,6 +1288,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "authored".to_string(),
             subject_url: Some(authored_pr_url.clone()),
+            issue_state: None,
             reason: Some("authored".to_string()),
             pr_url: Some(authored_pr_url),
             unread: false,
@@ -1319,6 +1339,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "Authored title".to_string(),
             subject_url: Some(pr_url.clone()),
+            issue_state: None,
             reason: Some("authored".to_string()),
             pr_url: Some(pr_url.clone()),
             unread: false,
@@ -1335,6 +1356,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "Notification title".to_string(),
             subject_url: Some(pr_url.clone()),
+            issue_state: None,
             reason: Some("review_requested".to_string()),
             pr_url: Some(pr_url.clone()),
             unread: true,
@@ -1382,6 +1404,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "Authored title".to_string(),
             subject_url: Some(pr_url.clone()),
+            issue_state: None,
             reason: Some("authored".to_string()),
             pr_url: Some(pr_url),
             unread: false,
@@ -1422,6 +1445,7 @@ mod tests {
             subject_type: Some("PullRequest".to_string()),
             subject_title: "Authored title".to_string(),
             subject_url: Some(pr_url.clone()),
+            issue_state: None,
             reason: Some("authored".to_string()),
             pr_url: Some(pr_url),
             unread: false,
@@ -1450,6 +1474,7 @@ mod tests {
                 subject_type: Some("PullRequest".to_string()),
                 subject_title: format!("PR {pr_url}"),
                 subject_url: Some(pr_url.clone()),
+                issue_state: None,
                 reason: Some("authored".to_string()),
                 pr_url: Some(pr_url.clone()),
                 unread: false,
@@ -1466,5 +1491,31 @@ mod tests {
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].pr_url.as_deref(), Some(keep_pr_url.as_str()));
         assert_eq!(threads[0].source, "my_pr");
+    }
+
+    #[test]
+    fn dashboard_threads_expose_issue_state() {
+        let db = test_db();
+
+        db.upsert_thread(&NewThread {
+            thread_key: "notif:issue-1".to_string(),
+            github_thread_id: Some("1".to_string()),
+            source: "notification".to_string(),
+            repository: "a/b".to_string(),
+            subject_type: Some("Issue".to_string()),
+            subject_title: "issue".to_string(),
+            subject_url: Some("https://github.com/a/b/issues/1".to_string()),
+            issue_state: Some("CLOSED".to_string()),
+            reason: Some("mention".to_string()),
+            pr_url: None,
+            unread: true,
+            done: false,
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+        })
+        .unwrap();
+
+        let threads = db.list_dashboard_threads().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].issue_state.as_deref(), Some("CLOSED"));
     }
 }
