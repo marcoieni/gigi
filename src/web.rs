@@ -21,6 +21,10 @@ pub async fn run_server(
     dashboard_dir: &Path,
 ) -> anyhow::Result<()> {
     let app = Router::new()
+        .route(
+            "/api/dashboard/filters",
+            get(get_dashboard_filters).post(update_dashboard_filters),
+        )
         .route("/api/threads", get(get_threads))
         .route(
             "/api/prs/{owner}/{repo}/{number}/review/latest",
@@ -74,17 +78,39 @@ async fn get_threads(
     State(state): State<std::sync::Arc<AppState>>,
     Query(query): Query<ThreadQuery>,
 ) -> Result<Json<Vec<crate::db::DashboardThread>>, ApiErrorResponse> {
+    let default_filters = state
+        .db
+        .dashboard_thread_filters()
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
     let threads = state
         .db
-        .list_dashboard_threads_with_filters(crate::db::DashboardThreadFilters {
-            show_notifications: query.show_notifications.unwrap_or(true),
-            show_prs: query.show_prs.unwrap_or(true),
-            show_done: query.show_done.unwrap_or(false),
-            show_not_done: query.show_not_done.unwrap_or(true),
-        })
+        .list_dashboard_threads_with_filters(query.resolve(default_filters))
         .map_err(|err| ApiErrorResponse::internal(&err))?;
 
     Ok(Json(threads))
+}
+
+async fn get_dashboard_filters(
+    State(state): State<std::sync::Arc<AppState>>,
+) -> Result<Json<crate::db::DashboardThreadFilters>, ApiErrorResponse> {
+    let filters = state
+        .db
+        .dashboard_thread_filters()
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
+
+    Ok(Json(filters))
+}
+
+async fn update_dashboard_filters(
+    State(state): State<std::sync::Arc<AppState>>,
+    Json(filters): Json<crate::db::DashboardThreadFilters>,
+) -> Result<StatusCode, ApiErrorResponse> {
+    state
+        .db
+        .set_dashboard_thread_filters(filters)
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
+
+    Ok(StatusCode::OK)
 }
 
 async fn get_latest_review(
@@ -193,6 +219,23 @@ struct ThreadQuery {
     show_prs: Option<bool>,
     show_done: Option<bool>,
     show_not_done: Option<bool>,
+}
+
+impl ThreadQuery {
+    fn resolve(
+        self,
+        defaults: crate::db::DashboardThreadFilters,
+    ) -> crate::db::DashboardThreadFilters {
+        crate::db::DashboardThreadFilters {
+            show_notifications: self
+                .show_notifications
+                .unwrap_or(defaults.show_notifications),
+            show_prs: self.show_prs.unwrap_or(defaults.show_prs),
+            show_done: self.show_done.unwrap_or(defaults.show_done),
+            show_not_done: self.show_not_done.unwrap_or(defaults.show_not_done),
+            group_by_repository: defaults.group_by_repository,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::review::{parse_requires_code_changes, sanitize_review_markdown};
 
@@ -101,12 +101,13 @@ pub struct DashboardThread {
     pub pr_state: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DashboardThreadFilters {
     pub show_notifications: bool,
     pub show_prs: bool,
     pub show_done: bool,
     pub show_not_done: bool,
+    pub group_by_repository: bool,
 }
 
 impl Default for DashboardThreadFilters {
@@ -116,6 +117,7 @@ impl Default for DashboardThreadFilters {
             show_prs: true,
             show_done: false,
             show_not_done: true,
+            group_by_repository: true,
         }
     }
 }
@@ -524,6 +526,74 @@ impl Db {
         })
     }
 
+    pub fn dashboard_thread_filters(&self) -> anyhow::Result<DashboardThreadFilters> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                r#"
+                SELECT
+                    show_notifications,
+                    show_prs,
+                    show_done,
+                    show_not_done,
+                    group_by_repository
+                FROM dashboard_preferences
+                WHERE id = 1
+                "#,
+                [],
+                |row| {
+                    Ok(DashboardThreadFilters {
+                        show_notifications: row.get::<_, i64>(0)? != 0,
+                        show_prs: row.get::<_, i64>(1)? != 0,
+                        show_done: row.get::<_, i64>(2)? != 0,
+                        show_not_done: row.get::<_, i64>(3)? != 0,
+                        group_by_repository: row.get::<_, i64>(4)? != 0,
+                    })
+                },
+            )
+            .optional()
+            .map(|filters| filters.unwrap_or_default())
+            .map_err(anyhow::Error::from)
+        })
+    }
+
+    pub fn set_dashboard_thread_filters(
+        &self,
+        filters: DashboardThreadFilters,
+    ) -> anyhow::Result<()> {
+        let now = unix_ts();
+        self.with_conn(|conn| {
+            conn.execute(
+                r#"
+                INSERT INTO dashboard_preferences (
+                    id,
+                    show_notifications,
+                    show_prs,
+                    show_done,
+                    show_not_done,
+                    group_by_repository,
+                    updated_at
+                ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+                ON CONFLICT(id) DO UPDATE SET
+                    show_notifications = excluded.show_notifications,
+                    show_prs = excluded.show_prs,
+                    show_done = excluded.show_done,
+                    show_not_done = excluded.show_not_done,
+                    group_by_repository = excluded.group_by_repository,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    bool_to_int(filters.show_notifications),
+                    bool_to_int(filters.show_prs),
+                    bool_to_int(filters.show_done),
+                    bool_to_int(filters.show_not_done),
+                    bool_to_int(filters.group_by_repository),
+                    now,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
     fn sanitize_stored_reviews(&self) -> anyhow::Result<()> {
         self.with_conn(|conn| {
             let mut stmt =
@@ -804,11 +874,27 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
             message TEXT NOT NULL,
             created_at INTEGER NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS dashboard_preferences (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            show_notifications INTEGER NOT NULL,
+            show_prs INTEGER NOT NULL,
+            show_done INTEGER NOT NULL,
+            show_not_done INTEGER NOT NULL,
+            group_by_repository INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL
+        );
         "#,
     )?;
 
     add_column_if_missing(conn, "prs", "is_archived", "INTEGER NOT NULL DEFAULT 0")?;
     add_column_if_missing(conn, "threads", "issue_state", "TEXT")?;
+    add_column_if_missing(
+        conn,
+        "dashboard_preferences",
+        "group_by_repository",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
 
     Ok(())
 }
@@ -1250,6 +1336,7 @@ mod tests {
                 show_prs: true,
                 show_done: true,
                 show_not_done: false,
+                group_by_repository: true,
             })
             .unwrap();
 
@@ -1303,12 +1390,39 @@ mod tests {
                 show_prs: true,
                 show_done: false,
                 show_not_done: true,
+                group_by_repository: true,
             })
             .unwrap();
 
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].source, "my_pr");
         assert_eq!(threads[0].subject_title, "authored");
+    }
+
+    #[test]
+    fn dashboard_filter_preferences_default_when_unset() {
+        let db = test_db();
+
+        assert_eq!(
+            db.dashboard_thread_filters().unwrap(),
+            DashboardThreadFilters::default()
+        );
+    }
+
+    #[test]
+    fn dashboard_filter_preferences_roundtrip() {
+        let db = test_db();
+        let filters = DashboardThreadFilters {
+            show_notifications: false,
+            show_prs: true,
+            show_done: true,
+            show_not_done: false,
+            group_by_repository: false,
+        };
+
+        db.set_dashboard_thread_filters(filters).unwrap();
+
+        assert_eq!(db.dashboard_thread_filters().unwrap(), filters);
     }
 
     #[test]

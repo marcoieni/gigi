@@ -14,6 +14,8 @@ const pendingFixes = new Set();
 const pendingDone = new Set();
 const pendingLaunches = new Set();
 
+const FILTERS_STORAGE_KEY = "gigi.dashboard.filters";
+
 let threadsState = [];
 let activeReviewPrUrl = null;
 
@@ -113,17 +115,12 @@ refreshBtn.addEventListener("click", async () => {
   await refreshNow();
   await loadThreads();
 });
-for (const filterEl of [
-  filterNotificationsEl,
-  filterPrsEl,
-  filterDoneEl,
-  filterNotDoneEl,
-]) {
-  filterEl.addEventListener("change", async () => {
-    await loadThreads();
-  });
-}
-groupByRepositoryEl.addEventListener("change", () => {
+groupByRepositoryEl.addEventListener("change", async () => {
+  try {
+    await saveCurrentFilters();
+  } catch (err) {
+    setStatus(`Saving filters failed: ${err.message}`);
+  }
   renderThreads();
   if (threadsState.length > 0) {
     setStatus(loadedStatusText());
@@ -134,13 +131,64 @@ function setStatus(text) {
   statusEl.textContent = text;
 }
 
+function applyFilters(filters) {
+  filterNotificationsEl.checked = filters.show_notifications;
+  filterPrsEl.checked = filters.show_prs;
+  filterDoneEl.checked = filters.show_done;
+  filterNotDoneEl.checked = filters.show_not_done;
+  groupByRepositoryEl.checked = filters.group_by_repository;
+}
+
 function currentFilters() {
   return {
     show_notifications: filterNotificationsEl.checked,
     show_prs: filterPrsEl.checked,
     show_done: filterDoneEl.checked,
     show_not_done: filterNotDoneEl.checked,
+    group_by_repository: groupByRepositoryEl.checked,
   };
+}
+
+function filtersEqual(left, right) {
+  return (
+    left.show_notifications === right.show_notifications &&
+    left.show_prs === right.show_prs &&
+    left.show_done === right.show_done &&
+    left.show_not_done === right.show_not_done &&
+    left.group_by_repository === right.group_by_repository
+  );
+}
+
+function readCachedFilters() {
+  try {
+    const raw = window.localStorage.getItem(FILTERS_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed?.show_notifications !== "boolean" ||
+      typeof parsed?.show_prs !== "boolean" ||
+      typeof parsed?.show_done !== "boolean" ||
+      typeof parsed?.show_not_done !== "boolean" ||
+      typeof parsed?.group_by_repository !== "boolean"
+    ) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function cacheFilters(filters) {
+  try {
+    window.localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(filters));
+  } catch {
+    // Ignore storage failures and keep DB persistence as the fallback.
+  }
 }
 
 function threadsPath() {
@@ -223,6 +271,15 @@ async function api(path, options = {}) {
     return res.json();
   }
   return null;
+}
+
+async function saveCurrentFilters() {
+  const filters = currentFilters();
+  cacheFilters(filters);
+  await api("/api/dashboard/filters", {
+    method: "POST",
+    body: JSON.stringify(filters),
+  });
 }
 
 function launchKey(kind, threadKey) {
@@ -690,6 +747,27 @@ async function loadThreads() {
   }
 }
 
+async function initializeFilters() {
+  const cachedFilters = readCachedFilters();
+  if (cachedFilters) {
+    applyFilters(cachedFilters);
+  }
+
+  const storedFilters = await api("/api/dashboard/filters");
+  if (!cachedFilters) {
+    applyFilters(storedFilters);
+    cacheFilters(storedFilters);
+    return;
+  }
+
+  if (!filtersEqual(cachedFilters, storedFilters)) {
+    await api("/api/dashboard/filters", {
+      method: "POST",
+      body: JSON.stringify(cachedFilters),
+    });
+  }
+}
+
 async function refreshNow() {
   setStatus("Refreshing from GitHub...");
   try {
@@ -702,4 +780,29 @@ async function refreshNow() {
   }
 }
 
-loadThreads();
+for (const filterEl of [
+  filterNotificationsEl,
+  filterPrsEl,
+  filterDoneEl,
+  filterNotDoneEl,
+]) {
+  filterEl.addEventListener("change", async () => {
+    try {
+      await saveCurrentFilters();
+    } catch (err) {
+      setStatus(`Saving filters failed: ${err.message}`);
+    }
+    await loadThreads();
+  });
+}
+
+async function initializeDashboard() {
+  try {
+    await initializeFilters();
+  } catch (err) {
+    setStatus(`Loading saved filters failed: ${err.message}`);
+  }
+  await loadThreads();
+}
+
+initializeDashboard();
