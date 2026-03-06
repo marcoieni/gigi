@@ -458,10 +458,7 @@ fn sync_authored_pr_threads(
     Ok(())
 }
 
-fn upsert_pr_from_details(
-    db: &Db,
-    details: &github::PrDetails,
-) -> anyhow::Result<()> {
+fn upsert_pr_from_details(db: &Db, details: &github::PrDetails) -> anyhow::Result<()> {
     let row = db::NewPr {
         pr_url: details.pr_url.clone(),
         owner: details.owner.clone(),
@@ -496,7 +493,10 @@ fn print_fetched_notifications(notifications: &[github::NotificationThread]) {
 }
 
 fn print_prefetched_pr_details(details_list: &[github::PrDetails]) {
-    println!("📥 PR details fetched from notifications: {}", details_list.len());
+    println!(
+        "📥 PR details fetched from notifications: {}",
+        details_list.len()
+    );
     for details in details_list {
         print_pr_details("Notification PR details", details);
     }
