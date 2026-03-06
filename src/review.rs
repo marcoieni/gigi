@@ -15,14 +15,14 @@ pub struct ReviewResult {
     pub model: Option<String>,
 }
 
-pub fn review_pr(
+pub async fn review_pr(
     repo_root: &Utf8Path,
     pr_url: &str,
     agent: Option<&Agent>,
     model: Option<&str>,
 ) -> anyhow::Result<()> {
     eprintln!("🔍 Review started: {pr_url}");
-    let result = match generate_review(repo_root, pr_url, agent, model) {
+    let result = match generate_review(repo_root, pr_url, agent, model).await {
         Ok(result) => result,
         Err(err) => {
             eprintln!("❌ Review failed: {pr_url}: {err}");
@@ -34,17 +34,18 @@ pub fn review_pr(
     Ok(())
 }
 
-pub fn generate_review(
+pub async fn generate_review(
     repo_root: &Utf8Path,
     pr_url: &str,
     agent: Option<&Agent>,
     model: Option<&str>,
 ) -> anyhow::Result<ReviewResult> {
-    let metadata = fetch_pr_metadata(repo_root, pr_url)?;
-    let diff = fetch_pr_diff(repo_root, pr_url)?;
+    let metadata = fetch_pr_metadata(repo_root, pr_url).await?;
+    let diff = fetch_pr_diff(repo_root, pr_url).await?;
     let prompt = build_review_prompt(&metadata, &diff);
 
-    let (provider, resolved_model, markdown) = run_ai_prompt(repo_root, &prompt, agent, model)?;
+    let (provider, resolved_model, markdown) =
+        run_ai_prompt(repo_root, &prompt, agent, model).await?;
     let requires_code_changes = parse_requires_code_changes(&markdown).unwrap_or(true);
 
     Ok(ReviewResult {
@@ -55,18 +56,18 @@ pub fn generate_review(
     })
 }
 
-pub fn run_fix(
+pub async fn run_fix(
     repo_root: &Utf8Path,
     pr_url: &str,
     review_markdown: &str,
     agent: Option<&Agent>,
     model: Option<&str>,
 ) -> anyhow::Result<String> {
-    let metadata = fetch_pr_metadata(repo_root, pr_url)?;
-    let diff = fetch_pr_diff(repo_root, pr_url)?;
+    let metadata = fetch_pr_metadata(repo_root, pr_url).await?;
+    let diff = fetch_pr_diff(repo_root, pr_url).await?;
     let prompt = build_fix_prompt(&metadata, &diff, review_markdown);
 
-    let (_, _, output) = run_ai_prompt(repo_root, &prompt, agent, model)?;
+    let (_, _, output) = run_ai_prompt(repo_root, &prompt, agent, model).await?;
     Ok(output)
 }
 
@@ -112,7 +113,7 @@ fn normalize_requires_code_changes_line(line: &str) -> String {
     line.to_string()
 }
 
-fn fetch_pr_metadata(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<String> {
+async fn fetch_pr_metadata(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<String> {
     let output = Cmd::new(
         "gh",
         [
@@ -124,7 +125,8 @@ fn fetch_pr_metadata(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<Strin
         ],
     )
     .with_current_dir(repo_root)
-    .run()?;
+    .run()
+    .await?;
     output.ensure_success("❌ Failed to fetch PR metadata")?;
     anyhow::ensure!(
         !output.stdout().trim().is_empty(),
@@ -176,10 +178,11 @@ fn minimize_pr_metadata(metadata: &str) -> anyhow::Result<String> {
     Ok(serde_json::to_string(&value)?)
 }
 
-fn fetch_pr_diff(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<String> {
+async fn fetch_pr_diff(repo_root: &Utf8Path, pr_url: &str) -> anyhow::Result<String> {
     let output = Cmd::new("gh", ["pr", "diff", pr_url, "--color=never"])
         .with_current_dir(repo_root)
-        .run()?;
+        .run()
+        .await?;
     output.ensure_success("❌ Failed to fetch PR diff")?;
     anyhow::ensure!(
         !output.stdout().trim().is_empty(),
@@ -200,20 +203,20 @@ fn build_fix_prompt(metadata: &str, diff: &str, review_markdown: &str) -> String
     )
 }
 
-fn run_ai_prompt(
+async fn run_ai_prompt(
     repo_root: &Utf8Path,
     prompt: &str,
     agent: Option<&Agent>,
     model: Option<&str>,
 ) -> anyhow::Result<(String, Option<String>, String)> {
     match agent {
-        Some(Agent::Gemini) => run_gemini(repo_root, prompt, model),
-        Some(Agent::Kiro) => run_kiro(repo_root, prompt, model),
-        Some(Agent::Copilot) | None => run_copilot(repo_root, prompt, model),
+        Some(Agent::Gemini) => run_gemini(repo_root, prompt, model).await,
+        Some(Agent::Kiro) => run_kiro(repo_root, prompt, model).await,
+        Some(Agent::Copilot) | None => run_copilot(repo_root, prompt, model).await,
     }
 }
 
-fn run_copilot(
+async fn run_copilot(
     repo_root: &Utf8Path,
     prompt: &str,
     model: Option<&str>,
@@ -228,7 +231,8 @@ fn run_copilot(
         "🚀 copilot --silent --model {resolved_model} --prompt ..."
     ))
     .with_current_dir(repo_root)
-    .run()?;
+    .run()
+    .await?;
 
     output.ensure_success("❌ Failed to generate output with Copilot")?;
     anyhow::ensure!(
@@ -243,7 +247,7 @@ fn run_copilot(
     ))
 }
 
-fn run_gemini(
+async fn run_gemini(
     repo_root: &Utf8Path,
     prompt: &str,
     model: Option<&str>,
@@ -266,7 +270,8 @@ fn run_gemini(
         "🚀 gemini --model {resolved_model} --sandbox --output-format text --prompt ..."
     ))
     .with_current_dir(repo_root)
-    .run()?;
+    .run()
+    .await?;
 
     output.ensure_success("❌ Failed to generate output with Gemini")?;
     anyhow::ensure!(
@@ -281,12 +286,12 @@ fn run_gemini(
     ))
 }
 
-fn run_kiro(
+async fn run_kiro(
     repo_root: &Utf8Path,
     prompt: &str,
     model: Option<&str>,
 ) -> anyhow::Result<(String, Option<String>, String)> {
-    ensure_command_available("kiro-cli")?;
+    ensure_command_available("kiro-cli").await?;
 
     let resolved_model = model
         .unwrap_or(crate::config::DEFAULT_KIRO_MODEL)
@@ -305,7 +310,8 @@ fn run_kiro(
             "🚀 kiro-cli chat --no-interactive --model {resolved_model} ..."
         ))
         .with_current_dir(repo_root)
-        .run()?;
+        .run()
+        .await?;
 
     output.ensure_success("❌ Failed to generate output with Kiro")?;
     anyhow::ensure!(

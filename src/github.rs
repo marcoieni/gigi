@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::Value;
+use tokio::fs;
 
 use crate::{
     checkout::parse_github_pr_url,
@@ -75,8 +76,10 @@ pub struct PrDetails {
     pub is_cross_repository: bool,
 }
 
-pub fn fetch_notifications() -> anyhow::Result<NotificationPollData> {
-    let output = Cmd::new("gh", ["api", "/notifications", "--paginate", "--slurp"]).run()?;
+pub async fn fetch_notifications() -> anyhow::Result<NotificationPollData> {
+    let output = Cmd::new("gh", ["api", "/notifications", "--paginate", "--slurp"])
+        .run()
+        .await?;
     output.ensure_success("❌ Failed to fetch notifications")?;
 
     if output.stdout().trim().is_empty() {
@@ -159,7 +162,7 @@ pub fn fetch_notifications() -> anyhow::Result<NotificationPollData> {
             if let Some(pr_url) = pr_url.as_deref()
                 && !pr_details_by_url.contains_key(pr_url)
             {
-                match fetch_pr_details(pr_url) {
+                match fetch_pr_details(pr_url).await {
                     Ok(details) => {
                         pr_details_by_url.insert(pr_url.to_string(), details);
                     }
@@ -172,7 +175,7 @@ pub fn fetch_notifications() -> anyhow::Result<NotificationPollData> {
             }
             let issue_state = match (subject_type.as_deref(), raw_subject_url.as_deref()) {
                 (Some("Issue"), Some(subject_api_url)) => {
-                    match fetch_issue_state(subject_api_url) {
+                    match fetch_issue_state(subject_api_url).await {
                         Ok(state) => Some(state),
                         Err(err) => {
                             eprintln!(
@@ -210,7 +213,7 @@ pub fn fetch_notifications() -> anyhow::Result<NotificationPollData> {
     })
 }
 
-pub fn fetch_authored_open_prs() -> anyhow::Result<Vec<AuthoredPrSummary>> {
+pub async fn fetch_authored_open_prs() -> anyhow::Result<Vec<AuthoredPrSummary>> {
     let output = Cmd::new(
         "gh",
         [
@@ -226,7 +229,8 @@ pub fn fetch_authored_open_prs() -> anyhow::Result<Vec<AuthoredPrSummary>> {
             "url,title,updatedAt,repository",
         ],
     )
-    .run()?;
+    .run()
+    .await?;
 
     output.ensure_success("❌ Failed to fetch authored pull requests")?;
     if output.stdout().trim().is_empty() {
@@ -288,7 +292,7 @@ pub fn fetch_authored_open_prs() -> anyhow::Result<Vec<AuthoredPrSummary>> {
     Ok(results)
 }
 
-pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
+pub async fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
     let output = Cmd::new(
         "gh",
         [
@@ -299,7 +303,8 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
             "title,url,state,headRefName,headRefOid,baseRefName,createdAt,updatedAt,number,author,headRepository,headRepositoryOwner,isCrossRepository",
         ],
     )
-    .run()?;
+    .run()
+    .await?;
 
     output.ensure_success(format!("❌ Failed to fetch PR details for {pr_url}"))?;
     anyhow::ensure!(
@@ -315,7 +320,7 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         .to_string();
 
     let parsed = parse_github_pr_url(&canonical_pr_url)?;
-    let is_archived = fetch_repository_archived(&parsed.owner, &parsed.repo)?;
+    let is_archived = fetch_repository_archived(&parsed.owner, &parsed.repo).await?;
     let number = i64::try_from(parsed.number)
         .with_context(|| format!("PR number is too large for i64: {}", parsed.number))?;
     let state = value
@@ -394,9 +399,9 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
     })
 }
 
-fn fetch_repository_archived(owner: &str, repo: &str) -> anyhow::Result<bool> {
+async fn fetch_repository_archived(owner: &str, repo: &str) -> anyhow::Result<bool> {
     let endpoint = format!("/repos/{owner}/{repo}");
-    let output = Cmd::new("gh", ["api", &endpoint]).run()?;
+    let output = Cmd::new("gh", ["api", &endpoint]).run().await?;
     output.ensure_success(format!(
         "❌ Failed to fetch repository details for {owner}/{repo}"
     ))?;
@@ -413,10 +418,12 @@ fn fetch_repository_archived(owner: &str, repo: &str) -> anyhow::Result<bool> {
         .unwrap_or(false))
 }
 
-fn fetch_issue_state(subject_api_url: &str) -> anyhow::Result<String> {
+async fn fetch_issue_state(subject_api_url: &str) -> anyhow::Result<String> {
     let endpoint = github_api_endpoint(subject_api_url)
         .with_context(|| format!("Unsupported GitHub API URL: {subject_api_url}"))?;
-    let output = Cmd::new("gh", ["api", endpoint.as_str(), "--jq", ".state"]).run()?;
+    let output = Cmd::new("gh", ["api", endpoint.as_str(), "--jq", ".state"])
+        .run()
+        .await?;
     output.ensure_success(format!(
         "❌ Failed to fetch issue state for {subject_api_url}"
     ))?;
@@ -427,38 +434,41 @@ fn fetch_issue_state(subject_api_url: &str) -> anyhow::Result<String> {
     Ok(output.stdout().trim().to_ascii_uppercase())
 }
 
-pub fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {
+pub async fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {
     let endpoint = format!("/notifications/threads/{thread_id}");
-    let output = Cmd::new("gh", ["api", "-X", "DELETE", &endpoint]).run()?;
+    let output = Cmd::new("gh", ["api", "-X", "DELETE", &endpoint])
+        .run()
+        .await?;
     output.ensure_success("❌ Failed to mark notification thread as done")?;
     Ok(())
 }
 
-pub fn ensure_local_repo(owner: &str, repo: &str) -> anyhow::Result<Utf8PathBuf> {
+pub async fn ensure_local_repo(owner: &str, repo: &str) -> anyhow::Result<Utf8PathBuf> {
     let repo_dir = local_repo_dir(owner, repo)?;
-    ensure_local_repo_at(owner, repo, &repo_dir)?;
+    ensure_local_repo_at(owner, repo, &repo_dir).await?;
     Ok(repo_dir)
 }
 
-pub fn ensure_local_repo_for_pr(pr_url: &str) -> anyhow::Result<LocalPrRepo> {
-    let details = fetch_pr_details(pr_url)?;
+pub async fn ensure_local_repo_for_pr(pr_url: &str) -> anyhow::Result<LocalPrRepo> {
+    let details = fetch_pr_details(pr_url).await?;
     let clone_target = preferred_clone_target(&details, current_viewer_login().ok().as_deref());
     let repo_dir = local_repo_dir(&clone_target.origin.owner, &clone_target.origin.repo)?;
     ensure_local_repo_at(
         &clone_target.origin.owner,
         &clone_target.origin.repo,
         &repo_dir,
-    )?;
+    )
+    .await?;
 
     if let Some(upstream) = clone_target.upstream {
-        ensure_remote_repo(&repo_dir, "upstream", &upstream)?;
+        ensure_remote_repo(&repo_dir, "upstream", &upstream).await?;
     }
 
     Ok(LocalPrRepo { repo_dir, details })
 }
 
-fn ensure_local_repo_at(owner: &str, repo: &str, repo_dir: &Utf8Path) -> anyhow::Result<()> {
-    if repo_dir.exists() {
+async fn ensure_local_repo_at(owner: &str, repo: &str, repo_dir: &Utf8Path) -> anyhow::Result<()> {
+    if fs::try_exists(repo_dir).await? {
         anyhow::ensure!(
             repo_dir.join(".git").exists(),
             "❌ Path exists but is not a git repository: {repo_dir}"
@@ -469,10 +479,14 @@ fn ensure_local_repo_at(owner: &str, repo: &str, repo_dir: &Utf8Path) -> anyhow:
     let parent = repo_dir
         .parent()
         .context("Failed to compute repository parent directory")?;
-    std::fs::create_dir_all(parent).with_context(|| format!("Failed to create {parent}"))?;
+    fs::create_dir_all(parent)
+        .await
+        .with_context(|| format!("Failed to create {parent}"))?;
 
     let repo_name = format!("{owner}/{repo}");
-    let output = Cmd::new("gh", ["repo", "clone", &repo_name, repo_dir.as_str()]).run()?;
+    let output = Cmd::new("gh", ["repo", "clone", &repo_name, repo_dir.as_str()])
+        .run()
+        .await?;
     output.ensure_success(format!("❌ Failed to clone repository {repo_name}"))?;
     Ok(())
 }
@@ -482,24 +496,26 @@ pub fn local_repo_dir(owner: &str, repo: &str) -> anyhow::Result<Utf8PathBuf> {
     Ok(Utf8PathBuf::from(home).join("proj").join(owner).join(repo))
 }
 
-pub fn checkout_pr(repo_dir: &Utf8Path, pr_url: &str) -> anyhow::Result<()> {
+pub async fn checkout_pr(repo_dir: &Utf8Path, pr_url: &str) -> anyhow::Result<()> {
     let output = Cmd::new("gh", ["pr", "checkout", pr_url])
         .with_current_dir(repo_dir)
-        .run()?;
+        .run()
+        .await?;
     output.ensure_success("❌ Failed to checkout PR")?;
     Ok(())
 }
 
-pub fn checkout_pr_for_open_with_details(
+pub async fn checkout_pr_for_open_with_details(
     repo_dir: &Utf8Path,
     pr: &PrDetails,
 ) -> anyhow::Result<()> {
-    if current_branch(repo_dir).ok().as_deref() == Some(pr.head_ref.as_str()) {
+    if current_branch(repo_dir).await.ok().as_deref() == Some(pr.head_ref.as_str()) {
         return Ok(());
     }
     let output = Cmd::new("gh", ["pr", "checkout", pr.pr_url.as_str()])
         .with_current_dir(repo_dir)
-        .run()?;
+        .run()
+        .await?;
     if output.status().success() {
         return Ok(());
     }
@@ -507,7 +523,8 @@ pub fn checkout_pr_for_open_with_details(
     if is_diverged_local_branch_error(&output) {
         let detached = Cmd::new("gh", ["pr", "checkout", pr.pr_url.as_str(), "--detach"])
             .with_current_dir(repo_dir)
-            .run()?;
+            .run()
+            .await?;
         detached.ensure_success("❌ Failed to checkout PR")?;
         return Ok(());
     }
@@ -516,23 +533,25 @@ pub fn checkout_pr_for_open_with_details(
     Ok(())
 }
 
-pub fn current_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
+pub async fn current_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
     let output = Cmd::new("git", ["branch", "--show-current"])
         .with_current_dir(repo_dir)
-        .run()?;
+        .run()
+        .await?;
     output.ensure_success("❌ Failed to get current branch")?;
     Ok(output.stdout().to_string())
 }
 
-pub fn is_clean_repo(repo_dir: &Utf8Path) -> anyhow::Result<bool> {
+pub async fn is_clean_repo(repo_dir: &Utf8Path) -> anyhow::Result<bool> {
     let output = Cmd::new("git", ["status", "--porcelain"])
         .with_current_dir(repo_dir)
-        .run()?;
+        .run()
+        .await?;
     output.ensure_success("❌ Failed to check repository status")?;
     Ok(output.stdout().trim().is_empty())
 }
 
-pub fn default_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
+pub async fn default_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
     let output = Cmd::new(
         "gh",
         [
@@ -545,7 +564,8 @@ pub fn default_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
         ],
     )
     .with_current_dir(repo_dir)
-    .run()?;
+    .run()
+    .await?;
 
     output.ensure_success("❌ Failed to detect default branch")?;
     anyhow::ensure!(
@@ -556,18 +576,20 @@ pub fn default_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
     Ok(output.stdout().to_string())
 }
 
-pub fn checkout_branch(repo_dir: &Utf8Path, branch: &str) -> anyhow::Result<()> {
+pub async fn checkout_branch(repo_dir: &Utf8Path, branch: &str) -> anyhow::Result<()> {
     let output = Cmd::new("git", ["checkout", branch])
         .with_current_dir(repo_dir)
-        .run()?;
+        .run()
+        .await?;
     output.ensure_success(format!("❌ Failed to checkout branch '{branch}'"))?;
     Ok(())
 }
 
-pub fn pull_ff_only(repo_dir: &Utf8Path) -> anyhow::Result<()> {
+pub async fn pull_ff_only(repo_dir: &Utf8Path) -> anyhow::Result<()> {
     let output = Cmd::new("git", ["pull", "--ff-only"])
         .with_current_dir(repo_dir)
-        .run()?;
+        .run()
+        .await?;
     output.ensure_success("❌ Failed to pull default branch")?;
     Ok(())
 }
@@ -675,13 +697,20 @@ fn parse_repo_from_pr_url(pr_url: &str) -> Option<String> {
 }
 
 fn current_viewer_login() -> anyhow::Result<String> {
-    let output = Cmd::new("gh", ["api", "user", "--jq", ".login"]).run()?;
-    output.ensure_success("❌ Failed to detect current GitHub user")?;
+    let output = std::process::Command::new("gh")
+        .args(["api", "user", "--jq", ".login"])
+        .output()
+        .context("❌ Failed to detect current GitHub user")?;
     anyhow::ensure!(
-        !output.stdout().trim().is_empty(),
+        output.status.success(),
+        "❌ Failed to detect current GitHub user"
+    );
+    let login = String::from_utf8(output.stdout).context("❌ Failed to parse GitHub user login")?;
+    anyhow::ensure!(
+        !login.trim().is_empty(),
         "❌ Failed to detect current GitHub user: empty output"
     );
-    Ok(output.stdout().to_string())
+    Ok(login.trim().to_string())
 }
 
 fn preferred_clone_target(details: &PrDetails, viewer_login: Option<&str>) -> CloneTarget {
@@ -711,14 +740,15 @@ fn preferred_clone_target(details: &PrDetails, viewer_login: Option<&str>) -> Cl
     }
 }
 
-fn ensure_remote_repo(
+async fn ensure_remote_repo(
     repo_dir: &Utf8Path,
     remote_name: &str,
     expected_repo: &GitHubRepoRef,
 ) -> anyhow::Result<()> {
     let output = Cmd::new("git", ["remote", "get-url", remote_name])
         .with_current_dir(repo_dir)
-        .run()?;
+        .run()
+        .await?;
 
     if output.status().success()
         && parse_github_name_with_owner(output.stdout()).as_deref()
@@ -736,11 +766,30 @@ fn ensure_remote_repo(
     } else {
         ["remote", "add", remote_name, &expected_url]
     };
-    let result = Cmd::new("git", command).with_current_dir(repo_dir).run()?;
+    let result = Cmd::new("git", command)
+        .with_current_dir(repo_dir)
+        .run()
+        .await?;
     result.ensure_success(format!(
         "❌ Failed to configure {remote_name} remote for {}/{}",
         expected_repo.owner, expected_repo.repo
     ))?;
+    Ok(())
+}
+
+pub async fn prepare_repo_for_pr_checkout(repo_dir: &Utf8Path) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        is_clean_repo(repo_dir).await?,
+        "❌ Repository is not clean. Commit or stash changes first."
+    );
+    let default_branch = default_branch(repo_dir).await?;
+    Cmd::new("git", ["fetch", "--prune"])
+        .with_current_dir(repo_dir)
+        .run()
+        .await?
+        .ensure_success("❌ git fetch failed")?;
+    checkout_branch(repo_dir, &default_branch).await?;
+    pull_ff_only(repo_dir).await?;
     Ok(())
 }
 

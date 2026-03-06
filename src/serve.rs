@@ -48,24 +48,13 @@ struct StartupReviewSelection {
     to_mark_baseline: Vec<github::PrDetails>,
 }
 
-pub fn run_serve() -> anyhow::Result<()> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("Failed to initialize tokio runtime")?;
-
-    let result = runtime.block_on(run_serve_async());
-    runtime.shutdown_timeout(Duration::from_secs(1));
-    result
-}
-
-async fn run_serve_async() -> anyhow::Result<()> {
+pub async fn run_serve() -> anyhow::Result<()> {
     let paths = config::resolve_paths()?;
-    config::ensure_parent_dirs(&paths)?;
+    config::ensure_parent_dirs(&paths).await?;
 
-    let cfg = config::load_config(&paths.config_path)?;
+    let cfg = config::load_config(&paths.config_path).await?;
     let db = Db::new(&paths.db_path)?;
-    web::prepare_dashboard_assets(&paths.dashboard_dir)?;
+    web::prepare_dashboard_assets(&paths.dashboard_dir).await?;
 
     let current_dir = std::env::current_dir().context("Failed to read current directory")?;
     let work_dir = Utf8PathBuf::from_path_buf(current_dir)
@@ -163,43 +152,31 @@ impl AppState {
     async fn poll_once_with_mode(&self, mode: PollMode) -> anyhow::Result<PollStats> {
         let _guard = self.poll_lock.lock().await;
 
-        let db = self.db.clone();
-        let config = self.config.clone();
-        let work_dir = self.work_dir.clone();
-
-        let handle =
-            tokio::task::spawn_blocking(move || poll_once_blocking(&db, &config, &work_dir, mode));
-        handle
+        poll_once_async(&self.db, &self.config, &self.work_dir, mode)
             .await
-            .context("polling task join failure")?
             .context("polling cycle failed")
     }
 
     pub async fn mark_done(&self, request: MarkDoneRequest) -> anyhow::Result<()> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut marked_any = false;
+        let mut marked_any = false;
 
-            if let Some(thread_id) = request.github_thread_id.as_deref() {
-                github::mark_notification_done(thread_id)?;
-                db.mark_thread_done_local(thread_id)?;
-                marked_any = true;
-            }
+        if let Some(thread_id) = request.github_thread_id.as_deref() {
+            github::mark_notification_done(thread_id).await?;
+            self.db.mark_thread_done_local(thread_id)?;
+            marked_any = true;
+        }
 
-            if request.mark_authored_pr {
-                let pr_url = request
-                    .pr_url
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("Missing PR URL for authored PR done action"))?;
-                db.mark_authored_pr_done_local(pr_url)?;
-                marked_any = true;
-            }
+        if request.mark_authored_pr {
+            let pr_url = request
+                .pr_url
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("Missing PR URL for authored PR done action"))?;
+            self.db.mark_authored_pr_done_local(pr_url)?;
+            marked_any = true;
+        }
 
-            anyhow::ensure!(marked_any, "No done action requested");
-            Ok(())
-        })
-        .await
-        .context("mark-done task join failure")?
+        anyhow::ensure!(marked_any, "No done action requested");
+        Ok(())
     }
 
     pub async fn run_fix(
@@ -208,69 +185,63 @@ impl AppState {
         repo: String,
         number: i64,
     ) -> anyhow::Result<String> {
-        let db = self.db.clone();
         let provider = self.config.ai.provider;
         let model = self.config.ai.model.clone();
+        let pr_url = format!("https://github.com/{owner}/{repo}/pull/{number}");
+        let latest_review = self
+            .db
+            .latest_review_by_url(&pr_url)?
+            .ok_or_else(|| anyhow::anyhow!("No review found for {pr_url}"))?;
 
-        tokio::task::spawn_blocking(move || {
-            let pr_url = format!("https://github.com/{owner}/{repo}/pull/{number}");
-            let latest_review = db
-                .latest_review_by_url(&pr_url)?
-                .ok_or_else(|| anyhow::anyhow!("No review found for {pr_url}"))?;
+        let repo_dir = github::ensure_local_repo(&owner, &repo).await?;
+        github::checkout_pr(&repo_dir, &pr_url).await?;
 
-            let repo_dir = github::ensure_local_repo(&owner, &repo)?;
-            github::checkout_pr(&repo_dir, &pr_url)?;
+        let agent = provider.as_agent();
+        let output = review::run_fix(
+            &repo_dir,
+            &pr_url,
+            &latest_review.content_md,
+            Some(&agent),
+            model.as_deref(),
+        )
+        .await;
 
-            let agent = provider.as_agent();
-            let output = review::run_fix(
-                &repo_dir,
-                &pr_url,
-                &latest_review.content_md,
-                Some(&agent),
-                model.as_deref(),
-            );
-
-            match output {
-                Ok(text) => {
-                    db.insert_fix_run(&pr_url, provider_name(provider), "success", &text)?;
-                    Ok(text)
-                }
-                Err(err) => {
-                    db.insert_fix_run(&pr_url, provider_name(provider), "error", &err.to_string())?;
-                    Err(err)
-                }
+        match output {
+            Ok(text) => {
+                self.db
+                    .insert_fix_run(&pr_url, provider_name(provider), "success", &text)?;
+                Ok(text)
             }
-        })
-        .await
-        .context("fix task join failure")?
+            Err(err) => {
+                self.db.insert_fix_run(
+                    &pr_url,
+                    provider_name(provider),
+                    "error",
+                    &err.to_string(),
+                )?;
+                Err(err)
+            }
+        }
     }
 
     pub async fn run_review(&self, owner: String, repo: String, number: i64) -> anyhow::Result<()> {
         let _guard = self.poll_lock.lock().await;
+        let pr_url = format!("https://github.com/{owner}/{repo}/pull/{number}");
+        println!("🔍 Review started: {pr_url}");
 
-        let db = self.db.clone();
-        let config = self.config.clone();
-        let work_dir = self.work_dir.clone();
+        let result = async {
+            let details = github::fetch_pr_details(&pr_url).await?;
+            upsert_pr_from_details(&self.db, &details)?;
+            run_review_for_details(&self.db, &self.config, &self.work_dir, &details).await
+        }
+        .await;
 
-        tokio::task::spawn_blocking(move || {
-            let pr_url = format!("https://github.com/{owner}/{repo}/pull/{number}");
-            println!("🔍 Review started: {pr_url}");
+        match &result {
+            Ok(()) => println!("✅ Review finished: {pr_url}"),
+            Err(err) => eprintln!("❌ Review failed: {pr_url}: {err}"),
+        }
 
-            let result = (|| -> anyhow::Result<()> {
-                let details = github::fetch_pr_details(&pr_url)?;
-                upsert_pr_from_details(&db, &details)?;
-                run_review_for_details(&db, &config, &work_dir, &details)
-            })();
-
-            match &result {
-                Ok(()) => println!("✅ Review finished: {pr_url}"),
-                Err(err) => eprintln!("❌ Review failed: {pr_url}: {err}"),
-            }
-
-            result
-        })
-        .await
-        .context("review task join failure")?
+        result
     }
 
     pub async fn open_in_vscode(
@@ -281,30 +252,16 @@ impl AppState {
         let _guard = self.poll_lock.lock().await;
         let target_label = describe_open_target(&repository, pr_url.as_deref());
         println!("🧑‍💻 VS Code open requested: {target_label}");
+        let repo_dir = resolve_open_target_repo(&repository, pr_url.as_deref()).await?;
+        println!("📂 Opening VS Code in {}", repo_dir);
+        let result = launcher::open_vscode(&repo_dir).await;
 
-        tokio::task::spawn_blocking(move || {
-            let result = if let Some(pr_url) = pr_url.as_deref() {
-                let local_pr = github::ensure_local_repo_for_pr(pr_url)?;
-                println!("🔀 Preparing PR for VS Code: {}", local_pr.details.pr_url);
-                github::checkout_pr_for_open_with_details(&local_pr.repo_dir, &local_pr.details)?;
-                println!("📂 Opening VS Code in {}", local_pr.repo_dir);
-                launcher::open_vscode(&local_pr.repo_dir)
-            } else {
-                let (owner, repo) = parse_repository_name(&repository)?;
-                let repo_dir = github::ensure_local_repo(&owner, &repo)?;
-                println!("📂 Opening VS Code in {}", repo_dir);
-                launcher::open_vscode(&repo_dir)
-            };
+        match &result {
+            Ok(()) => println!("✅ VS Code opened: {target_label}"),
+            Err(err) => eprintln!("❌ Failed to open VS Code for {target_label}: {err}"),
+        }
 
-            match &result {
-                Ok(()) => println!("✅ VS Code opened: {target_label}"),
-                Err(err) => eprintln!("❌ Failed to open VS Code for {target_label}: {err}"),
-            }
-
-            result
-        })
-        .await
-        .context("open-vscode task join failure")?
+        result
     }
 
     pub async fn open_in_terminal(
@@ -315,30 +272,16 @@ impl AppState {
         let _guard = self.poll_lock.lock().await;
         let target_label = describe_open_target(&repository, pr_url.as_deref());
         println!("🖥️ Terminal open requested: {target_label}");
+        let repo_dir = resolve_open_target_repo(&repository, pr_url.as_deref()).await?;
+        println!("📂 Opening Terminal in {}", repo_dir);
+        let result = launcher::open_terminal(&repo_dir).await;
 
-        tokio::task::spawn_blocking(move || {
-            let result = if let Some(pr_url) = pr_url.as_deref() {
-                let local_pr = github::ensure_local_repo_for_pr(pr_url)?;
-                println!("🔀 Preparing PR for Terminal: {}", local_pr.details.pr_url);
-                github::checkout_pr_for_open_with_details(&local_pr.repo_dir, &local_pr.details)?;
-                println!("📂 Opening Terminal in {}", local_pr.repo_dir);
-                launcher::open_terminal(&local_pr.repo_dir)
-            } else {
-                let (owner, repo) = parse_repository_name(&repository)?;
-                let repo_dir = github::ensure_local_repo(&owner, &repo)?;
-                println!("📂 Opening Terminal in {}", repo_dir);
-                launcher::open_terminal(&repo_dir)
-            };
+        match &result {
+            Ok(()) => println!("✅ Terminal opened: {target_label}"),
+            Err(err) => eprintln!("❌ Failed to open Terminal for {target_label}: {err}"),
+        }
 
-            match &result {
-                Ok(()) => println!("✅ Terminal opened: {target_label}"),
-                Err(err) => eprintln!("❌ Failed to open Terminal for {target_label}: {err}"),
-            }
-
-            result
-        })
-        .await
-        .context("open-terminal task join failure")?
+        result
     }
 }
 
@@ -349,15 +292,15 @@ pub struct MarkDoneRequest {
     pub mark_authored_pr: bool,
 }
 
-fn poll_once_blocking(
+async fn poll_once_async(
     db: &Db,
     config: &AppConfig,
     work_dir: &Utf8Path,
     mode: PollMode,
 ) -> anyhow::Result<PollStats> {
-    let notification_data = github::fetch_notifications()?;
+    let notification_data = github::fetch_notifications().await?;
     let notifications = notification_data.notifications;
-    let authored_prs = github::fetch_authored_open_prs()?;
+    let authored_prs = github::fetch_authored_open_prs().await?;
     sync_authored_pr_threads(db, &authored_prs)?;
 
     let mut known_pr_details = notification_data
@@ -409,7 +352,7 @@ fn poll_once_blocking(
         let details = if let Some(details) = known_pr_details.remove(pr_url) {
             details
         } else {
-            match github::fetch_pr_details(pr_url) {
+            match github::fetch_pr_details(pr_url).await {
                 Ok(details) => details,
                 Err(err) => {
                     eprintln!("⚠️ Failed to fetch PR details for {pr_url}: {err}");
@@ -426,7 +369,7 @@ fn poll_once_blocking(
         }
 
         if details.state != "OPEN"
-            && let Err(err) = handle_closed_pr_branch_sync(db, &details)
+            && let Err(err) = handle_closed_pr_branch_sync(db, &details).await
         {
             eprintln!(
                 "⚠️ Failed to process closed PR branch sync for {}: {err}",
@@ -451,7 +394,7 @@ fn poll_once_blocking(
 
     for details in selection.to_review {
         println!("🔍 Auto-review started: {}", details.pr_url);
-        match run_review_for_details(db, config, work_dir, &details) {
+        match run_review_for_details(db, config, work_dir, &details).await {
             Ok(()) => {
                 println!("✅ Auto-review finished: {}", details.pr_url);
                 reviews_run += 1;
@@ -518,7 +461,7 @@ fn upsert_pr_from_details(db: &Db, details: &github::PrDetails) -> anyhow::Resul
     })
 }
 
-fn run_review_for_details(
+async fn run_review_for_details(
     db: &Db,
     config: &AppConfig,
     work_dir: &Utf8Path,
@@ -530,7 +473,8 @@ fn run_review_for_details(
         &details.pr_url,
         Some(&agent),
         config.ai.model.as_deref(),
-    )?;
+    )
+    .await?;
 
     db.insert_review(&db::NewReview {
         pr_url: details.pr_url.clone(),
@@ -713,18 +657,18 @@ fn should_review_pr(
     }
 }
 
-fn handle_closed_pr_branch_sync(db: &Db, details: &github::PrDetails) -> anyhow::Result<()> {
+async fn handle_closed_pr_branch_sync(db: &Db, details: &github::PrDetails) -> anyhow::Result<()> {
     let repo_dir = github::local_repo_dir(&details.owner, &details.repo)?;
     if !repo_dir.exists() || !repo_dir.join(".git").exists() {
         return Ok(());
     }
 
-    let current_branch = github::current_branch(&repo_dir)?;
+    let current_branch = github::current_branch(&repo_dir).await?;
     if current_branch != details.head_ref {
         return Ok(());
     }
 
-    if !github::is_clean_repo(&repo_dir)? {
+    if !github::is_clean_repo(&repo_dir).await? {
         let message = format!(
             "Skipped sync for {} because working tree is dirty on branch '{}'.",
             details.pr_url, details.head_ref
@@ -733,9 +677,9 @@ fn handle_closed_pr_branch_sync(db: &Db, details: &github::PrDetails) -> anyhow:
         return Ok(());
     }
 
-    let default_branch = github::default_branch(&repo_dir)?;
-    github::checkout_branch(&repo_dir, &default_branch)?;
-    github::pull_ff_only(&repo_dir)?;
+    let default_branch = github::default_branch(&repo_dir).await?;
+    github::checkout_branch(&repo_dir, &default_branch).await?;
+    github::pull_ff_only(&repo_dir).await?;
 
     let message = format!(
         "Switched to default branch '{default_branch}' and pulled latest changes after PR closed."
@@ -754,6 +698,24 @@ fn parse_repository_name(repository: &str) -> anyhow::Result<(String, String)> {
         "Invalid repository name '{repository}' (expected owner/repo)"
     );
     Ok((owner.to_string(), repo.to_string()))
+}
+
+async fn resolve_open_target_repo(
+    repository: &str,
+    pr_url: Option<&str>,
+) -> anyhow::Result<Utf8PathBuf> {
+    if let Some(pr_url) = pr_url {
+        let local_pr = github::ensure_local_repo_for_pr(pr_url).await?;
+        println!(
+            "🔀 Preparing PR for open action: {}",
+            local_pr.details.pr_url
+        );
+        github::checkout_pr_for_open_with_details(&local_pr.repo_dir, &local_pr.details).await?;
+        return Ok(local_pr.repo_dir);
+    }
+
+    let (owner, repo) = parse_repository_name(repository)?;
+    github::ensure_local_repo(&owner, &repo).await
 }
 
 fn describe_open_target(repository: &str, pr_url: Option<&str>) -> String {

@@ -1,7 +1,8 @@
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
+use tokio::fs;
 
 pub const DEFAULT_KIRO_MODEL: &str = "claude-opus-4.6";
 
@@ -118,12 +119,13 @@ pub fn resolve_paths() -> anyhow::Result<AppPaths> {
     })
 }
 
-pub fn load_config(config_path: &PathBuf) -> anyhow::Result<AppConfig> {
-    if !config_path.exists() {
+pub async fn load_config(config_path: &PathBuf) -> anyhow::Result<AppConfig> {
+    if !fs::try_exists(config_path).await? {
         return Ok(AppConfig::default());
     }
 
     let raw = fs::read_to_string(config_path)
+        .await
         .with_context(|| format!("Failed to read config file at {}", config_path.display()))?;
     let config: AppConfig = toml::from_str(&raw)
         .with_context(|| format!("Failed to parse TOML config at {}", config_path.display()))?;
@@ -131,21 +133,25 @@ pub fn load_config(config_path: &PathBuf) -> anyhow::Result<AppConfig> {
     Ok(config)
 }
 
-pub fn ensure_parent_dirs(paths: &AppPaths) -> anyhow::Result<()> {
+pub async fn ensure_parent_dirs(paths: &AppPaths) -> anyhow::Result<()> {
     if let Some(parent) = paths.config_path.parent() {
         fs::create_dir_all(parent)
+            .await
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
     }
     if let Some(parent) = paths.db_path.parent() {
         fs::create_dir_all(parent)
+            .await
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
     }
-    fs::create_dir_all(&paths.dashboard_dir).with_context(|| {
-        format!(
-            "Failed to create dashboard directory {}",
-            paths.dashboard_dir.display()
-        )
-    })?;
+    fs::create_dir_all(&paths.dashboard_dir)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to create dashboard directory {}",
+                paths.dashboard_dir.display()
+            )
+        })?;
     Ok(())
 }
 

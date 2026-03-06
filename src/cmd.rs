@@ -1,19 +1,15 @@
 use std::{
     collections::BTreeMap,
     env,
-    io::{BufRead as _, BufReader},
     path::Path,
-    process::{Command, ExitStatus, Stdio},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
-    thread,
+    process::{ExitStatus, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use anyhow::Context as _;
 use camino::Utf8PathBuf;
 use secrecy::{ExposeSecret, SecretString};
+use tokio::{fs, process::Command};
 
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 
@@ -21,9 +17,9 @@ pub fn set_verbose(verbose: bool) {
     VERBOSE.store(verbose, Ordering::SeqCst);
 }
 
-pub fn ensure_command_available(cmd_name: &str) -> anyhow::Result<()> {
+pub async fn ensure_command_available(cmd_name: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
-        is_command_available(cmd_name),
+        is_command_available(cmd_name).await,
         "❌ Required command `{cmd_name}` is not installed or not available in PATH"
     );
     Ok(())
@@ -33,20 +29,26 @@ fn is_verbose() -> bool {
     VERBOSE.load(Ordering::SeqCst)
 }
 
-fn is_command_available(cmd_name: &str) -> bool {
+async fn is_command_available(cmd_name: &str) -> bool {
     if cmd_name.contains(std::path::MAIN_SEPARATOR) {
-        return command_candidate_exists(Path::new(cmd_name));
+        return command_candidate_exists(Path::new(cmd_name)).await;
     }
 
     let Some(path_var) = env::var_os("PATH") else {
         return false;
     };
 
-    env::split_paths(&path_var).any(|path| command_candidate_exists(&path.join(cmd_name)))
+    for path in env::split_paths(&path_var) {
+        if command_candidate_exists(&path.join(cmd_name)).await {
+            return true;
+        }
+    }
+
+    false
 }
 
-fn command_candidate_exists(path: &Path) -> bool {
-    path.is_file()
+async fn command_candidate_exists(path: &Path) -> bool {
+    fs::try_exists(path).await.unwrap_or(false)
 }
 
 #[derive(Debug)]
@@ -202,85 +204,44 @@ impl Cmd {
         command
     }
 
-    fn spawn_output_reader<R: std::io::Read + Send + 'static>(
-        reader: R,
-        tx: mpsc::Sender<(String, bool)>,
-        is_stdout: bool,
-    ) -> thread::JoinHandle<()> {
-        thread::spawn(move || {
-            let reader = BufReader::new(reader);
-            for line in reader.lines() {
-                let Ok(line) = line else {
-                    break;
-                };
-                if tx.send((line, is_stdout)).is_err() {
-                    break;
-                }
-            }
-        })
-    }
+    fn print_verbose_output(&self, stdout: &str, stderr: &str) {
+        if !is_verbose() {
+            return;
+        }
 
-    fn collect_output(&self, rx: mpsc::Receiver<(String, bool)>) -> (String, String) {
-        let mut output_stdout = String::new();
-        let mut output_stderr = String::new();
-
-        for (line, is_stdout) in rx {
-            if is_stdout {
-                if is_verbose() && !self.hide_stdout {
-                    println!("{line}");
-                }
-                output_stdout.push_str(&line);
-                output_stdout.push('\n');
-            } else {
-                if is_verbose() && !self.hide_stderr {
-                    eprintln!("{line}");
-                }
-                output_stderr.push_str(&line);
-                output_stderr.push('\n');
+        if !self.hide_stdout {
+            for line in stdout.lines() {
+                println!("{line}");
             }
         }
-        (output_stdout, output_stderr)
+
+        if !self.hide_stderr {
+            for line in stderr.lines() {
+                eprintln!("{line}");
+            }
+        }
     }
 
-    pub fn run(&self) -> anyhow::Result<CmdOutput> {
+    pub async fn run(&self) -> anyhow::Result<CmdOutput> {
         if is_verbose() {
             println!("{}", self.build_command_description());
         }
 
-        let mut child = self
+        let output = self
             .configure_command()
             .args(&self.args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+            .output()
+            .await
             .with_context(|| self.spawn_context())?;
 
-        let stdout = child
-            .stdout
-            .take()
-            .context("spawned command did not expose stdout pipe")?;
-        let stderr = child
-            .stderr
-            .take()
-            .context("spawned command did not expose stderr pipe")?;
-        let (tx, rx) = mpsc::channel();
-
-        let stdout_reader = Self::spawn_output_reader(stdout, tx.clone(), true);
-        let stderr_reader = Self::spawn_output_reader(stderr, tx, false);
-
-        let (output_stdout, output_stderr) = self.collect_output(rx);
-        stdout_reader
-            .join()
-            .map_err(|err| anyhow::anyhow!("stdout reader thread panicked: {err:?}"))?;
-        stderr_reader
-            .join()
-            .map_err(|err| anyhow::anyhow!("stderr reader thread panicked: {err:?}"))?;
-        let status = child.wait().with_context(|| {
-            format!("failed to wait for command `{}`", self.format_invocation())
-        })?;
+        let output_stdout =
+            String::from_utf8(output.stdout).context("command produced non-UTF-8 stdout")?;
+        let output_stderr =
+            String::from_utf8(output.stderr).context("command produced non-UTF-8 stderr")?;
+        self.print_verbose_output(&output_stdout, &output_stderr);
 
         Ok(CmdOutput {
-            status,
+            status: output.status,
             stdout: output_stdout,
             stderr: output_stderr,
             invocation: self.format_invocation(),
@@ -289,7 +250,7 @@ impl Cmd {
     }
 
     #[allow(dead_code)]
-    pub fn run_interactive(&self) -> anyhow::Result<CmdOutput> {
+    pub async fn run_interactive(&self) -> anyhow::Result<CmdOutput> {
         if is_verbose() {
             println!("{}", self.build_command_description());
         }
@@ -301,6 +262,7 @@ impl Cmd {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .status()
+            .await
             .with_context(|| self.spawn_context())?;
 
         Ok(CmdOutput {

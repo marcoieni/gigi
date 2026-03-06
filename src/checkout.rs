@@ -1,7 +1,6 @@
 use anyhow::Context as _;
-use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::{cmd::Cmd, launcher};
+use crate::{github, launcher};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitHubPrRef {
@@ -10,107 +9,13 @@ pub struct GitHubPrRef {
     pub number: u64,
 }
 
-pub fn checkout_pr(pr_url: &str) -> anyhow::Result<()> {
+pub async fn checkout_pr(pr_url: &str) -> anyhow::Result<()> {
     let pr = parse_github_pr_url(pr_url)?;
 
-    let repo_dir = local_repo_dir(&pr.owner, &pr.repo)?;
-    ensure_repo_cloned(&pr.owner, &pr.repo, &repo_dir)?;
-
-    ensure_clean_repo(&repo_dir)?;
-    update_default_branch(&repo_dir)?;
-
-    let checkout = Cmd::new("gh", ["pr", "checkout", pr_url])
-        .with_title("📥 gh pr checkout ...")
-        .with_current_dir(&repo_dir)
-        .run()?;
-    checkout.ensure_success("❌ Failed to checkout PR")?;
-
-    launcher::open_vscode(&repo_dir)?;
-    Ok(())
-}
-
-fn local_repo_dir(owner: &str, repo: &str) -> anyhow::Result<Utf8PathBuf> {
-    let home = std::env::var("HOME").context("HOME env var is not set")?;
-    Ok(Utf8PathBuf::from(home).join("proj").join(owner).join(repo))
-}
-
-fn ensure_repo_cloned(owner: &str, repo: &str, repo_dir: &Utf8Path) -> anyhow::Result<()> {
-    if repo_dir.exists() {
-        anyhow::ensure!(
-            repo_dir.join(".git").exists(),
-            "❌ Path exists but is not a git repository: {repo_dir}"
-        );
-        return Ok(());
-    }
-
-    let parent = repo_dir
-        .parent()
-        .context("Failed to compute parent directory")?;
-    std::fs::create_dir_all(parent).with_context(|| format!("Failed to create {parent}"))?;
-
-    let repo_name = format!("{owner}/{repo}");
-    let clone = Cmd::new("gh", ["repo", "clone", &repo_name, repo_dir.as_str()])
-        .with_title(format!("📦 gh repo clone {repo_name} ..."))
-        .run()?;
-
-    clone.ensure_success("❌ Failed to clone repository")?;
-
-    Ok(())
-}
-
-fn ensure_clean_repo(repo_dir: &Utf8Path) -> anyhow::Result<()> {
-    let output = Cmd::new("git", ["status", "--porcelain"])
-        .with_current_dir(repo_dir)
-        .run()?;
-    output.ensure_success("❌ Failed to check repository status")?;
-    anyhow::ensure!(
-        output.stdout().trim().is_empty(),
-        "❌ Repository is not clean. Commit or stash changes first."
-    );
-    Ok(())
-}
-
-fn update_default_branch(repo_dir: &Utf8Path) -> anyhow::Result<()> {
-    let default_branch = Cmd::new(
-        "gh",
-        [
-            "repo",
-            "view",
-            "--json",
-            "defaultBranchRef",
-            "-q",
-            ".defaultBranchRef.name",
-        ],
-    )
-    .with_current_dir(repo_dir)
-    .run()?;
-
-    default_branch.ensure_success("❌ Failed to detect default branch")?;
-    anyhow::ensure!(
-        !default_branch.stdout().trim().is_empty(),
-        "❌ Failed to detect default branch: command returned empty output"
-    );
-    let default_branch = default_branch.stdout().to_string();
-
-    let fetch = Cmd::new("git", ["fetch", "--prune"])
-        .with_current_dir(repo_dir)
-        .run()?;
-    fetch.ensure_success("❌ git fetch failed")?;
-
-    let checkout = Cmd::new("git", ["checkout", &default_branch])
-        .with_current_dir(repo_dir)
-        .run()?;
-    checkout.ensure_success(format!(
-        "❌ Failed to checkout default branch '{default_branch}'"
-    ))?;
-
-    let pull = Cmd::new("git", ["pull", "--ff-only"])
-        .with_current_dir(repo_dir)
-        .run()?;
-    pull.ensure_success(format!(
-        "❌ Failed to pull default branch '{default_branch}'"
-    ))?;
-
+    let repo_dir = github::local_repo_dir(&pr.owner, &pr.repo)?;
+    github::prepare_repo_for_pr_checkout(&repo_dir).await?;
+    github::checkout_pr(&repo_dir, pr_url).await?;
+    launcher::open_vscode(&repo_dir).await?;
     Ok(())
 }
 

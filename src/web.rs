@@ -8,6 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use tokio::fs;
 use tower_http::services::ServeDir;
 
 use crate::{
@@ -55,21 +56,24 @@ pub async fn run_server(
         .map_err(anyhow::Error::from)
 }
 
-pub fn prepare_dashboard_assets(dashboard_dir: &Path) -> anyhow::Result<()> {
-    std::fs::create_dir_all(dashboard_dir)?;
+pub async fn prepare_dashboard_assets(dashboard_dir: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(dashboard_dir).await?;
 
-    std::fs::write(
+    fs::write(
         dashboard_dir.join("index.html"),
         include_str!("../assets/dashboard/index.html"),
-    )?;
-    std::fs::write(
+    )
+    .await?;
+    fs::write(
         dashboard_dir.join("app.js"),
         include_str!("../assets/dashboard/app.js"),
-    )?;
-    std::fs::write(
+    )
+    .await?;
+    fs::write(
         dashboard_dir.join("styles.css"),
         include_str!("../assets/dashboard/styles.css"),
-    )?;
+    )
+    .await?;
 
     Ok(())
 }
