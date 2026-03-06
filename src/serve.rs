@@ -249,7 +249,6 @@ impl AppState {
         repository: String,
         pr_url: Option<String>,
     ) -> anyhow::Result<()> {
-        let _guard = self.poll_lock.lock().await;
         let target_label = describe_open_target(&repository, pr_url.as_deref());
         println!("🧑‍💻 VS Code open requested: {target_label}");
         let repo_dir = resolve_open_target_repo(&repository, pr_url.as_deref()).await?;
@@ -269,7 +268,6 @@ impl AppState {
         repository: String,
         pr_url: Option<String>,
     ) -> anyhow::Result<()> {
-        let _guard = self.poll_lock.lock().await;
         let target_label = describe_open_target(&repository, pr_url.as_deref());
         println!("🖥️ Terminal open requested: {target_label}");
         let repo_dir = resolve_open_target_repo(&repository, pr_url.as_deref()).await?;
