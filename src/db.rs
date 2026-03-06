@@ -5,7 +5,7 @@ use anyhow::Context as _;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
-use crate::review::sanitize_review_markdown;
+use crate::review::{parse_requires_code_changes, sanitize_review_markdown};
 
 #[derive(Debug, Clone)]
 pub struct Db {
@@ -314,7 +314,8 @@ impl Db {
 
     pub fn insert_review(&self, row: &NewReview) -> anyhow::Result<()> {
         let now = unix_ts();
-        let content_md = sanitize_review_markdown(&row.content_md);
+        let (content_md, requires_code_changes) =
+            normalize_review_storage(&row.content_md, row.requires_code_changes);
         self.with_conn(|conn| {
             conn.execute(
                 r#"
@@ -326,7 +327,7 @@ impl Db {
                     row.pr_url,
                     row.provider,
                     row.model,
-                    bool_to_int(row.requires_code_changes),
+                    bool_to_int(requires_code_changes),
                     content_md,
                     now,
                 ],
@@ -416,14 +417,16 @@ impl Db {
                 "#,
                 [pr_url],
                 |row| {
-                    let requires_code_changes: i64 = row.get(4)?;
+                    let stored_requires_code_changes: i64 = row.get(4)?;
+                    let content_md = sanitize_review_markdown(&row.get::<_, String>(5)?);
                     Ok(StoredReview {
                         id: row.get(0)?,
                         pr_url: row.get(1)?,
                         provider: row.get(2)?,
                         model: row.get(3)?,
-                        requires_code_changes: requires_code_changes != 0,
-                        content_md: sanitize_review_markdown(&row.get::<_, String>(5)?),
+                        requires_code_changes: parse_requires_code_changes(&content_md)
+                            .unwrap_or(stored_requires_code_changes != 0),
+                        content_md,
                         created_at: row.get(6)?,
                     })
                 },
@@ -517,31 +520,48 @@ impl Db {
 
     fn sanitize_stored_reviews(&self) -> anyhow::Result<()> {
         self.with_conn(|conn| {
-            let mut stmt = conn.prepare("SELECT id, content_md FROM reviews")?;
+            let mut stmt =
+                conn.prepare("SELECT id, requires_code_changes, content_md FROM reviews")?;
             let rows = stmt.query_map([], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)? != 0,
+                    row.get::<_, String>(2)?,
+                ))
             })?;
 
             let mut updates = Vec::new();
             for row in rows {
-                let (id, content_md) = row?;
-                let sanitized = sanitize_review_markdown(&content_md);
-                if sanitized != content_md {
-                    updates.push((id, sanitized));
+                let (id, stored_requires_code_changes, content_md) = row?;
+                let (sanitized, requires_code_changes) =
+                    normalize_review_storage(&content_md, stored_requires_code_changes);
+                if sanitized != content_md || requires_code_changes != stored_requires_code_changes
+                {
+                    updates.push((id, requires_code_changes, sanitized));
                 }
             }
             drop(stmt);
 
-            for (id, sanitized) in updates {
+            for (id, requires_code_changes, sanitized) in updates {
                 conn.execute(
-                    "UPDATE reviews SET content_md = ?2 WHERE id = ?1",
-                    params![id, sanitized],
+                    "UPDATE reviews SET requires_code_changes = ?2, content_md = ?3 WHERE id = ?1",
+                    params![id, bool_to_int(requires_code_changes), sanitized],
                 )?;
             }
 
             Ok(())
         })
     }
+}
+
+fn normalize_review_storage(
+    content_md: &str,
+    stored_requires_code_changes: bool,
+) -> (String, bool) {
+    let sanitized = sanitize_review_markdown(content_md);
+    let requires_code_changes =
+        parse_requires_code_changes(&sanitized).unwrap_or(stored_requires_code_changes);
+    (sanitized, requires_code_changes)
 }
 
 fn deduplicate_dashboard_threads(threads: Vec<DashboardThread>) -> Vec<DashboardThread> {
@@ -961,6 +981,104 @@ mod tests {
         let db = Db::new(&path).unwrap();
         let review = db.latest_review_for_pr("a", "b", 1).unwrap().unwrap();
         assert_eq!(review.content_md, "Summary");
+    }
+
+    #[test]
+    fn insert_review_prefers_requires_code_changes_header() {
+        let db = test_db();
+
+        db.upsert_pr(&NewPr {
+            pr_url: "https://github.com/a/b/pull/1".to_string(),
+            owner: "a".to_string(),
+            repo: "b".to_string(),
+            number: 1,
+            state: "OPEN".to_string(),
+            title: "Title".to_string(),
+            head_ref: "feat".to_string(),
+            base_ref: "main".to_string(),
+            head_sha: "sha1".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            is_archived: false,
+        })
+        .unwrap();
+
+        db.insert_review(&NewReview {
+            pr_url: "https://github.com/a/b/pull/1".to_string(),
+            provider: "copilot".to_string(),
+            model: None,
+            requires_code_changes: true,
+            content_md: "REQUIRES_CODE_CHANGES: NO\nSummary".to_string(),
+        })
+        .unwrap();
+
+        let review = db.latest_review_for_pr("a", "b", 1).unwrap().unwrap();
+        assert!(!review.requires_code_changes);
+    }
+
+    #[test]
+    fn db_init_repairs_stale_requires_code_changes() {
+        let mut path = std::env::temp_dir();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("gigi-test-repair-{ts}.sqlite"));
+
+        {
+            let db = Db::new(&path).unwrap();
+            db.upsert_pr(&NewPr {
+                pr_url: "https://github.com/a/b/pull/1".to_string(),
+                owner: "a".to_string(),
+                repo: "b".to_string(),
+                number: 1,
+                state: "OPEN".to_string(),
+                title: "Title".to_string(),
+                head_ref: "feat".to_string(),
+                base_ref: "main".to_string(),
+                head_sha: "sha1".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                is_archived: false,
+            })
+            .unwrap();
+            db.upsert_thread(&NewThread {
+                thread_key: "thread-1".to_string(),
+                github_thread_id: Some("1".to_string()),
+                source: "notification".to_string(),
+                repository: "a/b".to_string(),
+                subject_type: Some("PullRequest".to_string()),
+                subject_title: "t".to_string(),
+                subject_url: Some("u".to_string()),
+                reason: Some("review_requested".to_string()),
+                pr_url: Some("https://github.com/a/b/pull/1".to_string()),
+                unread: true,
+                done: false,
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            })
+            .unwrap();
+            db.with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO reviews (pr_url, provider, model, requires_code_changes, content_md, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        "https://github.com/a/b/pull/1",
+                        "copilot",
+                        Option::<String>::None,
+                        1_i64,
+                        "REQUIRES_CODE_CHANGES: NO\nSummary",
+                        0_i64,
+                    ],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        let db = Db::new(&path).unwrap();
+        let review = db.latest_review_for_pr("a", "b", 1).unwrap().unwrap();
+        assert!(!review.requires_code_changes);
+
+        let threads = db.list_dashboard_threads().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].latest_requires_code_changes, Some(false));
     }
 
     #[test]

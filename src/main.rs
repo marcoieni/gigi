@@ -606,7 +606,7 @@ fn squash(repo_root: &Utf8Path, repo: &Repo, dry_run: bool) -> anyhow::Result<()
 }
 
 fn view_pr_in_browser(repo_root: &Utf8Path) -> anyhow::Result<()> {
-    Cmd::new("gh", ["pr", "view", "-w", "pr", "show"])
+    Cmd::new("gh", ["pr", "view", "--web"])
         .with_current_dir(repo_root)
         .run()?
         .ensure_success("❌ Failed to open PR in browser")?;
