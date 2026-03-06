@@ -298,7 +298,11 @@ async fn poll_once_async(
 ) -> anyhow::Result<PollStats> {
     let notification_data = github::fetch_notifications().await?;
     let notifications = notification_data.notifications;
+    print_fetched_notifications(&notifications);
+    print_prefetched_pr_details(&notification_data.pr_details);
+
     let authored_prs = github::fetch_authored_open_prs().await?;
+    print_fetched_authored_prs(&authored_prs);
     sync_authored_pr_threads(db, &authored_prs)?;
 
     let mut known_pr_details = notification_data
@@ -313,7 +317,7 @@ async fn poll_once_async(
 
     for notification in &notifications {
         let thread_key = format!("notif:{}", notification.thread_id);
-        db.upsert_thread(&db::NewThread {
+        let row = db::NewThread {
             thread_key,
             github_thread_id: Some(notification.thread_id.clone()),
             source: "notification".to_string(),
@@ -327,7 +331,9 @@ async fn poll_once_async(
             unread: notification.unread,
             done: false,
             updated_at: notification.updated_at.clone(),
-        })?;
+        };
+        db.upsert_thread(&row)?;
+        print_thread_db_write(&row);
 
         if let Some(pr_url) = &notification.pr_url {
             pr_urls.insert(pr_url.clone());
@@ -359,9 +365,11 @@ async fn poll_once_async(
             }
         };
 
-        upsert_pr_from_details(db, &details)?;
-
+        print_pr_details("Fetched PR details", &details);
         let stored = db.get_pr(&details.pr_url)?;
+        upsert_pr_from_details(db, &details)?;
+        print_pr_db_write(stored.as_ref(), &details);
+
         if should_review_pr(config.rereview_mode, stored.as_ref(), &details) {
             review_candidates.push(details.clone());
         }
@@ -419,11 +427,16 @@ fn sync_authored_pr_threads(
         .iter()
         .map(|authored| authored.pr_url.clone())
         .collect::<Vec<_>>();
+
+    println!(
+        "🗄️ DB delete threads: source=my_pr keep_pr_urls={}",
+        keep_pr_urls.len()
+    );
     db.delete_threads_by_source_except_pr_urls("my_pr", &keep_pr_urls)?;
 
     for authored in authored_prs {
         let thread_key = format!("mypr:{}", authored.pr_url);
-        db.upsert_thread(&db::NewThread {
+        let row = db::NewThread {
             thread_key,
             github_thread_id: None,
             source: "my_pr".to_string(),
@@ -437,14 +450,19 @@ fn sync_authored_pr_threads(
             unread: false,
             done: false,
             updated_at: authored.updated_at.clone(),
-        })?;
+        };
+        db.upsert_thread(&row)?;
+        print_thread_db_write(&row);
     }
 
     Ok(())
 }
 
-fn upsert_pr_from_details(db: &Db, details: &github::PrDetails) -> anyhow::Result<()> {
-    db.upsert_pr(&db::NewPr {
+fn upsert_pr_from_details(
+    db: &Db,
+    details: &github::PrDetails,
+) -> anyhow::Result<()> {
+    let row = db::NewPr {
         pr_url: details.pr_url.clone(),
         owner: details.owner.clone(),
         repo: details.repo.clone(),
@@ -456,7 +474,84 @@ fn upsert_pr_from_details(db: &Db, details: &github::PrDetails) -> anyhow::Resul
         head_sha: details.head_sha.clone(),
         updated_at: details.updated_at.clone(),
         is_archived: details.is_archived,
-    })
+    };
+    db.upsert_pr(&row)
+}
+
+fn print_fetched_notifications(notifications: &[github::NotificationThread]) {
+    println!("📥 Notifications fetched: {}", notifications.len());
+    for notification in notifications {
+        println!(
+            "  • thread={} repo={} type={} unread={} reason={} pr_url={} updated_at={} title={}",
+            notification.thread_id,
+            notification.repository,
+            notification.subject_type.as_deref().unwrap_or("<unknown>"),
+            notification.unread,
+            notification.reason.as_deref().unwrap_or("<none>"),
+            notification.pr_url.as_deref().unwrap_or("<none>"),
+            notification.updated_at,
+            notification.subject_title
+        );
+    }
+}
+
+fn print_prefetched_pr_details(details_list: &[github::PrDetails]) {
+    println!("📥 PR details fetched from notifications: {}", details_list.len());
+    for details in details_list {
+        print_pr_details("Notification PR details", details);
+    }
+}
+
+fn print_fetched_authored_prs(authored_prs: &[github::AuthoredPrSummary]) {
+    println!("📥 Authored open PRs fetched: {}", authored_prs.len());
+    for authored in authored_prs {
+        println!(
+            "  • pr_url={} repo={} updated_at={} title={}",
+            authored.pr_url, authored.repository, authored.updated_at, authored.title
+        );
+    }
+}
+
+fn print_pr_details(prefix: &str, details: &github::PrDetails) {
+    println!(
+        "📥 {prefix}: pr_url={} state={} head_sha={} updated_at={} archived={} title={}",
+        details.pr_url,
+        details.state,
+        details.head_sha,
+        details.updated_at,
+        details.is_archived,
+        details.title
+    );
+}
+
+fn print_thread_db_write(row: &db::NewThread) {
+    println!(
+        "🗄️ DB upsert thread [{}]: source={} repo={} pr_url={} unread={} done={} updated_at={} title={}",
+        row.thread_key,
+        row.source,
+        row.repository,
+        row.pr_url.as_deref().unwrap_or("<none>"),
+        row.unread,
+        row.done,
+        row.updated_at,
+        row.subject_title
+    );
+}
+
+fn print_pr_db_write(existing: Option<&db::StoredPr>, details: &github::PrDetails) {
+    let action = match existing {
+        None => "insert",
+        Some(_) => "update",
+    };
+    println!(
+        "🗄️ DB {action} pr [{}]: state={} head_sha={} updated_at={} archived={} title={}",
+        details.pr_url,
+        details.state,
+        details.head_sha,
+        details.updated_at,
+        details.is_archived,
+        details.title
+    );
 }
 
 async fn run_review_for_details(
