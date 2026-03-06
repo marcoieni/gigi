@@ -1,6 +1,10 @@
 const statusEl = document.getElementById("status");
 const threadsEl = document.getElementById("threads");
 const refreshBtn = document.getElementById("refresh-btn");
+const filterNotificationsEl = document.getElementById("filter-notifications");
+const filterPrsEl = document.getElementById("filter-prs");
+const filterDoneEl = document.getElementById("filter-done");
+const filterNotDoneEl = document.getElementById("filter-not-done");
 const modal = document.getElementById("review-modal");
 const closeModal = document.getElementById("close-modal");
 const reviewContent = document.getElementById("review-content");
@@ -60,9 +64,36 @@ refreshBtn.addEventListener("click", async () => {
   await refreshNow();
   await loadThreads();
 });
+for (const filterEl of [
+  filterNotificationsEl,
+  filterPrsEl,
+  filterDoneEl,
+  filterNotDoneEl,
+]) {
+  filterEl.addEventListener("change", async () => {
+    await loadThreads();
+  });
+}
 
 function setStatus(text) {
   statusEl.textContent = text;
+}
+
+function currentFilters() {
+  return {
+    show_notifications: filterNotificationsEl.checked,
+    show_prs: filterPrsEl.checked,
+    show_done: filterDoneEl.checked,
+    show_not_done: filterNotDoneEl.checked,
+  };
+}
+
+function threadsPath() {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(currentFilters())) {
+    params.set(key, String(value));
+  }
+  return `/api/threads?${params.toString()}`;
 }
 
 function repoUrl(repository) {
@@ -316,18 +347,27 @@ async function runReview(prUrl) {
   }
 }
 
-async function markDone(threadId) {
-  pendingDone.add(threadId);
+async function markDone(thread) {
+  const pendingKey = thread.thread_key;
+  const markAuthoredPr = thread.source.split(" + ").includes("my_pr");
+  pendingDone.add(pendingKey);
   renderThreads();
   setStatus("Marking done...");
   try {
-    await api(`/api/threads/${threadId}/done`, { method: "POST" });
-    threadsState = threadsState.filter((thread) => thread.github_thread_id !== threadId);
+    await api("/api/threads/done", {
+      method: "POST",
+      body: JSON.stringify({
+        github_thread_id: thread.github_thread_id,
+        pr_url: thread.pr_url,
+        mark_authored_pr: markAuthoredPr,
+      }),
+    });
+    await loadThreads();
     setStatus("Marked done");
   } catch (err) {
     setStatus(`Mark done failed: ${err.message}`);
   } finally {
-    pendingDone.delete(threadId);
+    pendingDone.delete(pendingKey);
     renderThreads();
   }
 }
@@ -435,8 +475,10 @@ function threadCard(thread) {
     }
   }
 
-  if (thread.github_thread_id) {
-    const donePending = pendingDone.has(thread.github_thread_id);
+  const canMarkDone =
+    !!thread.github_thread_id || thread.source.split(" + ").includes("my_pr");
+  if (canMarkDone) {
+    const donePending = pendingDone.has(thread.thread_key);
     const doneBtn = document.createElement("button");
     doneBtn.className = `btn icon-btn ${donePending ? "loading" : ""}`;
     doneBtn.type = "button";
@@ -453,7 +495,7 @@ function threadCard(thread) {
     }
     doneBtn.disabled = !!thread.done || donePending;
     doneBtn.addEventListener("click", async () => {
-      await markDone(thread.github_thread_id);
+      await markDone(thread);
     });
     row.appendChild(doneBtn);
   }
@@ -473,7 +515,7 @@ function threadCard(thread) {
 async function loadThreads() {
   setStatus("Loading...");
   try {
-    threadsState = await api("/api/threads");
+    threadsState = await api(threadsPath());
     renderThreads();
     setStatus(`Loaded ${threadsState.length} items`);
   } catch (err) {

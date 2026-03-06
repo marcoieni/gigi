@@ -38,6 +38,7 @@ pub struct PrDetails {
     pub head_sha: String,
     pub created_at: String,
     pub updated_at: String,
+    pub is_archived: bool,
 }
 
 pub fn fetch_notifications() -> anyhow::Result<Vec<NotificationThread>> {
@@ -242,6 +243,7 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         .to_string();
 
     let parsed = parse_github_pr_url(&canonical_pr_url)?;
+    let is_archived = fetch_repository_archived(&parsed.owner, &parsed.repo)?;
     let number = i64::try_from(parsed.number)
         .with_context(|| format!("PR number is too large for i64: {}", parsed.number))?;
     let state = value
@@ -293,7 +295,27 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         head_sha,
         created_at,
         updated_at,
+        is_archived,
     })
+}
+
+fn fetch_repository_archived(owner: &str, repo: &str) -> anyhow::Result<bool> {
+    let endpoint = format!("/repos/{owner}/{repo}");
+    let output = Cmd::new("gh", ["api", &endpoint]).run()?;
+    output.ensure_success(format!(
+        "❌ Failed to fetch repository details for {owner}/{repo}"
+    ))?;
+    anyhow::ensure!(
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to fetch repository details for {owner}/{repo}: empty output"
+    );
+
+    let value: Value =
+        serde_json::from_str(output.stdout()).context("Invalid repository details JSON")?;
+    Ok(value
+        .get("archived")
+        .and_then(Value::as_bool)
+        .unwrap_or(false))
 }
 
 pub fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {

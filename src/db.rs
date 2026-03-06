@@ -40,6 +40,7 @@ pub struct NewPr {
     pub base_ref: String,
     pub head_sha: String,
     pub updated_at: String,
+    pub is_archived: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +56,7 @@ pub struct StoredPr {
     pub base_ref: String,
     pub head_sha: String,
     pub updated_at: String,
+    pub is_archived: bool,
     pub last_reviewed_sha: Option<String>,
     pub last_reviewed_updated_at: Option<String>,
 }
@@ -95,6 +97,25 @@ pub struct DashboardThread {
     pub updated_at: String,
     pub latest_requires_code_changes: Option<bool>,
     pub pr_state: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DashboardThreadFilters {
+    pub show_notifications: bool,
+    pub show_prs: bool,
+    pub show_done: bool,
+    pub show_not_done: bool,
+}
+
+impl Default for DashboardThreadFilters {
+    fn default() -> Self {
+        Self {
+            show_notifications: true,
+            show_prs: true,
+            show_done: false,
+            show_not_done: true,
+        }
+    }
 }
 
 impl Db {
@@ -204,8 +225,8 @@ impl Db {
                 r#"
                 INSERT INTO prs (
                     pr_url, owner, repo, number, state, title, head_ref, base_ref, head_sha,
-                    updated_at, last_seen_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                    updated_at, is_archived, last_seen_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                 ON CONFLICT(pr_url) DO UPDATE SET
                     owner = excluded.owner,
                     repo = excluded.repo,
@@ -216,6 +237,7 @@ impl Db {
                     base_ref = excluded.base_ref,
                     head_sha = excluded.head_sha,
                     updated_at = excluded.updated_at,
+                    is_archived = excluded.is_archived,
                     last_seen_at = excluded.last_seen_at
                 "#,
                 params![
@@ -229,6 +251,7 @@ impl Db {
                     row.base_ref,
                     row.head_sha,
                     row.updated_at,
+                    bool_to_int(row.is_archived),
                     now,
                 ],
             )?;
@@ -242,7 +265,7 @@ impl Db {
                 r#"
                 SELECT
                     pr_url, owner, repo, number, state, title, head_ref, base_ref, head_sha,
-                    updated_at, last_reviewed_sha, last_reviewed_updated_at
+                    updated_at, is_archived, last_reviewed_sha, last_reviewed_updated_at
                 FROM prs
                 WHERE pr_url = ?1
                 "#,
@@ -259,8 +282,9 @@ impl Db {
                         base_ref: row.get(7)?,
                         head_sha: row.get(8)?,
                         updated_at: row.get(9)?,
-                        last_reviewed_sha: row.get(10)?,
-                        last_reviewed_updated_at: row.get(11)?,
+                        is_archived: row.get::<_, i64>(10)? != 0,
+                        last_reviewed_sha: row.get(11)?,
+                        last_reviewed_updated_at: row.get(12)?,
                     })
                 },
             )
@@ -360,6 +384,16 @@ impl Db {
         })
     }
 
+    pub fn mark_authored_pr_done_local(&self, pr_url: &str) -> anyhow::Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE threads SET done = 1, unread = 0 WHERE source = 'my_pr' AND pr_url = ?1",
+                [pr_url],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn latest_review_for_pr(
         &self,
         owner: &str,
@@ -399,7 +433,15 @@ impl Db {
         })
     }
 
+    #[cfg(test)]
     pub fn list_dashboard_threads(&self) -> anyhow::Result<Vec<DashboardThread>> {
+        self.list_dashboard_threads_with_filters(DashboardThreadFilters::default())
+    }
+
+    pub fn list_dashboard_threads_with_filters(
+        &self,
+        filters: DashboardThreadFilters,
+    ) -> anyhow::Result<Vec<DashboardThread>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 r#"
@@ -423,10 +465,10 @@ impl Db {
                         ORDER BY r.id DESC
                         LIMIT 1
                     ) AS latest_requires_code_changes,
-                    p.state
+                    p.state,
+                    COALESCE(p.is_archived, 0)
                 FROM threads t
                 LEFT JOIN prs p ON p.pr_url = t.pr_url
-                WHERE t.done = 0
                 ORDER BY t.updated_at DESC
                 "#,
             )?;
@@ -435,7 +477,7 @@ impl Db {
                 let unread: i64 = row.get(9)?;
                 let done: i64 = row.get(10)?;
                 let latest_requires: Option<i64> = row.get(12)?;
-                Ok(DashboardThread {
+                Ok(DashboardThreadRow {
                     thread_key: row.get(0)?,
                     github_thread_id: row.get(1)?,
                     source: row.get(2)?,
@@ -450,14 +492,26 @@ impl Db {
                     updated_at: row.get(11)?,
                     latest_requires_code_changes: latest_requires.map(|v| v != 0),
                     pr_state: row.get(13)?,
+                    is_archived_pr: row.get::<_, i64>(14)? != 0,
                 })
             })?;
 
             let mut out = Vec::new();
             for row in rows {
-                out.push(row?);
+                let row = row?;
+                if row.is_archived_pr && row.pr_state.as_deref() == Some("OPEN") {
+                    continue;
+                }
+                if !filters.include_source(&row.source) {
+                    continue;
+                }
+                out.push(row.into_dashboard_thread());
             }
-            Ok(deduplicate_dashboard_threads(out))
+            let deduped = deduplicate_dashboard_threads(out);
+            Ok(deduped
+                .into_iter()
+                .filter(|thread| filters.include_done_state(thread.done))
+                .collect())
         })
     }
 
@@ -509,6 +563,60 @@ fn deduplicate_dashboard_threads(threads: Vec<DashboardThread>) -> Vec<Dashboard
     }
 
     deduped
+}
+
+#[derive(Debug, Clone)]
+struct DashboardThreadRow {
+    thread_key: String,
+    github_thread_id: Option<String>,
+    source: String,
+    repository: String,
+    subject_type: Option<String>,
+    subject_title: String,
+    subject_url: Option<String>,
+    reason: Option<String>,
+    pr_url: Option<String>,
+    unread: bool,
+    done: bool,
+    updated_at: String,
+    latest_requires_code_changes: Option<bool>,
+    pr_state: Option<String>,
+    is_archived_pr: bool,
+}
+
+impl DashboardThreadRow {
+    fn into_dashboard_thread(self) -> DashboardThread {
+        DashboardThread {
+            thread_key: self.thread_key,
+            github_thread_id: self.github_thread_id,
+            source: self.source,
+            repository: self.repository,
+            subject_type: self.subject_type,
+            subject_title: self.subject_title,
+            subject_url: self.subject_url,
+            reason: self.reason,
+            pr_url: self.pr_url,
+            unread: self.unread,
+            done: self.done,
+            updated_at: self.updated_at,
+            latest_requires_code_changes: self.latest_requires_code_changes,
+            pr_state: self.pr_state,
+        }
+    }
+}
+
+impl DashboardThreadFilters {
+    fn include_source(self, source: &str) -> bool {
+        match source {
+            "notification" => self.show_notifications,
+            "my_pr" => self.show_prs,
+            _ => false,
+        }
+    }
+
+    fn include_done_state(self, done: bool) -> bool {
+        (done && self.show_done) || (!done && self.show_not_done)
+    }
 }
 
 fn merge_dashboard_thread(existing: &mut DashboardThread, incoming: DashboardThread) {
@@ -629,6 +737,7 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
             base_ref TEXT NOT NULL,
             head_sha TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+            is_archived INTEGER NOT NULL DEFAULT 0,
             last_seen_at INTEGER NOT NULL,
             last_reviewed_sha TEXT,
             last_reviewed_updated_at TEXT
@@ -668,6 +777,28 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         "#,
     )?;
 
+    add_column_if_missing(conn, "prs", "is_archived", "INTEGER NOT NULL DEFAULT 0")?;
+
+    Ok(())
+}
+
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> anyhow::Result<()> {
+    let pragma = format!("PRAGMA table_info({table})");
+    let mut stmt = conn.prepare(&pragma)?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for existing in columns {
+        if existing? == column {
+            return Ok(());
+        }
+    }
+
+    let alter = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
+    conn.execute(&alter, [])?;
     Ok(())
 }
 
@@ -735,6 +866,7 @@ mod tests {
             base_ref: "main".to_string(),
             head_sha: "sha1".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
+            is_archived: false,
         })
         .unwrap();
 
@@ -767,6 +899,7 @@ mod tests {
             base_ref: "main".to_string(),
             head_sha: "sha1".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
+            is_archived: false,
         })
         .unwrap();
 
@@ -805,6 +938,7 @@ mod tests {
                 base_ref: "main".to_string(),
                 head_sha: "sha1".to_string(),
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
+                is_archived: false,
             })
             .unwrap();
             db.with_conn(|conn| {
@@ -891,6 +1025,155 @@ mod tests {
     }
 
     #[test]
+    fn done_authored_prs_are_hidden_from_dashboard() {
+        let db = test_db();
+        let pr_url = "https://github.com/a/b/pull/1".to_string();
+        let row = NewThread {
+            thread_key: format!("mypr:{pr_url}"),
+            github_thread_id: None,
+            source: "my_pr".to_string(),
+            repository: "a/b".to_string(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: "t".to_string(),
+            subject_url: Some(pr_url.clone()),
+            reason: Some("authored".to_string()),
+            pr_url: Some(pr_url.clone()),
+            unread: false,
+            done: false,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+
+        db.upsert_thread(&row).unwrap();
+        db.mark_authored_pr_done_local(&pr_url).unwrap();
+
+        let threads = db.list_dashboard_threads().unwrap();
+        assert!(threads.is_empty());
+    }
+
+    #[test]
+    fn done_authored_prs_stay_done_after_upsert() {
+        let db = test_db();
+        let pr_url = "https://github.com/a/b/pull/1".to_string();
+        let row = NewThread {
+            thread_key: format!("mypr:{pr_url}"),
+            github_thread_id: None,
+            source: "my_pr".to_string(),
+            repository: "a/b".to_string(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: "t".to_string(),
+            subject_url: Some(pr_url.clone()),
+            reason: Some("authored".to_string()),
+            pr_url: Some(pr_url.clone()),
+            unread: false,
+            done: false,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+
+        db.upsert_thread(&row).unwrap();
+        db.mark_authored_pr_done_local(&pr_url).unwrap();
+        db.upsert_thread(&row).unwrap();
+
+        let done = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT done FROM threads WHERE thread_key = ?1",
+                    [&row.thread_key],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(anyhow::Error::from)
+            })
+            .unwrap();
+
+        assert_eq!(done, 1);
+    }
+
+    #[test]
+    fn dashboard_can_show_done_items_when_requested() {
+        let db = test_db();
+        let row = NewThread {
+            thread_key: "thread-1".to_string(),
+            github_thread_id: Some("1".to_string()),
+            source: "notification".to_string(),
+            repository: "a/b".to_string(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: "t".to_string(),
+            subject_url: Some("u".to_string()),
+            reason: Some("review_requested".to_string()),
+            pr_url: Some("https://github.com/a/b/pull/1".to_string()),
+            unread: false,
+            done: false,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+
+        db.upsert_thread(&row).unwrap();
+        db.mark_thread_done_local("1").unwrap();
+
+        let threads = db
+            .list_dashboard_threads_with_filters(DashboardThreadFilters {
+                show_notifications: true,
+                show_prs: true,
+                show_done: true,
+                show_not_done: false,
+            })
+            .unwrap();
+
+        assert_eq!(threads.len(), 1);
+        assert!(threads[0].done);
+    }
+
+    #[test]
+    fn dashboard_filters_by_source_type() {
+        let db = test_db();
+        let notification_pr_url = "https://github.com/a/b/pull/1".to_string();
+        let authored_pr_url = "https://github.com/a/b/pull/2".to_string();
+
+        db.upsert_thread(&NewThread {
+            thread_key: "notif:1".to_string(),
+            github_thread_id: Some("1".to_string()),
+            source: "notification".to_string(),
+            repository: "a/b".to_string(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: "notification".to_string(),
+            subject_url: Some(notification_pr_url.clone()),
+            reason: Some("review_requested".to_string()),
+            pr_url: Some(notification_pr_url),
+            unread: true,
+            done: false,
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+        })
+        .unwrap();
+
+        db.upsert_thread(&NewThread {
+            thread_key: format!("mypr:{authored_pr_url}"),
+            github_thread_id: None,
+            source: "my_pr".to_string(),
+            repository: "a/b".to_string(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: "authored".to_string(),
+            subject_url: Some(authored_pr_url.clone()),
+            reason: Some("authored".to_string()),
+            pr_url: Some(authored_pr_url),
+            unread: false,
+            done: false,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        })
+        .unwrap();
+
+        let threads = db
+            .list_dashboard_threads_with_filters(DashboardThreadFilters {
+                show_notifications: false,
+                show_prs: true,
+                show_done: false,
+                show_not_done: true,
+            })
+            .unwrap();
+
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].source, "my_pr");
+        assert_eq!(threads[0].subject_title, "authored");
+    }
+
+    #[test]
     fn dashboard_threads_deduplicate_notification_and_my_pr() {
         let db = test_db();
         let pr_url = "https://github.com/a/b/pull/1".to_string();
@@ -906,6 +1189,7 @@ mod tests {
             base_ref: "main".to_string(),
             head_sha: "sha1".to_string(),
             updated_at: "2026-01-02T00:00:00Z".to_string(),
+            is_archived: false,
         })
         .unwrap();
 
@@ -950,6 +1234,87 @@ mod tests {
         assert_eq!(threads[0].updated_at, "2026-01-02T00:00:00Z");
         assert_eq!(threads[0].pr_state.as_deref(), Some("MERGED"));
         assert!(threads[0].unread);
+    }
+
+    #[test]
+    fn archived_open_prs_are_hidden_from_dashboard() {
+        let db = test_db();
+        let pr_url = "https://github.com/a/b/pull/1".to_string();
+
+        db.upsert_pr(&NewPr {
+            pr_url: pr_url.clone(),
+            owner: "a".to_string(),
+            repo: "b".to_string(),
+            number: 1,
+            state: "OPEN".to_string(),
+            title: "Title".to_string(),
+            head_ref: "feat".to_string(),
+            base_ref: "main".to_string(),
+            head_sha: "sha1".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+            is_archived: true,
+        })
+        .unwrap();
+
+        db.upsert_thread(&NewThread {
+            thread_key: format!("mypr:{pr_url}"),
+            github_thread_id: None,
+            source: "my_pr".to_string(),
+            repository: "a/b".to_string(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: "Authored title".to_string(),
+            subject_url: Some(pr_url.clone()),
+            reason: Some("authored".to_string()),
+            pr_url: Some(pr_url),
+            unread: false,
+            done: false,
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+        })
+        .unwrap();
+
+        let threads = db.list_dashboard_threads().unwrap();
+        assert!(threads.is_empty());
+    }
+
+    #[test]
+    fn archived_closed_prs_remain_visible_on_dashboard() {
+        let db = test_db();
+        let pr_url = "https://github.com/a/b/pull/1".to_string();
+
+        db.upsert_pr(&NewPr {
+            pr_url: pr_url.clone(),
+            owner: "a".to_string(),
+            repo: "b".to_string(),
+            number: 1,
+            state: "MERGED".to_string(),
+            title: "Title".to_string(),
+            head_ref: "feat".to_string(),
+            base_ref: "main".to_string(),
+            head_sha: "sha1".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+            is_archived: true,
+        })
+        .unwrap();
+
+        db.upsert_thread(&NewThread {
+            thread_key: format!("mypr:{pr_url}"),
+            github_thread_id: None,
+            source: "my_pr".to_string(),
+            repository: "a/b".to_string(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: "Authored title".to_string(),
+            subject_url: Some(pr_url.clone()),
+            reason: Some("authored".to_string()),
+            pr_url: Some(pr_url),
+            unread: false,
+            done: false,
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+        })
+        .unwrap();
+
+        let threads = db.list_dashboard_threads().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].pr_state.as_deref(), Some("MERGED"));
     }
 
     #[test]

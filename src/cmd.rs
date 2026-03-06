@@ -271,10 +271,10 @@ impl Cmd {
         let (output_stdout, output_stderr) = self.collect_output(rx);
         stdout_reader
             .join()
-            .map_err(|_| anyhow::anyhow!("stdout reader thread panicked"))?;
+            .map_err(|err| anyhow::anyhow!("stdout reader thread panicked: {err:?}"))?;
         stderr_reader
             .join()
-            .map_err(|_| anyhow::anyhow!("stderr reader thread panicked"))?;
+            .map_err(|err| anyhow::anyhow!("stderr reader thread panicked: {err:?}"))?;
         let status = child.wait().with_context(|| {
             format!("failed to wait for command `{}`", self.format_invocation())
         })?;

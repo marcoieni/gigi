@@ -2,7 +2,7 @@ use std::path::Path;
 
 use axum::{
     Json, Router,
-    extract::{Path as AxumPath, State},
+    extract::{Path as AxumPath, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -27,7 +27,7 @@ pub async fn run_server(
             get(get_latest_review),
         )
         .route("/api/prs/{owner}/{repo}/{number}/review", post(run_review))
-        .route("/api/threads/{thread_id}/done", post(mark_done))
+        .route("/api/threads/done", post(mark_done))
         .route("/api/prs/{owner}/{repo}/{number}/fix", post(run_fix))
         .route("/api/open/vscode", post(open_vscode))
         .route("/api/open/terminal", post(open_terminal))
@@ -72,10 +72,16 @@ pub fn prepare_dashboard_assets(dashboard_dir: &Path) -> anyhow::Result<()> {
 
 async fn get_threads(
     State(state): State<std::sync::Arc<AppState>>,
+    Query(query): Query<ThreadQuery>,
 ) -> Result<Json<Vec<crate::db::DashboardThread>>, ApiErrorResponse> {
     let threads = state
         .db
-        .list_dashboard_threads()
+        .list_dashboard_threads_with_filters(crate::db::DashboardThreadFilters {
+            show_notifications: query.show_notifications.unwrap_or(true),
+            show_prs: query.show_prs.unwrap_or(true),
+            show_done: query.show_done.unwrap_or(false),
+            show_not_done: query.show_not_done.unwrap_or(true),
+        })
         .map_err(|err| ApiErrorResponse::internal(&err))?;
     Ok(Json(threads))
 }
@@ -93,10 +99,14 @@ async fn get_latest_review(
 
 async fn mark_done(
     State(state): State<std::sync::Arc<AppState>>,
-    AxumPath(thread_id): AxumPath<String>,
+    Json(request): Json<MarkDonePayload>,
 ) -> Result<StatusCode, ApiErrorResponse> {
     state
-        .mark_done(thread_id)
+        .mark_done(crate::serve::MarkDoneRequest {
+            github_thread_id: request.github_thread_id,
+            pr_url: request.pr_url,
+            mark_authored_pr: request.mark_authored_pr,
+        })
         .await
         .map_err(|err| ApiErrorResponse::internal(&err))?;
     Ok(StatusCode::OK)
@@ -167,6 +177,21 @@ struct FixResponse {
 struct OpenProjectRequest {
     repository: String,
     pr_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MarkDonePayload {
+    github_thread_id: Option<String>,
+    pr_url: Option<String>,
+    mark_authored_pr: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadQuery {
+    show_notifications: Option<bool>,
+    show_prs: Option<bool>,
+    show_done: Option<bool>,
+    show_not_done: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

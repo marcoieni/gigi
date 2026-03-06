@@ -165,11 +165,27 @@ impl AppState {
             .context("polling cycle failed")
     }
 
-    pub async fn mark_done(&self, thread_id: String) -> anyhow::Result<()> {
+    pub async fn mark_done(&self, request: MarkDoneRequest) -> anyhow::Result<()> {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || {
-            github::mark_notification_done(&thread_id)?;
-            db.mark_thread_done_local(&thread_id)?;
+            let mut marked_any = false;
+
+            if let Some(thread_id) = request.github_thread_id.as_deref() {
+                github::mark_notification_done(thread_id)?;
+                db.mark_thread_done_local(thread_id)?;
+                marked_any = true;
+            }
+
+            if request.mark_authored_pr {
+                let pr_url = request
+                    .pr_url
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("Missing PR URL for authored PR done action"))?;
+                db.mark_authored_pr_done_local(pr_url)?;
+                marked_any = true;
+            }
+
+            anyhow::ensure!(marked_any, "No done action requested");
             Ok(())
         })
         .await
@@ -284,6 +300,13 @@ impl AppState {
         .await
         .context("open-terminal task join failure")?
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct MarkDoneRequest {
+    pub github_thread_id: Option<String>,
+    pub pr_url: Option<String>,
+    pub mark_authored_pr: bool,
 }
 
 fn poll_once_blocking(
@@ -436,6 +459,7 @@ fn upsert_pr_from_details(db: &Db, details: &github::PrDetails) -> anyhow::Resul
         base_ref: details.base_ref.clone(),
         head_sha: details.head_sha.clone(),
         updated_at: details.updated_at.clone(),
+        is_archived: details.is_archived,
     })
 }
 
@@ -721,6 +745,7 @@ mod tests {
             head_sha: "sha2".to_string(),
             created_at: "2025-12-31T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
+            is_archived: false,
         };
         let stored = db::StoredPr {
             pr_url: "u".to_string(),
@@ -733,6 +758,7 @@ mod tests {
             base_ref: "main".to_string(),
             head_sha: "sha1".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
+            is_archived: false,
             last_reviewed_sha: Some("sha1".to_string()),
             last_reviewed_updated_at: Some("2026-01-01T00:00:00Z".to_string()),
         };
@@ -758,6 +784,7 @@ mod tests {
             head_sha: "sha1".to_string(),
             created_at: "2025-12-31T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
+            is_archived: false,
         };
         let stored = db::StoredPr {
             pr_url: "u".to_string(),
@@ -770,6 +797,7 @@ mod tests {
             base_ref: "main".to_string(),
             head_sha: "sha1".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
+            is_archived: false,
             last_reviewed_sha: Some("sha1".to_string()),
             last_reviewed_updated_at: Some("2026-01-01T00:00:00Z".to_string()),
         };
@@ -839,6 +867,7 @@ mod tests {
                 head_sha: "sha1".to_string(),
                 created_at: "2025-12-01T00:00:00Z".to_string(),
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
+                is_archived: false,
             },
             github::PrDetails {
                 pr_url: "https://github.com/o/r/pull/2".to_string(),
@@ -852,6 +881,7 @@ mod tests {
                 head_sha: "sha2".to_string(),
                 created_at: "2026-01-09T00:00:00Z".to_string(),
                 updated_at: "2026-01-09T12:00:00Z".to_string(),
+                is_archived: false,
             },
             github::PrDetails {
                 pr_url: "https://github.com/o/r/pull/3".to_string(),
@@ -865,6 +895,7 @@ mod tests {
                 head_sha: "sha3".to_string(),
                 created_at: "2026-01-09T00:00:00Z".to_string(),
                 updated_at: "2026-01-09T20:00:00Z".to_string(),
+                is_archived: false,
             },
         ];
 
@@ -910,5 +941,23 @@ mod tests {
             Some(current_pr.pr_url.as_str())
         );
         assert_eq!(threads[0].subject_title, "current");
+    }
+
+    #[test]
+    fn sync_authored_pr_threads_preserves_done_entries() {
+        let db = test_db();
+        let current_pr = github::AuthoredPrSummary {
+            pr_url: "https://github.com/o/r/pull/2".to_string(),
+            repository: "o/r".to_string(),
+            title: "current".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+        };
+
+        sync_authored_pr_threads(&db, std::slice::from_ref(&current_pr)).unwrap();
+        db.mark_authored_pr_done_local(&current_pr.pr_url).unwrap();
+        sync_authored_pr_threads(&db, std::slice::from_ref(&current_pr)).unwrap();
+
+        let threads = db.list_dashboard_threads().unwrap();
+        assert!(threads.is_empty());
     }
 }

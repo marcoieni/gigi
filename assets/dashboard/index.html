@@ -15,6 +15,30 @@
           <span id="status" class="status">Idle</span>
         </div>
       </header>
+      <section class="filters" aria-label="Dashboard filters">
+        <fieldset class="filter-group">
+          <legend>Show</legend>
+          <label class="filter-option">
+            <input id="filter-notifications" type="checkbox" checked />
+            <span>Notifications</span>
+          </label>
+          <label class="filter-option">
+            <input id="filter-prs" type="checkbox" checked />
+            <span>PRs</span>
+          </label>
+        </fieldset>
+        <fieldset class="filter-group">
+          <legend>Status</legend>
+          <label class="filter-option">
+            <input id="filter-not-done" type="checkbox" checked />
+            <span>Not done</span>
+          </label>
+          <label class="filter-option">
+            <input id="filter-done" type="checkbox" />
+            <span>Done</span>
+          </label>
+        </fieldset>
+      </section>
       <section>
         <div id="threads" class="threads"></div>
       </section>

@@ -1,8 +1,8 @@
 pub fn strip_control_sequences(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut output = String::with_capacity(input.len());
-    let mut last = 0usize;
-    let mut index = 0usize;
+    let mut last = 0_usize;
+    let mut index = 0_usize;
 
     while index < bytes.len() {
         let Some(seq_len) = control_sequence_len(&bytes[index..]) else {
