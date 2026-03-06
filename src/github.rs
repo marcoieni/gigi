@@ -2,7 +2,10 @@ use anyhow::Context as _;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::Value;
 
-use crate::{checkout::parse_github_pr_url, cmd::Cmd};
+use crate::{
+    checkout::parse_github_pr_url,
+    cmd::{Cmd, CmdOutput},
+};
 
 #[derive(Debug, Clone)]
 pub struct NotificationThread {
@@ -360,6 +363,31 @@ pub fn checkout_pr(repo_dir: &Utf8Path, pr_url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn checkout_pr_for_open(repo_dir: &Utf8Path, pr_url: &str) -> anyhow::Result<()> {
+    let pr = fetch_pr_details(pr_url)?;
+    if current_branch(repo_dir).ok().as_deref() == Some(pr.head_ref.as_str()) {
+        return Ok(());
+    }
+
+    let output = Cmd::new("gh", ["pr", "checkout", pr_url])
+        .with_current_dir(repo_dir)
+        .run()?;
+    if output.status().success() {
+        return Ok(());
+    }
+
+    if is_diverged_local_branch_error(&output) {
+        let detached = Cmd::new("gh", ["pr", "checkout", pr_url, "--detach"])
+            .with_current_dir(repo_dir)
+            .run()?;
+        detached.ensure_success("❌ Failed to checkout PR")?;
+        return Ok(());
+    }
+
+    output.ensure_success("❌ Failed to checkout PR")?;
+    Ok(())
+}
+
 pub fn current_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
     let output = Cmd::new("git", ["branch", "--show-current"])
         .with_current_dir(repo_dir)
@@ -414,6 +442,15 @@ pub fn pull_ff_only(repo_dir: &Utf8Path) -> anyhow::Result<()> {
         .run()?;
     output.ensure_success("❌ Failed to pull default branch")?;
     Ok(())
+}
+
+fn is_diverged_local_branch_error(output: &CmdOutput) -> bool {
+    is_diverged_local_branch_error_text(output.stderr_or_stdout())
+}
+
+fn is_diverged_local_branch_error_text(details: &str) -> bool {
+    details.contains("Diverging branches can't be fast-forwarded")
+        || details.contains("Not possible to fast-forward, aborting.")
 }
 
 fn api_url_to_pr_url(api_url: &str) -> Option<String> {
@@ -496,5 +533,19 @@ mod tests {
     fn parse_repo_from_pr_url_works() {
         let repo = parse_repo_from_pr_url("https://github.com/o/r/pull/5").unwrap();
         assert_eq!(repo, "o/r");
+    }
+
+    #[test]
+    fn detects_diverged_branch_checkout_error() {
+        assert!(is_diverged_local_branch_error_text(
+            "Already on 'feature'\nDiverging branches can't be fast-forwarded, you need to either:\nfatal: Not possible to fast-forward, aborting.\n"
+        ));
+    }
+
+    #[test]
+    fn ignores_other_checkout_errors() {
+        assert!(!is_diverged_local_branch_error_text(
+            "no pull requests found for branch \"feature\"\n"
+        ));
     }
 }

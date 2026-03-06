@@ -274,7 +274,7 @@ impl AppState {
             let (owner, repo) = parse_repository_name(&repository)?;
             let repo_dir = github::ensure_local_repo(&owner, &repo)?;
             if let Some(pr_url) = pr_url.as_deref() {
-                github::checkout_pr(&repo_dir, pr_url)?;
+                github::checkout_pr_for_open(&repo_dir, pr_url)?;
             }
             launcher::open_vscode(&repo_dir)
         })
@@ -293,7 +293,7 @@ impl AppState {
             let (owner, repo) = parse_repository_name(&repository)?;
             let repo_dir = github::ensure_local_repo(&owner, &repo)?;
             if let Some(pr_url) = pr_url.as_deref() {
-                github::checkout_pr(&repo_dir, pr_url)?;
+                github::checkout_pr_for_open(&repo_dir, pr_url)?;
             }
             launcher::open_terminal(&repo_dir)
         })
