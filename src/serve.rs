@@ -271,12 +271,15 @@ impl AppState {
         let _guard = self.poll_lock.lock().await;
 
         tokio::task::spawn_blocking(move || {
-            let (owner, repo) = parse_repository_name(&repository)?;
-            let repo_dir = github::ensure_local_repo(&owner, &repo)?;
             if let Some(pr_url) = pr_url.as_deref() {
-                github::checkout_pr_for_open(&repo_dir, pr_url)?;
+                let local_pr = github::ensure_local_repo_for_pr(pr_url)?;
+                github::checkout_pr_for_open_with_details(&local_pr.repo_dir, &local_pr.details)?;
+                launcher::open_vscode(&local_pr.repo_dir)
+            } else {
+                let (owner, repo) = parse_repository_name(&repository)?;
+                let repo_dir = github::ensure_local_repo(&owner, &repo)?;
+                launcher::open_vscode(&repo_dir)
             }
-            launcher::open_vscode(&repo_dir)
         })
         .await
         .context("open-vscode task join failure")?
@@ -290,12 +293,15 @@ impl AppState {
         let _guard = self.poll_lock.lock().await;
 
         tokio::task::spawn_blocking(move || {
-            let (owner, repo) = parse_repository_name(&repository)?;
-            let repo_dir = github::ensure_local_repo(&owner, &repo)?;
             if let Some(pr_url) = pr_url.as_deref() {
-                github::checkout_pr_for_open(&repo_dir, pr_url)?;
+                let local_pr = github::ensure_local_repo_for_pr(pr_url)?;
+                github::checkout_pr_for_open_with_details(&local_pr.repo_dir, &local_pr.details)?;
+                launcher::open_terminal(&local_pr.repo_dir)
+            } else {
+                let (owner, repo) = parse_repository_name(&repository)?;
+                let repo_dir = github::ensure_local_repo(&owner, &repo)?;
+                launcher::open_terminal(&repo_dir)
             }
-            launcher::open_terminal(&repo_dir)
         })
         .await
         .context("open-terminal task join failure")?
@@ -746,6 +752,10 @@ mod tests {
             created_at: "2025-12-31T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             is_archived: false,
+            author_login: None,
+            head_repo_owner: None,
+            head_repo_name: None,
+            is_cross_repository: false,
         };
         let stored = db::StoredPr {
             pr_url: "u".to_string(),
@@ -785,6 +795,10 @@ mod tests {
             created_at: "2025-12-31T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             is_archived: false,
+            author_login: None,
+            head_repo_owner: None,
+            head_repo_name: None,
+            is_cross_repository: false,
         };
         let stored = db::StoredPr {
             pr_url: "u".to_string(),
@@ -868,6 +882,10 @@ mod tests {
                 created_at: "2025-12-01T00:00:00Z".to_string(),
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 is_archived: false,
+                author_login: None,
+                head_repo_owner: None,
+                head_repo_name: None,
+                is_cross_repository: false,
             },
             github::PrDetails {
                 pr_url: "https://github.com/o/r/pull/2".to_string(),
@@ -882,6 +900,10 @@ mod tests {
                 created_at: "2026-01-09T00:00:00Z".to_string(),
                 updated_at: "2026-01-09T12:00:00Z".to_string(),
                 is_archived: false,
+                author_login: None,
+                head_repo_owner: None,
+                head_repo_name: None,
+                is_cross_repository: false,
             },
             github::PrDetails {
                 pr_url: "https://github.com/o/r/pull/3".to_string(),
@@ -896,6 +918,10 @@ mod tests {
                 created_at: "2026-01-09T00:00:00Z".to_string(),
                 updated_at: "2026-01-09T20:00:00Z".to_string(),
                 is_archived: false,
+                author_login: None,
+                head_repo_owner: None,
+                head_repo_name: None,
+                is_cross_repository: false,
             },
         ];
 

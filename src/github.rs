@@ -21,6 +21,24 @@ pub struct NotificationThread {
 }
 
 #[derive(Debug, Clone)]
+pub struct LocalPrRepo {
+    pub repo_dir: Utf8PathBuf,
+    pub details: PrDetails,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitHubRepoRef {
+    owner: String,
+    repo: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CloneTarget {
+    origin: GitHubRepoRef,
+    upstream: Option<GitHubRepoRef>,
+}
+
+#[derive(Debug, Clone)]
 pub struct AuthoredPrSummary {
     pub pr_url: String,
     pub repository: String,
@@ -42,6 +60,10 @@ pub struct PrDetails {
     pub created_at: String,
     pub updated_at: String,
     pub is_archived: bool,
+    pub author_login: Option<String>,
+    pub head_repo_owner: Option<String>,
+    pub head_repo_name: Option<String>,
+    pub is_cross_repository: bool,
 }
 
 pub fn fetch_notifications() -> anyhow::Result<Vec<NotificationThread>> {
@@ -227,7 +249,7 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
             "view",
             pr_url,
             "--json",
-            "title,url,state,headRefName,headRefOid,baseRefName,createdAt,updatedAt,number",
+            "title,url,state,headRefName,headRefOid,baseRefName,createdAt,updatedAt,number,author,headRepository,headRepositoryOwner,isCrossRepository",
         ],
     )
     .run()?;
@@ -285,6 +307,25 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let author_login = value
+        .get("author")
+        .and_then(|v| v.get("login"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let head_repo_owner = value
+        .get("headRepositoryOwner")
+        .and_then(|v| v.get("login"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let head_repo_name = value
+        .get("headRepository")
+        .and_then(|v| v.get("name"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let is_cross_repository = value
+        .get("isCrossRepository")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     Ok(PrDetails {
         pr_url: canonical_pr_url,
@@ -299,6 +340,10 @@ pub fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         created_at,
         updated_at,
         is_archived,
+        author_login,
+        head_repo_owner,
+        head_repo_name,
+        is_cross_repository,
     })
 }
 
@@ -330,12 +375,34 @@ pub fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {
 
 pub fn ensure_local_repo(owner: &str, repo: &str) -> anyhow::Result<Utf8PathBuf> {
     let repo_dir = local_repo_dir(owner, repo)?;
+    ensure_local_repo_at(owner, repo, &repo_dir)?;
+    Ok(repo_dir)
+}
+
+pub fn ensure_local_repo_for_pr(pr_url: &str) -> anyhow::Result<LocalPrRepo> {
+    let details = fetch_pr_details(pr_url)?;
+    let clone_target = preferred_clone_target(&details, current_viewer_login().ok().as_deref());
+    let repo_dir = local_repo_dir(&clone_target.origin.owner, &clone_target.origin.repo)?;
+    ensure_local_repo_at(
+        &clone_target.origin.owner,
+        &clone_target.origin.repo,
+        &repo_dir,
+    )?;
+
+    if let Some(upstream) = clone_target.upstream {
+        ensure_remote_repo(&repo_dir, "upstream", &upstream)?;
+    }
+
+    Ok(LocalPrRepo { repo_dir, details })
+}
+
+fn ensure_local_repo_at(owner: &str, repo: &str, repo_dir: &Utf8Path) -> anyhow::Result<()> {
     if repo_dir.exists() {
         anyhow::ensure!(
             repo_dir.join(".git").exists(),
             "❌ Path exists but is not a git repository: {repo_dir}"
         );
-        return Ok(repo_dir);
+        return Ok(());
     }
 
     let parent = repo_dir
@@ -346,8 +413,7 @@ pub fn ensure_local_repo(owner: &str, repo: &str) -> anyhow::Result<Utf8PathBuf>
     let repo_name = format!("{owner}/{repo}");
     let output = Cmd::new("gh", ["repo", "clone", &repo_name, repo_dir.as_str()]).run()?;
     output.ensure_success(format!("❌ Failed to clone repository {repo_name}"))?;
-
-    Ok(repo_dir)
+    Ok(())
 }
 
 pub fn local_repo_dir(owner: &str, repo: &str) -> anyhow::Result<Utf8PathBuf> {
@@ -363,13 +429,14 @@ pub fn checkout_pr(repo_dir: &Utf8Path, pr_url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn checkout_pr_for_open(repo_dir: &Utf8Path, pr_url: &str) -> anyhow::Result<()> {
-    let pr = fetch_pr_details(pr_url)?;
+pub fn checkout_pr_for_open_with_details(
+    repo_dir: &Utf8Path,
+    pr: &PrDetails,
+) -> anyhow::Result<()> {
     if current_branch(repo_dir).ok().as_deref() == Some(pr.head_ref.as_str()) {
         return Ok(());
     }
-
-    let output = Cmd::new("gh", ["pr", "checkout", pr_url])
+    let output = Cmd::new("gh", ["pr", "checkout", pr.pr_url.as_str()])
         .with_current_dir(repo_dir)
         .run()?;
     if output.status().success() {
@@ -377,7 +444,7 @@ pub fn checkout_pr_for_open(repo_dir: &Utf8Path, pr_url: &str) -> anyhow::Result
     }
 
     if is_diverged_local_branch_error(&output) {
-        let detached = Cmd::new("gh", ["pr", "checkout", pr_url, "--detach"])
+        let detached = Cmd::new("gh", ["pr", "checkout", pr.pr_url.as_str(), "--detach"])
             .with_current_dir(repo_dir)
             .run()?;
         detached.ensure_success("❌ Failed to checkout PR")?;
@@ -507,6 +574,103 @@ fn parse_repo_from_pr_url(pr_url: &str) -> Option<String> {
     Some(format!("{}/{}", parsed.owner, parsed.repo))
 }
 
+fn current_viewer_login() -> anyhow::Result<String> {
+    let output = Cmd::new("gh", ["api", "user", "--jq", ".login"]).run()?;
+    output.ensure_success("❌ Failed to detect current GitHub user")?;
+    anyhow::ensure!(
+        !output.stdout().trim().is_empty(),
+        "❌ Failed to detect current GitHub user: empty output"
+    );
+    Ok(output.stdout().to_string())
+}
+
+fn preferred_clone_target(details: &PrDetails, viewer_login: Option<&str>) -> CloneTarget {
+    let base_repo = GitHubRepoRef {
+        owner: details.owner.clone(),
+        repo: details.repo.clone(),
+    };
+
+    let clone_from_fork = details.is_cross_repository
+        && details.author_login.as_deref() == viewer_login
+        && details.head_repo_owner.as_deref() == viewer_login
+        && details.head_repo_name.is_some();
+
+    if !clone_from_fork {
+        return CloneTarget {
+            origin: base_repo,
+            upstream: None,
+        };
+    }
+
+    CloneTarget {
+        origin: GitHubRepoRef {
+            owner: details.head_repo_owner.clone().unwrap_or_default(),
+            repo: details.head_repo_name.clone().unwrap_or_default(),
+        },
+        upstream: Some(base_repo),
+    }
+}
+
+fn ensure_remote_repo(
+    repo_dir: &Utf8Path,
+    remote_name: &str,
+    expected_repo: &GitHubRepoRef,
+) -> anyhow::Result<()> {
+    let output = Cmd::new("git", ["remote", "get-url", remote_name])
+        .with_current_dir(repo_dir)
+        .run()?;
+
+    if output.status().success()
+        && parse_github_name_with_owner(output.stdout()).as_deref()
+            == Some(format!("{}/{}", expected_repo.owner, expected_repo.repo).as_str())
+    {
+        return Ok(());
+    }
+
+    let expected_url = format!(
+        "https://github.com/{}/{}.git",
+        expected_repo.owner, expected_repo.repo
+    );
+    let command = if output.status().success() {
+        ["remote", "set-url", remote_name, &expected_url]
+    } else {
+        ["remote", "add", remote_name, &expected_url]
+    };
+    let result = Cmd::new("git", command).with_current_dir(repo_dir).run()?;
+    result.ensure_success(format!(
+        "❌ Failed to configure {remote_name} remote for {}/{}",
+        expected_repo.owner, expected_repo.repo
+    ))?;
+    Ok(())
+}
+
+fn parse_github_name_with_owner(url: &str) -> Option<String> {
+    let trimmed = url.trim().trim_end_matches('/');
+    let path = if let Some(path) = trimmed.strip_prefix("git@github.com:") {
+        path
+    } else if let Some(path) = trimmed.strip_prefix("ssh://git@github.com/") {
+        path
+    } else if let Some(path) = trimmed.strip_prefix("https://github.com/") {
+        path
+    } else if let Some(path) = trimmed.strip_prefix("http://github.com/") {
+        path
+    } else if let Some(path) = trimmed.strip_prefix("git://github.com/") {
+        path
+    } else {
+        return None;
+    };
+
+    let normalized = path.strip_suffix(".git").unwrap_or(path).trim_matches('/');
+    let mut parts = normalized.split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    if parts.next().is_some() || owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+
+    Some(format!("{owner}/{repo}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -533,6 +697,81 @@ mod tests {
     fn parse_repo_from_pr_url_works() {
         let repo = parse_repo_from_pr_url("https://github.com/o/r/pull/5").unwrap();
         assert_eq!(repo, "o/r");
+    }
+
+    #[test]
+    fn prefers_fork_for_cross_repo_pr_opened_by_viewer() {
+        let target = preferred_clone_target(
+            &PrDetails {
+                pr_url: "https://github.com/upstream/repo/pull/1".to_string(),
+                owner: "upstream".to_string(),
+                repo: "repo".to_string(),
+                number: 1,
+                state: "OPEN".to_string(),
+                title: "t".to_string(),
+                head_ref: "feat".to_string(),
+                base_ref: "main".to_string(),
+                head_sha: "sha".to_string(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                is_archived: false,
+                author_login: Some("me".to_string()),
+                head_repo_owner: Some("me".to_string()),
+                head_repo_name: Some("repo".to_string()),
+                is_cross_repository: true,
+            },
+            Some("me"),
+        );
+
+        assert_eq!(
+            target,
+            CloneTarget {
+                origin: GitHubRepoRef {
+                    owner: "me".to_string(),
+                    repo: "repo".to_string(),
+                },
+                upstream: Some(GitHubRepoRef {
+                    owner: "upstream".to_string(),
+                    repo: "repo".to_string(),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn keeps_base_repo_for_non_viewer_prs() {
+        let target = preferred_clone_target(
+            &PrDetails {
+                pr_url: "https://github.com/upstream/repo/pull/1".to_string(),
+                owner: "upstream".to_string(),
+                repo: "repo".to_string(),
+                number: 1,
+                state: "OPEN".to_string(),
+                title: "t".to_string(),
+                head_ref: "feat".to_string(),
+                base_ref: "main".to_string(),
+                head_sha: "sha".to_string(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                is_archived: false,
+                author_login: Some("someone-else".to_string()),
+                head_repo_owner: Some("someone-else".to_string()),
+                head_repo_name: Some("repo".to_string()),
+                is_cross_repository: true,
+            },
+            Some("me"),
+        );
+
+        assert_eq!(
+            target,
+            CloneTarget {
+                origin: GitHubRepoRef {
+                    owner: "upstream".to_string(),
+                    repo: "repo".to_string(),
+                },
+                upstream: None,
+            }
+        );
     }
 
     #[test]
