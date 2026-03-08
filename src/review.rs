@@ -21,16 +21,8 @@ pub async fn review_pr(
     agent: Option<&Agent>,
     model: Option<&str>,
 ) -> anyhow::Result<()> {
-    eprintln!("🔍 Review started: {pr_url}");
-    let result = match generate_review(repo_root, pr_url, agent, model).await {
-        Ok(result) => result,
-        Err(err) => {
-            eprintln!("❌ Review failed: {pr_url}: {err}");
-            return Err(err);
-        }
-    };
-    println!("{}", result.markdown);
-    eprintln!("✅ Review finished: {pr_url}");
+    let prompt = pr_review_prompt(repo_root, pr_url).await?;
+    run_ai_prompt(repo_root, &prompt, agent, model, true).await?;
     Ok(())
 }
 
@@ -40,12 +32,10 @@ pub async fn generate_review(
     agent: Option<&Agent>,
     model: Option<&str>,
 ) -> anyhow::Result<ReviewResult> {
-    let metadata = fetch_pr_metadata(repo_root, pr_url).await?;
-    let diff = fetch_pr_diff(repo_root, pr_url).await?;
-    let prompt = build_review_prompt(&metadata, &diff);
+    let prompt = pr_review_prompt(repo_root, pr_url).await?;
 
     let (provider, resolved_model, markdown) =
-        run_ai_prompt(repo_root, &prompt, agent, model).await?;
+        run_ai_prompt(repo_root, &prompt, agent, model, false).await?;
     let requires_code_changes = parse_requires_code_changes(&markdown).unwrap_or(true);
 
     Ok(ReviewResult {
@@ -54,6 +44,13 @@ pub async fn generate_review(
         provider,
         model: resolved_model,
     })
+}
+
+async fn pr_review_prompt(repo_root: &Utf8Path, pr_url: &str) -> Result<String, anyhow::Error> {
+    let metadata = fetch_pr_metadata(repo_root, pr_url).await?;
+    let diff = fetch_pr_diff(repo_root, pr_url).await?;
+    let prompt = build_review_prompt(&metadata, &diff);
+    Ok(prompt)
 }
 
 pub async fn run_fix(
@@ -67,7 +64,7 @@ pub async fn run_fix(
     let diff = fetch_pr_diff(repo_root, pr_url).await?;
     let prompt = build_fix_prompt(&metadata, &diff, review_markdown);
 
-    let (_, _, output) = run_ai_prompt(repo_root, &prompt, agent, model).await?;
+    let (_, _, output) = run_ai_prompt(repo_root, &prompt, agent, model, false).await?;
     Ok(output)
 }
 
@@ -208,11 +205,12 @@ async fn run_ai_prompt(
     prompt: &str,
     agent: Option<&Agent>,
     model: Option<&str>,
+    interactive: bool,
 ) -> anyhow::Result<(String, Option<String>, String)> {
     match agent {
-        Some(Agent::Gemini) => run_gemini(repo_root, prompt, model).await,
-        Some(Agent::Kiro) => run_kiro(repo_root, prompt, model).await,
-        Some(Agent::Copilot) | None => run_copilot(repo_root, prompt, model).await,
+        Some(Agent::Gemini) => run_gemini(repo_root, prompt, model, interactive).await,
+        Some(Agent::Kiro) => run_kiro(repo_root, prompt, model, interactive).await,
+        Some(Agent::Copilot) | None => run_copilot(repo_root, prompt, model, interactive).await,
     }
 }
 
@@ -220,25 +218,36 @@ async fn run_copilot(
     repo_root: &Utf8Path,
     prompt: &str,
     model: Option<&str>,
+    interactive: bool,
 ) -> anyhow::Result<(String, Option<String>, String)> {
     let resolved_model = model.unwrap_or("gpt-5.3-codex").to_string();
-    let output = Cmd::new(
+    let prompt_flag = if interactive {
+        "--interactive"
+    } else {
+        "--prompt"
+    };
+    let mut cmd = Cmd::new(
         "copilot",
-        ["--silent", "--model", &resolved_model, "--prompt", prompt],
-    )
-    .hide_stdout()
-    .with_title(format!(
-        "🚀 copilot --silent --model {resolved_model} --prompt ..."
+        ["--silent", "--model", &resolved_model, prompt_flag, prompt],
+    );
+    cmd.with_title(format!(
+        "🚀 copilot --silent --model {resolved_model} {prompt_flag} ..."
     ))
-    .with_current_dir(repo_root)
-    .run()
-    .await?;
+    .with_current_dir(repo_root);
+
+    let output = if interactive {
+        cmd.run_interactive().await?
+    } else {
+        cmd.hide_stdout().run().await?
+    };
 
     output.ensure_success("❌ Failed to generate output with Copilot")?;
-    anyhow::ensure!(
-        !output.stdout().trim().is_empty(),
-        "❌ Copilot returned empty output"
-    );
+    if !interactive {
+        anyhow::ensure!(
+            !output.stdout().trim().is_empty(),
+            "❌ Copilot returned empty output"
+        );
+    }
 
     Ok((
         "copilot".to_string(),
@@ -251,9 +260,15 @@ async fn run_gemini(
     repo_root: &Utf8Path,
     prompt: &str,
     model: Option<&str>,
+    interactive: bool,
 ) -> anyhow::Result<(String, Option<String>, String)> {
     let resolved_model = model.unwrap_or("gemini-3-pro-preview").to_string();
-    let output = Cmd::new(
+    let prompt_flag = if interactive {
+        "--prompt-interactive"
+    } else {
+        "--prompt"
+    };
+    let mut cmd = Cmd::new(
         "gemini",
         [
             "--model",
@@ -261,23 +276,28 @@ async fn run_gemini(
             "--sandbox",
             "--output-format",
             "text",
-            "--prompt",
+            prompt_flag,
             prompt,
         ],
-    )
-    .hide_stdout()
-    .with_title(format!(
-        "🚀 gemini --model {resolved_model} --sandbox --output-format text --prompt ..."
+    );
+    cmd.with_title(format!(
+        "🚀 gemini --model {resolved_model} --sandbox --output-format text {prompt_flag} ..."
     ))
-    .with_current_dir(repo_root)
-    .run()
-    .await?;
+    .with_current_dir(repo_root);
+
+    let output = if interactive {
+        cmd.run_interactive().await?
+    } else {
+        cmd.hide_stdout().run().await?
+    };
 
     output.ensure_success("❌ Failed to generate output with Gemini")?;
-    anyhow::ensure!(
-        !output.stdout().trim().is_empty(),
-        "❌ Gemini returned empty output"
-    );
+    if !interactive {
+        anyhow::ensure!(
+            !output.stdout().trim().is_empty(),
+            "❌ Gemini returned empty output"
+        );
+    }
 
     Ok((
         "gemini".to_string(),
@@ -290,34 +310,40 @@ async fn run_kiro(
     repo_root: &Utf8Path,
     prompt: &str,
     model: Option<&str>,
+    interactive: bool,
 ) -> anyhow::Result<(String, Option<String>, String)> {
     ensure_command_available("kiro-cli").await?;
 
     let resolved_model = model
         .unwrap_or(crate::config::DEFAULT_KIRO_MODEL)
         .to_string();
-    let mut args = vec![
-        "chat".to_string(),
-        "--no-interactive".to_string(),
-        "--model".to_string(),
-        resolved_model.clone(),
-    ];
+    let mut args = vec!["chat".to_string()];
+    if !interactive {
+        args.push("--no-interactive".to_string());
+    }
+    args.extend(["--model".to_string(), resolved_model.clone()]);
     args.push(prompt.to_string());
 
-    let output = Cmd::new("kiro-cli", args)
-        .hide_stdout()
-        .with_title(format!(
-            "🚀 kiro-cli chat --no-interactive --model {resolved_model} ..."
-        ))
-        .with_current_dir(repo_root)
-        .run()
-        .await?;
+    let mut cmd = Cmd::new("kiro-cli", args);
+    cmd.with_title(format!(
+        "🚀 kiro-cli chat {}--model {resolved_model} ...",
+        if interactive { "" } else { "--no-interactive " }
+    ))
+    .with_current_dir(repo_root);
+
+    let output = if interactive {
+        cmd.run_interactive().await?
+    } else {
+        cmd.hide_stdout().run().await?
+    };
 
     output.ensure_success("❌ Failed to generate output with Kiro")?;
-    anyhow::ensure!(
-        !output.stdout().trim().is_empty(),
-        "❌ Kiro returned empty output"
-    );
+    if !interactive {
+        anyhow::ensure!(
+            !output.stdout().trim().is_empty(),
+            "❌ Kiro returned empty output"
+        );
+    }
 
     Ok((
         "kiro".to_string(),

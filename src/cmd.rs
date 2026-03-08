@@ -237,7 +237,6 @@ impl Cmd {
         })
     }
 
-    #[allow(dead_code)]
     pub async fn run_interactive(&self) -> anyhow::Result<CmdOutput> {
         if is_verbose() {
             println!("{}", self.build_command_description());
