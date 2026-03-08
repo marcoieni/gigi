@@ -2,23 +2,25 @@ use anyhow::Context;
 use camino::{Utf8Path, Utf8PathBuf};
 
 use inquire::validator::Validation;
+use tokio::fs;
 
-use crate::cmd::{Cmd, CmdOutput};
+use crate::cmd::{Cmd, CmdOutput, ensure_command_available};
 
 /// Check if copilot CLI is installed.
-fn is_copilot_installed() -> bool {
-    std::process::Command::new("which")
-        .arg("copilot")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+async fn is_copilot_installed() -> bool {
+    ensure_command_available("copilot").await.is_ok()
 }
 
-fn get_untracked_files(repo_root: &Utf8Path) -> Vec<String> {
+async fn get_untracked_files(repo_root: &Utf8Path) -> Vec<String> {
     let status_output = Cmd::new("git", ["status", "--porcelain", "-z"])
         .with_current_dir(repo_root)
         .hide_stdout()
-        .run();
+        .run()
+        .await;
+
+    let Ok(status_output) = status_output else {
+        return Vec::new();
+    };
 
     if !status_output.status().success() {
         return Vec::new();
@@ -33,37 +35,38 @@ fn get_untracked_files(repo_root: &Utf8Path) -> Vec<String> {
         .collect()
 }
 
-fn read_untracked_file(repo_root: &Utf8Path, relative_path: &str) -> anyhow::Result<String> {
+async fn read_untracked_file(repo_root: &Utf8Path, relative_path: &str) -> anyhow::Result<String> {
     let full_path: Utf8PathBuf = repo_root.join(relative_path);
-    match std::fs::read_to_string(&full_path) {
+    match fs::read_to_string(&full_path).await {
         Ok(content) => Ok(content),
-        Err(_) => match std::fs::read(&full_path) {
+        Err(_) => match fs::read(&full_path).await {
             Ok(_bytes) => Ok("<binary file>".to_string()),
             Err(e) => anyhow::bail!("❌ Unable to read file {full_path}: {e}"),
         },
     }
 }
 
-fn build_untracked_context(repo_root: &Utf8Path) -> anyhow::Result<String> {
-    let untracked_files = get_untracked_files(repo_root);
+async fn build_untracked_context(repo_root: &Utf8Path) -> anyhow::Result<String> {
+    let untracked_files = get_untracked_files(repo_root).await;
     if untracked_files.is_empty() {
         return Ok(String::new());
     }
 
     let mut context = String::from("\n\n# Untracked files\n");
     for relative_path in untracked_files {
-        let content = read_untracked_file(repo_root, &relative_path)?;
+        let content = read_untracked_file(repo_root, &relative_path).await?;
         context.push_str(&format!("\n## {relative_path}\n{content}\n"));
     }
     Ok(context)
 }
 
-fn get_diff(repo_root: &Utf8Path) -> anyhow::Result<Option<String>> {
+async fn get_diff(repo_root: &Utf8Path) -> anyhow::Result<Option<String>> {
     // Get the diff to help understand what changed
     let diff_output = Cmd::new("git", ["diff", "--cached"])
         .with_current_dir(repo_root)
         .hide_stdout()
-        .run();
+        .run()
+        .await?;
     let diff = diff_output.stdout();
 
     // If no staged changes, check unstaged changes
@@ -72,13 +75,14 @@ fn get_diff(repo_root: &Utf8Path) -> anyhow::Result<Option<String>> {
             .with_current_dir(repo_root)
             .hide_stdout()
             .run()
+            .await?
             .stdout()
             .to_string()
     } else {
         diff.to_string()
     };
 
-    let untracked_context = build_untracked_context(repo_root)?;
+    let untracked_context = build_untracked_context(repo_root).await?;
     let mut diff_with_untracked = diff.clone();
     if !untracked_context.is_empty() {
         diff_with_untracked.push_str(&untracked_context);
@@ -99,15 +103,16 @@ fn build_commit_prompt(diff: &str) -> String {
 }
 
 /// Generate a commit message using GitHub Copilot CLI.
-pub fn generate_copilot_commit_message(
+pub async fn generate_copilot_commit_message(
     repo_root: &Utf8Path,
     model: Option<&str>,
 ) -> anyhow::Result<String> {
-    if !is_copilot_installed() {
+    if !is_copilot_installed().await {
         anyhow::bail!("❌ GitHub Copilot CLI is not installed");
     }
 
     let diff = get_diff(repo_root)
+        .await
         .context("can't get repository diff")?
         .context("no changes to generate commit message for")?;
 
@@ -122,7 +127,8 @@ pub fn generate_copilot_commit_message(
     .hide_stdout()
     .with_title(format!("🚀 copilot --silent --model {model} --prompt ..."))
     .with_current_dir(repo_root)
-    .run();
+    .run()
+    .await?;
 
     process_model_output(&output)
 }
@@ -150,11 +156,12 @@ fn process_model_output(output: &CmdOutput) -> anyhow::Result<String> {
 }
 
 /// Generate a commit message using Gemini CLI.
-pub fn generate_gemini_commit_message(
+pub async fn generate_gemini_commit_message(
     repo_root: &Utf8Path,
     model: Option<&str>,
 ) -> anyhow::Result<String> {
     let diff = get_diff(repo_root)
+        .await
         .context("can't get repository diff")?
         .context("no changes to generate commit message for")?;
 
@@ -179,19 +186,59 @@ pub fn generate_gemini_commit_message(
         "🚀 gemini --model {model} --sandbox --output-format text --prompt ..."
     ))
     .with_current_dir(repo_root)
-    .run();
+    .run()
+    .await?;
 
     process_model_output(&output)
 }
 
-pub fn generate_commit_message(
+/// Generate a commit message using Kiro CLI.
+pub async fn generate_kiro_commit_message(
+    repo_root: &Utf8Path,
+    model: Option<&str>,
+) -> anyhow::Result<String> {
+    ensure_command_available("kiro-cli").await?;
+
+    let diff = get_diff(repo_root)
+        .await
+        .context("can't get repository diff")?
+        .context("no changes to generate commit message for")?;
+
+    println!("🤖 Generating commit message with Kiro...");
+
+    let prompt = build_commit_prompt(&diff);
+    let model = model.unwrap_or(crate::config::DEFAULT_KIRO_MODEL);
+    let mut args = vec![
+        "chat".to_string(),
+        "--no-interactive".to_string(),
+        "--model".to_string(),
+        model.to_string(),
+    ];
+    args.push(prompt);
+
+    let output = Cmd::new("kiro-cli", args)
+        .hide_stdout()
+        .with_title(format!(
+            "🚀 kiro-cli chat --no-interactive --model {model} ..."
+        ))
+        .with_current_dir(repo_root)
+        .run()
+        .await?;
+
+    process_model_output(&output)
+}
+
+pub async fn generate_commit_message(
     repo_root: &Utf8Path,
     agent: Option<&crate::args::Agent>,
     model: Option<&str>,
 ) -> anyhow::Result<String> {
     match agent {
-        Some(crate::args::Agent::Gemini) => generate_gemini_commit_message(repo_root, model),
-        Some(crate::args::Agent::Copilot) => generate_copilot_commit_message(repo_root, model),
+        Some(crate::args::Agent::Gemini) => generate_gemini_commit_message(repo_root, model).await,
+        Some(crate::args::Agent::Kiro) => generate_kiro_commit_message(repo_root, model).await,
+        Some(crate::args::Agent::Copilot) => {
+            generate_copilot_commit_message(repo_root, model).await
+        }
         None => Ok("".to_string()),
     }
 }

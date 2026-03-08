@@ -96,6 +96,53 @@ Examples:
 - `gigi review https://github.com/OWNER/REPO/pull/123`
 - `gigi review --agent gemini --model gemini-3-flash-preview https://github.com/OWNER/REPO/pull/123`
 
+### Init
+
+Initialize `~/.config/gigi/config.toml` with the default settings used by `serve`.
+If the file already exists, it is left unchanged.
+
+Examples:
+
+- `gigi init`
+
+Example `~/.config/gigi/config.toml`:
+
+```toml
+watch_period_seconds = 60
+rereview_mode = "on_update" # or "manual"
+initial_review_lookback_days = 3
+initial_review_max_prs = 10
+
+[ai]
+provider = "copilot" # or "gemini" or "kiro"
+# model = "gpt-5.3-codex"
+# when provider = "kiro", the default model is "claude-opus-4.6"
+
+[dashboard]
+host = "127.0.0.1"
+port = 8787
+```
+
+### Serve
+
+Run a local server that periodically watches GitHub notifications and your open PRs,
+stores data and reviews in SQLite, and exposes a dashboard.
+
+Defaults:
+
+- Config file: `~/.config/gigi/config.toml`
+- DB file: `~/.local/share/gigi/gigi.db`
+- Dashboard: `http://127.0.0.1:8787`
+
+Example:
+
+- `gigi serve`
+
+On startup, `serve` only auto-reviews PRs opened or updated within
+`initial_review_lookback_days`, and runs at most `initial_review_max_prs`
+reviews. The dashboard includes a "Review now" button to manually review
+any skipped PR.
+
 ### Sync
 
 Sync a fork with its upstream repository and update the local default branch.

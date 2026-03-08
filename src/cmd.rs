@@ -1,16 +1,13 @@
 use std::{
-    collections::BTreeMap,
-    io::{BufRead as _, BufReader},
-    process::{Command, ExitStatus, Stdio},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
-    thread,
+    env,
+    path::Path,
+    process::{ExitStatus, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
+use anyhow::Context as _;
 use camino::Utf8PathBuf;
-use secrecy::{ExposeSecret, SecretString};
+use tokio::{fs, process::Command};
 
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 
@@ -18,8 +15,38 @@ pub fn set_verbose(verbose: bool) {
     VERBOSE.store(verbose, Ordering::SeqCst);
 }
 
+pub async fn ensure_command_available(cmd_name: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        is_command_available(cmd_name).await,
+        "❌ Required command `{cmd_name}` is not installed or not available in PATH"
+    );
+    Ok(())
+}
+
 fn is_verbose() -> bool {
     VERBOSE.load(Ordering::SeqCst)
+}
+
+async fn is_command_available(cmd_name: &str) -> bool {
+    if cmd_name.contains(std::path::MAIN_SEPARATOR) {
+        return command_candidate_exists(Path::new(cmd_name)).await;
+    }
+
+    let Some(path_var) = env::var_os("PATH") else {
+        return false;
+    };
+
+    for path in env::split_paths(&path_var) {
+        if command_candidate_exists(&path.join(cmd_name)).await {
+            return true;
+        }
+    }
+
+    false
+}
+
+async fn command_candidate_exists(path: &Path) -> bool {
+    fs::try_exists(path).await.unwrap_or(false)
 }
 
 #[derive(Debug)]
@@ -27,6 +54,8 @@ pub struct CmdOutput {
     status: ExitStatus,
     stdout: String,
     stderr: String,
+    invocation: String,
+    current_dir: Option<Utf8PathBuf>,
 }
 
 impl CmdOutput {
@@ -50,19 +79,33 @@ impl CmdOutput {
         }
     }
 
+    fn command_summary(&self) -> String {
+        match &self.current_dir {
+            Some(dir) => format!("`{}` (cwd: {})", self.invocation, dir),
+            None => format!("`{}`", self.invocation),
+        }
+    }
+
     pub fn ensure_success(&self, context: impl std::fmt::Display) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            self.status().success(),
-            "{context}: {}",
-            self.stderr_or_stdout()
-        );
-        Ok(())
+        if self.status().success() {
+            return Ok(());
+        }
+
+        let command = self.command_summary();
+        let details = self.stderr_or_stdout();
+        if details.is_empty() {
+            anyhow::bail!(
+                "{context}: command {command} exited with status {}",
+                self.status
+            );
+        }
+
+        anyhow::bail!("{context}: command {command} failed: {details}");
     }
 }
 
 pub struct Cmd {
     name: String,
-    env_vars: BTreeMap<String, SecretString>,
     args: Vec<String>,
     current_dir: Option<Utf8PathBuf>,
     hide_stdout: bool,
@@ -86,15 +129,9 @@ impl Cmd {
             current_dir: None,
             hide_stdout: false,
             hide_stderr: false,
-            env_vars: BTreeMap::new(),
             title: None,
         }
     }
-
-    // pub fn with_env_vars(&mut self, env_vars: BTreeMap<String, SecretString>) -> &mut Self {
-    //     self.env_vars = env_vars;
-    //     self
-    // }
 
     pub fn with_current_dir(&mut self, dir: impl Into<Utf8PathBuf>) -> &mut Self {
         self.current_dir = Some(dir.into());
@@ -127,84 +164,80 @@ impl Cmd {
         description
     }
 
+    fn format_invocation(&self) -> String {
+        let mut invocation = self.name.clone();
+        if !self.args.is_empty() {
+            invocation.push(' ');
+            invocation.push_str(&self.args.join(" "));
+        }
+        invocation
+    }
+
+    fn spawn_context(&self) -> String {
+        match &self.current_dir {
+            Some(dir) => format!(
+                "failed to spawn command `{}` in {}",
+                self.format_invocation(),
+                dir
+            ),
+            None => format!("failed to spawn command `{}`", self.format_invocation()),
+        }
+    }
+
     fn configure_command(&self) -> Command {
         let mut command = Command::new(&self.name);
         if let Some(dir) = &self.current_dir {
             command.current_dir(dir);
         }
-        for (key, value) in &self.env_vars {
-            command.env(key, value.expose_secret());
-        }
         command
     }
 
-    fn spawn_output_reader<R: std::io::Read + Send + 'static>(
-        reader: R,
-        tx: mpsc::Sender<(String, bool)>,
-        is_stdout: bool,
-    ) {
-        thread::spawn(move || {
-            let reader = BufReader::new(reader);
-            for line in reader.lines() {
-                let line = line.unwrap();
-                tx.send((line, is_stdout)).unwrap();
-            }
-        });
-    }
+    fn print_verbose_output(&self, stdout: &str, stderr: &str) {
+        if !is_verbose() {
+            return;
+        }
 
-    fn collect_output(&self, rx: mpsc::Receiver<(String, bool)>) -> (String, String) {
-        let mut output_stdout = String::new();
-        let mut output_stderr = String::new();
-
-        for (line, is_stdout) in rx {
-            if is_stdout {
-                if is_verbose() && !self.hide_stdout {
-                    println!("{line}");
-                }
-                output_stdout.push_str(&line);
-                output_stdout.push('\n');
-            } else {
-                if is_verbose() && !self.hide_stderr {
-                    eprintln!("{line}");
-                }
-                output_stderr.push_str(&line);
-                output_stderr.push('\n');
+        if !self.hide_stdout {
+            for line in stdout.lines() {
+                println!("{line}");
             }
         }
-        (output_stdout, output_stderr)
+
+        if !self.hide_stderr {
+            for line in stderr.lines() {
+                eprintln!("{line}");
+            }
+        }
     }
 
-    pub fn run(&self) -> CmdOutput {
+    pub async fn run(&self) -> anyhow::Result<CmdOutput> {
         if is_verbose() {
             println!("{}", self.build_command_description());
         }
 
-        let mut child = self
+        let output = self
             .configure_command()
             .args(&self.args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+            .output()
+            .await
+            .with_context(|| self.spawn_context())?;
 
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-        let (tx, rx) = mpsc::channel();
+        let output_stdout =
+            String::from_utf8(output.stdout).context("command produced non-UTF-8 stdout")?;
+        let output_stderr =
+            String::from_utf8(output.stderr).context("command produced non-UTF-8 stderr")?;
+        self.print_verbose_output(&output_stdout, &output_stderr);
 
-        Self::spawn_output_reader(stdout, tx.clone(), true);
-        Self::spawn_output_reader(stderr, tx, false);
-
-        let (output_stdout, output_stderr) = self.collect_output(rx);
-        let status = child.wait().unwrap();
-
-        CmdOutput {
-            status,
+        Ok(CmdOutput {
+            status: output.status,
             stdout: output_stdout,
             stderr: output_stderr,
-        }
+            invocation: self.format_invocation(),
+            current_dir: self.current_dir.clone(),
+        })
     }
 
-    pub fn run_interactive(&self) -> CmdOutput {
+    pub async fn run_interactive(&self) -> anyhow::Result<CmdOutput> {
         if is_verbose() {
             println!("{}", self.build_command_description());
         }
@@ -216,13 +249,16 @@ impl Cmd {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .status()
-            .unwrap();
+            .await
+            .with_context(|| self.spawn_context())?;
 
-        CmdOutput {
+        Ok(CmdOutput {
             status,
             stdout: String::new(),
             stderr: String::new(),
-        }
+            invocation: self.format_invocation(),
+            current_dir: self.current_dir.clone(),
+        })
     }
 }
 
@@ -288,6 +324,8 @@ mod tests {
             status,
             stdout: "  hello world  \n".to_string(),
             stderr: String::new(),
+            invocation: "echo hello world".to_string(),
+            current_dir: None,
         };
         assert_eq!(output.stdout(), "hello world");
     }

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>gigi dashboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+
+<body>
+  <main class="layout">
+    <header class="header">
+      <h1>gigi dashboard</h1>
+      <div class="actions">
+        <button id="refresh-btn" class="btn">Refresh</button>
+        <span id="status" class="status">Idle</span>
+        <a class="btn icon-btn header-link" href="https://github.com/notifications" target="_blank" rel="noreferrer"
+          aria-label="Open GitHub notifications" title="Open GitHub notifications">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M4.5 7.5A2.5 2.5 0 0 1 7 5h10a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 17 19H7a2.5 2.5 0 0 1-2.5-2.5v-9Z" />
+            <path d="m6.5 8.5 5.5 4 5.5-4" />
+            <path d="M8 15.5h8" />
+          </svg>
+        </a>
+      </div>
+    </header>
+    <section class="filters" aria-label="Dashboard filters">
+      <fieldset class="filter-group">
+        <legend>Show</legend>
+        <label class="filter-option">
+          <input id="filter-notifications" type="checkbox" checked />
+          <span>Notifications</span>
+        </label>
+        <label class="filter-option">
+          <input id="filter-prs" type="checkbox" checked />
+          <span>PRs</span>
+        </label>
+      </fieldset>
+      <fieldset class="filter-group">
+        <legend>Status</legend>
+        <label class="filter-option">
+          <input id="filter-not-done" type="checkbox" checked />
+          <span>Not done</span>
+        </label>
+        <label class="filter-option">
+          <input id="filter-done" type="checkbox" />
+          <span>Done</span>
+        </label>
+      </fieldset>
+      <fieldset class="filter-group">
+        <legend>Display</legend>
+        <label class="filter-option">
+          <input id="group-by-repository" type="checkbox" checked />
+          <span>Group by repository</span>
+        </label>
+      </fieldset>
+    </section>
+    <section>
+      <div id="threads" class="threads"></div>
+    </section>
+  </main>
+
+  <dialog id="review-modal">
+    <article>
+      <header class="modal-head">
+        <h2>Review</h2>
+        <button id="close-modal" class="btn">Close</button>
+      </header>
+      <pre id="review-content"></pre>
+    </article>
+  </dialog>
+
+  <script src="/app.js"></script>
+</body>
+
+</html>

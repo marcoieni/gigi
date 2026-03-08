@@ -16,32 +16,35 @@ fn extract_email(author: &str) -> Option<String> {
 }
 
 /// Get all authors from commits in the range
-fn get_commit_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<String> {
+async fn get_commit_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<String> {
     let output = Cmd::new(
         "git",
         ["log", "--format=%an <%ae>", &format!("{merge_base}..HEAD")],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()
+    .await?;
     output.ensure_success("Failed to get commit authors")?;
     Ok(output.stdout().to_string())
 }
 
-fn get_commit_messages(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<String> {
+async fn get_commit_messages(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<String> {
     let output = Cmd::new(
         "git",
         ["log", "--format=%B", &format!("{merge_base}..HEAD")],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()
+    .await?;
     output.ensure_success("Failed to get commit messages")?;
     Ok(output.stdout().to_string())
 }
 
-fn get_current_user_email(repo_root: &Utf8Path) -> anyhow::Result<String> {
+async fn get_current_user_email(repo_root: &Utf8Path) -> anyhow::Result<String> {
     let output = Cmd::new("git", ["config", "user.email"])
         .with_current_dir(repo_root)
-        .run();
+        .run()
+        .await?;
     output.ensure_success("Failed to get current git user email")?;
     Ok(output.stdout().trim().to_string())
 }
@@ -78,10 +81,10 @@ fn parse_co_authors_from_messages(
     }
 }
 
-pub fn get_co_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<Vec<String>> {
-    let authors_output = get_commit_authors(repo_root, merge_base)?;
-    let commit_messages = get_commit_messages(repo_root, merge_base)?;
-    let current_user_email = get_current_user_email(repo_root)?;
+pub async fn get_co_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<Vec<String>> {
+    let authors_output = get_commit_authors(repo_root, merge_base).await?;
+    let commit_messages = get_commit_messages(repo_root, merge_base).await?;
+    let current_user_email = get_current_user_email(repo_root).await?;
 
     let mut authors = collect_authors_from_log(&authors_output, &current_user_email);
     parse_co_authors_from_messages(&commit_messages, &current_user_email, &mut authors);
@@ -113,7 +116,7 @@ pub struct CommitInfo {
     pub author: String,
 }
 
-pub fn get_commits_to_squash(
+pub async fn get_commits_to_squash(
     repo_root: &Utf8Path,
     merge_base: &str,
 ) -> anyhow::Result<Vec<CommitInfo>> {
@@ -127,7 +130,8 @@ pub fn get_commits_to_squash(
         ],
     )
     .with_current_dir(repo_root)
-    .run();
+    .run()
+    .await?;
 
     commits_output.ensure_success("Failed to get commits")?;
 

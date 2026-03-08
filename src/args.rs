@@ -14,6 +14,7 @@ pub enum Agent {
     #[default]
     Copilot,
     Gemini,
+    Kiro,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -50,6 +51,10 @@ pub enum Command {
         #[arg(long)]
         model: Option<String>,
     },
+    /// Initialize the default config file used by `serve`
+    Init,
+    /// Start the local server that watches GitHub notifications and PRs
+    Serve,
     Squash {
         /// Show what would be squashed without actually performing the operation
         #[arg(long)]
