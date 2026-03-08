@@ -220,34 +220,6 @@ impl Db {
         })
     }
 
-    pub fn delete_threads_by_source_except_pr_urls(
-        &self,
-        source: &str,
-        keep_pr_urls: &[String],
-    ) -> anyhow::Result<()> {
-        self.with_conn(|conn| {
-            let mut sql = String::from("DELETE FROM threads WHERE source = ?1");
-            if !keep_pr_urls.is_empty() {
-                sql.push_str(" AND pr_url NOT IN (");
-                for idx in 0..keep_pr_urls.len() {
-                    if idx > 0 {
-                        sql.push_str(", ");
-                    }
-                    sql.push('?');
-                    sql.push_str(&(idx + 2).to_string());
-                }
-                sql.push(')');
-            }
-
-            let mut stmt = conn.prepare(&sql)?;
-            let params = std::iter::once(source.to_string())
-                .chain(keep_pr_urls.iter().cloned())
-                .collect::<Vec<_>>();
-            stmt.execute(rusqlite::params_from_iter(params))?;
-            Ok(())
-        })
-    }
-
     pub fn delete_threads_by_source_and_pr_urls(
         &self,
         source: &str,
@@ -565,7 +537,7 @@ impl Db {
                 if row.is_archived_pr && row.pr_state.as_deref() == Some("OPEN") {
                     continue;
                 }
-                if !filters.include_sources(&[row.source.clone()]) {
+                if !filters.include_sources(std::slice::from_ref(&row.source)) {
                     continue;
                 }
                 out.push(row.into_dashboard_thread());
@@ -756,7 +728,7 @@ impl DashboardThreadRow {
 }
 
 impl DashboardThreadFilters {
-    fn include_sources(&self, sources: &[String]) -> bool {
+    fn include_sources(self, sources: &[String]) -> bool {
         sources.iter().all(|s| match s.as_str() {
             "notification" => self.show_notifications,
             "my_pr" => self.show_prs,
