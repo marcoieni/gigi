@@ -76,8 +76,12 @@ pub struct PrDetails {
     pub is_cross_repository: bool,
 }
 
-pub async fn fetch_notifications() -> anyhow::Result<NotificationPollData> {
-    let output = Cmd::new("gh", ["api", "/notifications", "--paginate", "--slurp"])
+pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<NotificationPollData> {
+    let endpoint = match since {
+        Some(since) => format!("/notifications?since={since}"),
+        None => "/notifications".to_string(),
+    };
+    let output = Cmd::new("gh", ["api", &endpoint, "--paginate", "--slurp"])
         .run()
         .await?;
     output.ensure_success("❌ Failed to fetch notifications")?;

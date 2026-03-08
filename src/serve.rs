@@ -292,7 +292,10 @@ async fn poll_once_async(
     work_dir: &Utf8Path,
     mode: PollMode,
 ) -> anyhow::Result<PollStats> {
-    let notification_data = github::fetch_notifications().await?;
+    let since = db.get_kv("last_notifications_fetch")?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let notification_data = github::fetch_notifications(since.as_deref()).await?;
+    db.set_kv("last_notifications_fetch", &now)?;
     let notifications = notification_data.notifications;
     print_fetched_notifications(&notifications);
     print_prefetched_pr_details(&notification_data.pr_details);

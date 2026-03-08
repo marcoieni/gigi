@@ -157,6 +157,24 @@ impl Db {
         f(&conn)
     }
 
+    pub fn get_kv(&self, key: &str) -> anyhow::Result<Option<String>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare("SELECT value FROM kv WHERE key = ?1")?;
+            let result = stmt.query_row([key], |row| row.get(0)).optional()?;
+            Ok(result)
+        })
+    }
+
+    pub fn set_kv(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO kv (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [key, value],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn upsert_thread(&self, row: &NewThread) -> anyhow::Result<()> {
         let now = unix_ts();
         self.with_conn(|conn| {
@@ -885,6 +903,11 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
             show_not_done INTEGER NOT NULL,
             group_by_repository INTEGER NOT NULL DEFAULT 1,
             updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS kv (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         );
         "#,
     )?;
