@@ -127,13 +127,9 @@ fn print_poll_stats(prefix: &str, stats: &PollStats) {
 }
 
 impl AppState {
-    pub async fn poll_once(&self) -> anyhow::Result<PollStats> {
-        self.poll_once_regular().await
-    }
-
     pub async fn poll_once_from_dashboard(&self) -> anyhow::Result<PollStats> {
         println!("🔄 Dashboard refresh requested");
-        let result = self.poll_once().await;
+        let result = self.poll_once_regular().await;
         match &result {
             Ok(stats) => print_poll_stats("✅ Dashboard refresh complete:", stats),
             Err(err) => eprintln!("❌ Dashboard refresh failed: {err}"),
