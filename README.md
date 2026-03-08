@@ -105,21 +105,6 @@ Examples:
 
 - `gigi init`
 
-### Serve
-
-Run a local server that periodically watches GitHub notifications and your open PRs,
-stores data and reviews in SQLite, and exposes a dashboard.
-
-Defaults:
-
-- Config file: `~/.config/gigi/config.toml`
-- DB file: `~/.local/share/gigi/gigi.db`
-- Dashboard: `http://127.0.0.1:8787`
-
-Example:
-
-- `gigi serve`
-
 Example `~/.config/gigi/config.toml`:
 
 ```toml
@@ -137,6 +122,21 @@ provider = "copilot" # or "gemini" or "kiro"
 host = "127.0.0.1"
 port = 8787
 ```
+
+### Serve
+
+Run a local server that periodically watches GitHub notifications and your open PRs,
+stores data and reviews in SQLite, and exposes a dashboard.
+
+Defaults:
+
+- Config file: `~/.config/gigi/config.toml`
+- DB file: `~/.local/share/gigi/gigi.db`
+- Dashboard: `http://127.0.0.1:8787`
+
+Example:
+
+- `gigi serve`
 
 On startup, `serve` only auto-reviews PRs opened or updated within
 `initial_review_lookback_days`, and runs at most `initial_review_max_prs`
