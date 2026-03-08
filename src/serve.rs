@@ -252,7 +252,7 @@ impl AppState {
         let target_label = describe_open_target(&repository, pr_url.as_deref());
         println!("🧑‍💻 VS Code open requested: {target_label}");
         let repo_dir = resolve_open_target_repo(&repository, pr_url.as_deref()).await?;
-        println!("📂 Opening VS Code in {}", repo_dir);
+        println!("📂 Opening VS Code in {repo_dir}");
         let result = launcher::open_vscode(&repo_dir).await;
 
         match &result {
@@ -271,7 +271,7 @@ impl AppState {
         let target_label = describe_open_target(&repository, pr_url.as_deref());
         println!("🖥️ Terminal open requested: {target_label}");
         let repo_dir = resolve_open_target_repo(&repository, pr_url.as_deref()).await?;
-        println!("📂 Opening Terminal in {}", repo_dir);
+        println!("📂 Opening Terminal in {repo_dir}");
         let result = launcher::open_terminal(&repo_dir).await;
 
         match &result {
