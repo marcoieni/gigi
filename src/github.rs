@@ -217,24 +217,28 @@ pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Notifica
     })
 }
 
-pub async fn fetch_authored_open_prs() -> anyhow::Result<Vec<AuthoredPrSummary>> {
-    let output = Cmd::new(
-        "gh",
-        [
-            "search",
-            "prs",
-            "--author",
-            "@me",
-            "--state",
-            "open",
-            "--limit",
-            "200",
-            "--json",
-            "url,title,updatedAt,repository",
-        ],
-    )
-    .run()
-    .await?;
+pub async fn fetch_authored_open_prs(
+    since: Option<&str>,
+) -> anyhow::Result<Vec<AuthoredPrSummary>> {
+    let mut args = vec![
+        "search",
+        "prs",
+        "--author",
+        "@me",
+        "--state",
+        "open",
+        "--limit",
+        "200",
+        "--json",
+        "url,title,updatedAt,repository",
+    ];
+    let updated_filter;
+    if let Some(since) = since {
+        updated_filter = format!(">={since}");
+        args.push("--updated");
+        args.push(&updated_filter);
+    }
+    let output = Cmd::new("gh", args).run().await?;
 
     output.ensure_success("❌ Failed to fetch authored pull requests")?;
     if output.stdout().trim().is_empty() {

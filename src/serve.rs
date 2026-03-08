@@ -300,7 +300,10 @@ async fn poll_once_async(
     print_fetched_notifications(&notifications);
     print_prefetched_pr_details(&notification_data.pr_details);
 
-    let authored_prs = github::fetch_authored_open_prs().await?;
+    let authored_prs_since = db.get_kv("last_authored_prs_fetch")?;
+    let authored_prs_now = chrono::Utc::now().to_rfc3339();
+    let authored_prs = github::fetch_authored_open_prs(authored_prs_since.as_deref()).await?;
+    db.set_kv("last_authored_prs_fetch", &authored_prs_now)?;
     print_fetched_authored_prs(&authored_prs);
     sync_authored_pr_threads(db, &authored_prs)?;
 
