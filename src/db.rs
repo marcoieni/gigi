@@ -704,12 +704,13 @@ impl DashboardThreadRow {
 }
 
 impl DashboardThreadFilters {
+    // Handles merged sources like "notification + my_pr" produced by deduplication.
     fn include_source(self, source: &str) -> bool {
-        match source {
+        source.split(" + ").all(|part| match part {
             "notification" => self.show_notifications,
             "my_pr" => self.show_prs,
             _ => false,
-        }
+        })
     }
 
     fn include_done_state(self, done: bool) -> bool {
@@ -801,6 +802,8 @@ fn max_string(left: String, right: String) -> String {
 }
 
 fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
+    // Enable WAL mode so the axum handlers and the poll task can access the DB concurrently.
+    conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS threads (

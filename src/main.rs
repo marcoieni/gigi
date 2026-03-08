@@ -213,39 +213,12 @@ async fn origin_name_with_owner(repo_root: &Utf8Path) -> anyhow::Result<String> 
         "❌ Failed to detect origin remote URL: command returned empty output"
     );
 
-    parse_github_name_with_owner(output.stdout()).ok_or_else(|| {
+    github::parse_github_name_with_owner(output.stdout()).ok_or_else(|| {
         anyhow::anyhow!(
             "❌ Failed to parse origin remote URL as GitHub repository: {}",
             output.stdout()
         )
     })
-}
-
-fn parse_github_name_with_owner(url: &str) -> Option<String> {
-    let trimmed = url.trim().trim_end_matches('/');
-    let path = if let Some(path) = trimmed.strip_prefix("git@github.com:") {
-        path
-    } else if let Some(path) = trimmed.strip_prefix("ssh://git@github.com/") {
-        path
-    } else if let Some(path) = trimmed.strip_prefix("https://github.com/") {
-        path
-    } else if let Some(path) = trimmed.strip_prefix("http://github.com/") {
-        path
-    } else if let Some(path) = trimmed.strip_prefix("git://github.com/") {
-        path
-    } else {
-        return None;
-    };
-
-    let normalized = path.strip_suffix(".git").unwrap_or(path).trim_matches('/');
-    let mut parts = normalized.split('/');
-    let owner = parts.next()?;
-    let repo = parts.next()?;
-    if parts.next().is_some() || owner.is_empty() || repo.is_empty() {
-        return None;
-    }
-
-    Some(format!("{owner}/{repo}"))
 }
 
 async fn ensure_upstream_remote(
@@ -877,30 +850,6 @@ mod tests {
         assert_eq!(
             branch_name_with_timestamp("feat-add-cache", "2026-02-16T00-14-36Z"),
             "feat-add-cache-2026-02-16T00-14-36Z"
-        );
-    }
-
-    #[test]
-    fn test_parse_github_name_with_owner_ssh_style() {
-        assert_eq!(
-            parse_github_name_with_owner("git@github.com:marcoieni/rust-forge.git"),
-            Some("marcoieni/rust-forge".to_string())
-        );
-    }
-
-    #[test]
-    fn test_parse_github_name_with_owner_https_style() {
-        assert_eq!(
-            parse_github_name_with_owner("https://github.com/marcoieni/rust-forge.git"),
-            Some("marcoieni/rust-forge".to_string())
-        );
-    }
-
-    #[test]
-    fn test_parse_github_name_with_owner_rejects_non_github() {
-        assert_eq!(
-            parse_github_name_with_owner("git@gitlab.com:marcoieni/rust-forge.git"),
-            None
         );
     }
 

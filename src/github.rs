@@ -793,7 +793,7 @@ pub async fn prepare_repo_for_pr_checkout(repo_dir: &Utf8Path) -> anyhow::Result
     Ok(())
 }
 
-fn parse_github_name_with_owner(url: &str) -> Option<String> {
+pub fn parse_github_name_with_owner(url: &str) -> Option<String> {
     let trimmed = url.trim().trim_end_matches('/');
     let path = if let Some(path) = trimmed.strip_prefix("git@github.com:") {
         path
@@ -959,5 +959,29 @@ mod tests {
         assert!(!is_diverged_local_branch_error_text(
             "no pull requests found for branch \"feature\"\n"
         ));
+    }
+
+    #[test]
+    fn test_parse_github_name_with_owner_ssh_style() {
+        assert_eq!(
+            parse_github_name_with_owner("git@github.com:marcoieni/rust-forge.git"),
+            Some("marcoieni/rust-forge".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_github_name_with_owner_https_style() {
+        assert_eq!(
+            parse_github_name_with_owner("https://github.com/marcoieni/rust-forge.git"),
+            Some("marcoieni/rust-forge".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_github_name_with_owner_rejects_non_github() {
+        assert_eq!(
+            parse_github_name_with_owner("git@gitlab.com:marcoieni/rust-forge.git"),
+            None
+        );
     }
 }

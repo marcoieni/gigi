@@ -10,12 +10,10 @@ pub struct GitHubPrRef {
 }
 
 pub async fn checkout_pr(pr_url: &str) -> anyhow::Result<()> {
-    let pr = parse_github_pr_url(pr_url)?;
-
-    let repo_dir = github::local_repo_dir(&pr.owner, &pr.repo)?;
-    github::prepare_repo_for_pr_checkout(&repo_dir).await?;
-    github::checkout_pr(&repo_dir, pr_url).await?;
-    launcher::open_vscode(&repo_dir).await?;
+    let local_pr = github::ensure_local_repo_for_pr(pr_url).await?;
+    github::prepare_repo_for_pr_checkout(&local_pr.repo_dir).await?;
+    github::checkout_pr(&local_pr.repo_dir, pr_url).await?;
+    launcher::open_vscode(&local_pr.repo_dir).await?;
     Ok(())
 }
 
