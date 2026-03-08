@@ -29,8 +29,8 @@ pub struct NewThread {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone)]
 /// Data required to insert a new PR row. Does not include DB-managed fields.
+#[derive(Debug, Clone)]
 pub struct NewPr {
     pub pr_url: String,
     pub owner: String,
@@ -45,10 +45,10 @@ pub struct NewPr {
     pub is_archived: bool,
 }
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
 /// PR row as read from the DB. Extends [`NewPr`] with DB-managed fields
 /// (`last_reviewed_sha`, `last_reviewed_updated_at`).
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct StoredPr {
     pub pr_url: String,
     pub owner: String,
@@ -65,9 +65,9 @@ pub struct StoredPr {
     pub last_reviewed_updated_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
 /// Review row as read from the DB. Extends [`NewReview`] with DB-managed fields
 /// (`id`, `created_at`).
+#[derive(Debug, Clone, Serialize)]
 pub struct StoredReview {
     pub id: i64,
     pub pr_url: String,
@@ -78,8 +78,8 @@ pub struct StoredReview {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone)]
 /// Data required to insert a new review row. Does not include DB-managed fields.
+#[derive(Debug, Clone)]
 pub struct NewReview {
     pub pr_url: String,
     pub provider: String,

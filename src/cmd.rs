@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     env,
     path::Path,
     process::{ExitStatus, Stdio},
@@ -8,7 +7,6 @@ use std::{
 
 use anyhow::Context as _;
 use camino::Utf8PathBuf;
-use secrecy::{ExposeSecret, SecretString};
 use tokio::{fs, process::Command};
 
 static VERBOSE: AtomicBool = AtomicBool::new(false);
@@ -108,7 +106,6 @@ impl CmdOutput {
 
 pub struct Cmd {
     name: String,
-    env_vars: BTreeMap<String, SecretString>,
     args: Vec<String>,
     current_dir: Option<Utf8PathBuf>,
     hide_stdout: bool,
@@ -132,15 +129,9 @@ impl Cmd {
             current_dir: None,
             hide_stdout: false,
             hide_stderr: false,
-            env_vars: BTreeMap::new(),
             title: None,
         }
     }
-
-    // pub fn with_env_vars(&mut self, env_vars: BTreeMap<String, SecretString>) -> &mut Self {
-    //     self.env_vars = env_vars;
-    //     self
-    // }
 
     pub fn with_current_dir(&mut self, dir: impl Into<Utf8PathBuf>) -> &mut Self {
         self.current_dir = Some(dir.into());
@@ -197,9 +188,6 @@ impl Cmd {
         let mut command = Command::new(&self.name);
         if let Some(dir) = &self.current_dir {
             command.current_dir(dir);
-        }
-        for (key, value) in &self.env_vars {
-            command.env(key, value.expose_secret());
         }
         command
     }
