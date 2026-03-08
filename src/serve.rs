@@ -302,7 +302,7 @@ async fn poll_once_async(
 
     let authored_prs_since = db.get_kv("last_authored_prs_fetch")?;
     let authored_prs_now = chrono::Utc::now().to_rfc3339();
-    let authored_prs = github::fetch_authored_open_prs(authored_prs_since.as_deref()).await?;
+    let authored_prs = github::fetch_authored_prs(authored_prs_since.as_deref()).await?;
     db.set_kv("last_authored_prs_fetch", &authored_prs_now)?;
     print_fetched_authored_prs(&authored_prs);
     sync_authored_pr_threads(db, &authored_prs)?;
@@ -421,22 +421,35 @@ async fn poll_once_async(
     })
 }
 
+/// Keeps the `threads` table in sync with the user's authored PRs.
+///
+/// The dashboard shows threads from two sources: GitHub notifications and the
+/// user's own PRs (`source = "my_pr"`). GitHub notifications alone aren't
+/// enough because they only appear when someone else interacts with a PR —
+/// a freshly opened PR with no comments would be invisible on the dashboard.
+///
+/// `authored_prs` contains all PRs updated since the last fetch (any state).
+/// This function:
+/// 1. Deletes `my_pr` threads for PRs that are now closed/merged.
+/// 2. Upserts a thread for every still-open PR, so the dashboard always
+///    lists all of the user's active PRs regardless of notification state.
 fn sync_authored_pr_threads(
     db: &Db,
     authored_prs: &[github::AuthoredPrSummary],
 ) -> anyhow::Result<()> {
-    let keep_pr_urls = authored_prs
+    let closed_pr_urls: Vec<_> = authored_prs
         .iter()
-        .map(|authored| authored.pr_url.clone())
-        .collect::<Vec<_>>();
+        .filter(|pr| !pr.is_open)
+        .map(|pr| pr.pr_url.clone())
+        .collect();
 
     println!(
-        "🗄️ DB delete threads: source=my_pr keep_pr_urls={}",
-        keep_pr_urls.len()
+        "🗄️ DB delete threads: source=my_pr closed_pr_urls={}",
+        closed_pr_urls.len()
     );
-    db.delete_threads_by_source_except_pr_urls("my_pr", &keep_pr_urls)?;
+    db.delete_threads_by_source_and_pr_urls("my_pr", &closed_pr_urls)?;
 
-    for authored in authored_prs {
+    for authored in authored_prs.iter().filter(|pr| pr.is_open) {
         let thread_key = format!("mypr:{}", authored.pr_url);
         let row = db::NewThread {
             thread_key,
@@ -1058,21 +1071,29 @@ mod tests {
             subject_url: Some(stale_pr_url.clone()),
             issue_state: None,
             reason: Some("authored".to_string()),
-            pr_url: Some(stale_pr_url),
+            pr_url: Some(stale_pr_url.clone()),
             unread: false,
             done: false,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         })
         .unwrap();
 
+        let closed_pr = github::AuthoredPrSummary {
+            pr_url: stale_pr_url,
+            repository: "o/r".to_string(),
+            title: "stale".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+            is_open: false,
+        };
         let current_pr = github::AuthoredPrSummary {
             pr_url: "https://github.com/o/r/pull/2".to_string(),
             repository: "o/r".to_string(),
             title: "current".to_string(),
             updated_at: "2026-01-02T00:00:00Z".to_string(),
+            is_open: true,
         };
 
-        sync_authored_pr_threads(&db, std::slice::from_ref(&current_pr)).unwrap();
+        sync_authored_pr_threads(&db, &[closed_pr, current_pr.clone()]).unwrap();
 
         let threads = db.list_dashboard_threads().unwrap();
         assert_eq!(threads.len(), 1);
@@ -1091,6 +1112,7 @@ mod tests {
             repository: "o/r".to_string(),
             title: "current".to_string(),
             updated_at: "2026-01-02T00:00:00Z".to_string(),
+            is_open: true,
         };
 
         sync_authored_pr_threads(&db, std::slice::from_ref(&current_pr)).unwrap();

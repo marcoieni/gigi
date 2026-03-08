@@ -248,6 +248,34 @@ impl Db {
         })
     }
 
+    pub fn delete_threads_by_source_and_pr_urls(
+        &self,
+        source: &str,
+        pr_urls: &[String],
+    ) -> anyhow::Result<()> {
+        if pr_urls.is_empty() {
+            return Ok(());
+        }
+        self.with_conn(|conn| {
+            let mut sql = String::from("DELETE FROM threads WHERE source = ?1 AND pr_url IN (");
+            for idx in 0..pr_urls.len() {
+                if idx > 0 {
+                    sql.push_str(", ");
+                }
+                sql.push('?');
+                sql.push_str(&(idx + 2).to_string());
+            }
+            sql.push(')');
+
+            let mut stmt = conn.prepare(&sql)?;
+            let params = std::iter::once(source.to_string())
+                .chain(pr_urls.iter().cloned())
+                .collect::<Vec<_>>();
+            stmt.execute(rusqlite::params_from_iter(params))?;
+            Ok(())
+        })
+    }
+
     pub fn upsert_pr(&self, row: &NewPr) -> anyhow::Result<()> {
         let now = unix_ts();
         self.with_conn(|conn| {

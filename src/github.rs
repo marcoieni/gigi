@@ -54,6 +54,7 @@ pub struct AuthoredPrSummary {
     pub repository: String,
     pub title: String,
     pub updated_at: String,
+    pub is_open: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -217,20 +218,16 @@ pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Notifica
     })
 }
 
-pub async fn fetch_authored_open_prs(
-    since: Option<&str>,
-) -> anyhow::Result<Vec<AuthoredPrSummary>> {
+pub async fn fetch_authored_prs(since: Option<&str>) -> anyhow::Result<Vec<AuthoredPrSummary>> {
     let mut args = vec![
         "search",
         "prs",
         "--author",
         "@me",
-        "--state",
-        "open",
         "--limit",
         "200",
         "--json",
-        "url,title,updatedAt,repository",
+        "url,title,updatedAt,repository,state",
     ];
     let updated_filter;
     if let Some(since) = since {
@@ -272,6 +269,11 @@ pub async fn fetch_authored_open_prs(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
+        let is_open = item
+            .get("state")
+            .and_then(Value::as_str)
+            .map(|s| s.eq_ignore_ascii_case("open"))
+            .unwrap_or(true);
         let repository = item
             .get("repository")
             .and_then(|v| v.get("nameWithOwner"))
@@ -294,6 +296,7 @@ pub async fn fetch_authored_open_prs(
             repository,
             title,
             updated_at,
+            is_open,
         });
     }
 
