@@ -92,7 +92,7 @@ pub struct NewReview {
 pub struct DashboardThread {
     pub thread_key: String,
     pub github_thread_id: Option<String>,
-    pub source: String,
+    pub sources: Vec<String>,
     pub repository: String,
     pub subject_type: Option<String>,
     pub subject_title: String,
@@ -519,7 +519,7 @@ impl Db {
                 if row.is_archived_pr && row.pr_state.as_deref() == Some("OPEN") {
                     continue;
                 }
-                if !filters.include_source(&row.source) {
+                if !filters.include_sources(&[row.source.clone()]) {
                     continue;
                 }
                 out.push(row.into_dashboard_thread());
@@ -692,7 +692,7 @@ impl DashboardThreadRow {
         DashboardThread {
             thread_key: self.thread_key,
             github_thread_id: self.github_thread_id,
-            source: self.source,
+            sources: vec![self.source],
             repository: self.repository,
             subject_type: self.subject_type,
             subject_title: self.subject_title,
@@ -710,9 +710,8 @@ impl DashboardThreadRow {
 }
 
 impl DashboardThreadFilters {
-    // Handles merged sources like "notification + my_pr" produced by deduplication.
-    fn include_source(self, source: &str) -> bool {
-        source.split(" + ").all(|part| match part {
+    fn include_sources(&self, sources: &[String]) -> bool {
+        sources.iter().all(|s| match s.as_str() {
             "notification" => self.show_notifications,
             "my_pr" => self.show_prs,
             _ => false,
@@ -733,7 +732,7 @@ fn merge_dashboard_thread(existing: &mut DashboardThread, incoming: DashboardThr
         *existing = incoming.clone();
     }
 
-    existing.source = merge_sources(&existing_snapshot.source, &incoming.source);
+    existing.sources = merge_sources(&existing_snapshot.sources, &incoming.sources);
     existing.unread = existing_snapshot.unread || incoming.unread;
     existing.done = existing_snapshot.done && incoming.done;
     existing.updated_at = max_string(
@@ -763,32 +762,26 @@ fn merge_dashboard_thread(existing: &mut DashboardThread, incoming: DashboardThr
 }
 
 fn dashboard_thread_priority(thread: &DashboardThread) -> usize {
-    match (thread.github_thread_id.is_some(), thread.source.as_str()) {
+    match (thread.github_thread_id.is_some(), thread.sources.as_slice()) {
         (true, _) => 2,
-        (false, "my_pr") => 1,
+        (false, sources) if sources.iter().any(|s| s == "my_pr") => 1,
         _ => 0,
     }
 }
 
-fn merge_sources(left: &str, right: &str) -> String {
-    if left == right {
-        return left.to_string();
-    }
-
-    let mut sources = Vec::new();
-    for source in [left, right] {
-        if !sources.iter().any(|existing| existing == &source) {
-            sources.push(source);
+fn merge_sources(left: &[String], right: &[String]) -> Vec<String> {
+    let mut sources: Vec<String> = left.to_vec();
+    for s in right {
+        if !sources.contains(s) {
+            sources.push(s.clone());
         }
     }
-
-    sources.sort_by_key(|source| match *source {
+    sources.sort_by_key(|s| match s.as_str() {
         "notification" => 0,
         "my_pr" => 1,
         _ => 2,
     });
-
-    sources.join(" + ")
+    sources
 }
 
 fn merge_optional_string(
@@ -1404,7 +1397,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(threads.len(), 1);
-        assert_eq!(threads[0].source, "my_pr");
+        assert_eq!(threads[0].sources, vec!["my_pr"]);
         assert_eq!(threads[0].subject_title, "authored");
     }
 
@@ -1492,7 +1485,7 @@ mod tests {
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].github_thread_id.as_deref(), Some("123"));
         assert_eq!(threads[0].thread_key, "notif:123");
-        assert_eq!(threads[0].source, "notification + my_pr");
+        assert_eq!(threads[0].sources, vec!["notification", "my_pr"]);
         assert_eq!(threads[0].subject_title, "Notification title");
         assert_eq!(threads[0].updated_at, "2026-01-02T00:00:00Z");
         assert_eq!(threads[0].pr_state.as_deref(), Some("MERGED"));
@@ -1613,7 +1606,7 @@ mod tests {
         let threads = db.list_dashboard_threads().unwrap();
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].pr_url.as_deref(), Some(keep_pr_url.as_str()));
-        assert_eq!(threads[0].source, "my_pr");
+        assert_eq!(threads[0].sources, vec!["my_pr"]);
     }
 
     #[test]

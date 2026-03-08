@@ -303,7 +303,7 @@ function iconSvg(name) {
 
 function threadStateConfig(thread) {
   const subjectType = thread.subject_type;
-  const prState = thread.pr_state || (thread.source.includes("my_pr") ? "OPEN" : null);
+  const prState = thread.pr_state || (thread.sources.includes("my_pr") ? "OPEN" : null);
 
   if (subjectType === "PullRequest" && prState) {
     if (prState === "MERGED") {
@@ -408,7 +408,7 @@ function buildMeta(meta, thread) {
   meta.appendChild(repositoryLink(thread.repository));
   meta.appendChild(metaSeparator());
 
-  const sources = thread.source.split(" + ");
+  const sources = thread.sources;
   sources.forEach((part, index) => {
     meta.appendChild(sourceBadge(part));
     if (index < sources.length - 1) {
@@ -567,7 +567,7 @@ async function runReview(prUrl) {
 
 async function markDone(thread) {
   const pendingKey = thread.thread_key;
-  const markAuthoredPr = thread.source.split(" + ").includes("my_pr");
+  const markAuthoredPr = thread.sources.includes("my_pr");
   pendingDone.add(pendingKey);
   renderThreads();
   setStatus("Marking done...");
@@ -691,7 +691,7 @@ function threadCard(thread) {
   }
 
   const canMarkDone =
-    !!thread.github_thread_id || thread.source.split(" + ").includes("my_pr");
+    !!thread.github_thread_id || thread.sources.includes("my_pr");
   if (canMarkDone) {
     const donePending = pendingDone.has(thread.thread_key);
     const doneBtn = document.createElement("button");
