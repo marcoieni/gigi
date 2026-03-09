@@ -4,6 +4,7 @@ mod checkout;
 mod cmd;
 mod commit;
 mod config;
+mod dashboard;
 mod db;
 mod github;
 mod init;

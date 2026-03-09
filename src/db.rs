@@ -94,6 +94,9 @@ pub struct DashboardThread {
     pub github_thread_id: Option<String>,
     pub sources: Vec<String>,
     pub repository: String,
+    pub pr_owner: Option<String>,
+    pub pr_repo: Option<String>,
+    pub pr_number: Option<i64>,
     pub subject_type: Option<String>,
     pub subject_title: String,
     pub subject_url: Option<String>,
@@ -105,6 +108,9 @@ pub struct DashboardThread {
     pub updated_at: String,
     pub latest_requires_code_changes: Option<bool>,
     pub pr_state: Option<String>,
+    pub latest_review_content_md: Option<String>,
+    pub latest_review_created_at: Option<i64>,
+    pub latest_review_provider: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -425,16 +431,6 @@ impl Db {
         })
     }
 
-    pub fn latest_review_for_pr(
-        &self,
-        owner: &str,
-        repo: &str,
-        number: i64,
-    ) -> anyhow::Result<Option<StoredReview>> {
-        let pr_url = format!("https://github.com/{owner}/{repo}/pull/{number}");
-        self.latest_review_by_url(&pr_url)
-    }
-
     pub fn latest_review_by_url(&self, pr_url: &str) -> anyhow::Result<Option<StoredReview>> {
         self.with_conn(|conn| {
             conn.query_row(
@@ -483,6 +479,9 @@ impl Db {
                     t.github_thread_id,
                     t.source,
                     t.repository,
+                    p.owner,
+                    p.repo,
+                    p.number,
                     t.subject_type,
                     t.subject_title,
                     t.subject_url,
@@ -492,42 +491,59 @@ impl Db {
                     t.unread,
                     t.done,
                     t.updated_at,
-                    (
-                        SELECT r.requires_code_changes
-                        FROM reviews r
-                        WHERE r.pr_url = t.pr_url
-                        ORDER BY r.id DESC
-                        LIMIT 1
-                    ) AS latest_requires_code_changes,
+                    lr.requires_code_changes AS latest_requires_code_changes,
                     p.state,
-                    COALESCE(p.is_archived, 0)
+                    COALESCE(p.is_archived, 0),
+                    lr.content_md AS latest_review_content_md,
+                    lr.created_at AS latest_review_created_at,
+                    lr.provider AS latest_review_provider
                 FROM threads t
                 LEFT JOIN prs p ON p.pr_url = t.pr_url
+                LEFT JOIN (
+                    SELECT
+                        r.pr_url,
+                        r.requires_code_changes,
+                        r.content_md,
+                        r.created_at,
+                        r.provider
+                    FROM reviews r
+                    INNER JOIN (
+                        SELECT pr_url, MAX(id) AS max_id
+                        FROM reviews
+                        GROUP BY pr_url
+                    ) latest ON latest.pr_url = r.pr_url AND latest.max_id = r.id
+                ) lr ON lr.pr_url = t.pr_url
                 ORDER BY t.updated_at DESC
                 "#,
             )?;
 
             let rows = stmt.query_map([], |row| {
-                let unread: i64 = row.get(10)?;
-                let done: i64 = row.get(11)?;
-                let latest_requires: Option<i64> = row.get(13)?;
+                let unread: i64 = row.get(13)?;
+                let done: i64 = row.get(14)?;
+                let latest_requires: Option<i64> = row.get(16)?;
                 Ok(DashboardThreadRow {
                     thread_key: row.get(0)?,
                     github_thread_id: row.get(1)?,
                     source: row.get(2)?,
                     repository: row.get(3)?,
-                    subject_type: row.get(4)?,
-                    subject_title: row.get(5)?,
-                    subject_url: row.get(6)?,
-                    issue_state: row.get(7)?,
-                    reason: row.get(8)?,
-                    pr_url: row.get(9)?,
+                    pr_owner: row.get(4)?,
+                    pr_repo: row.get(5)?,
+                    pr_number: row.get(6)?,
+                    subject_type: row.get(7)?,
+                    subject_title: row.get(8)?,
+                    subject_url: row.get(9)?,
+                    issue_state: row.get(10)?,
+                    reason: row.get(11)?,
+                    pr_url: row.get(12)?,
                     unread: unread != 0,
                     done: done != 0,
-                    updated_at: row.get(12)?,
+                    updated_at: row.get(15)?,
                     latest_requires_code_changes: latest_requires.map(|v| v != 0),
-                    pr_state: row.get(14)?,
-                    is_archived_pr: row.get::<_, i64>(15)? != 0,
+                    pr_state: row.get(17)?,
+                    is_archived_pr: row.get::<_, i64>(18)? != 0,
+                    latest_review_content_md: row.get(19)?,
+                    latest_review_created_at: row.get(20)?,
+                    latest_review_provider: row.get(21)?,
                 })
             })?;
 
@@ -691,6 +707,9 @@ struct DashboardThreadRow {
     github_thread_id: Option<String>,
     source: String,
     repository: String,
+    pr_owner: Option<String>,
+    pr_repo: Option<String>,
+    pr_number: Option<i64>,
     subject_type: Option<String>,
     subject_title: String,
     subject_url: Option<String>,
@@ -703,6 +722,9 @@ struct DashboardThreadRow {
     latest_requires_code_changes: Option<bool>,
     pr_state: Option<String>,
     is_archived_pr: bool,
+    latest_review_content_md: Option<String>,
+    latest_review_created_at: Option<i64>,
+    latest_review_provider: Option<String>,
 }
 
 impl DashboardThreadRow {
@@ -712,6 +734,9 @@ impl DashboardThreadRow {
             github_thread_id: self.github_thread_id,
             sources: vec![self.source],
             repository: self.repository,
+            pr_owner: self.pr_owner,
+            pr_repo: self.pr_repo,
+            pr_number: self.pr_number,
             subject_type: self.subject_type,
             subject_title: self.subject_title,
             subject_url: self.subject_url,
@@ -723,6 +748,9 @@ impl DashboardThreadRow {
             updated_at: self.updated_at,
             latest_requires_code_changes: self.latest_requires_code_changes,
             pr_state: self.pr_state,
+            latest_review_content_md: self.latest_review_content_md,
+            latest_review_created_at: self.latest_review_created_at,
+            latest_review_provider: self.latest_review_provider,
         }
     }
 }
@@ -761,7 +789,19 @@ fn merge_dashboard_thread(existing: &mut DashboardThread, incoming: DashboardThr
         .latest_requires_code_changes
         .or(incoming.latest_requires_code_changes);
     existing.pr_state = existing_snapshot.pr_state.or(incoming.pr_state);
+    existing.pr_owner = existing_snapshot.pr_owner.or(incoming.pr_owner);
+    existing.pr_repo = existing_snapshot.pr_repo.or(incoming.pr_repo);
+    existing.pr_number = existing_snapshot.pr_number.or(incoming.pr_number);
     existing.issue_state = existing_snapshot.issue_state.or(incoming.issue_state);
+    existing.latest_review_content_md = existing_snapshot
+        .latest_review_content_md
+        .or(incoming.latest_review_content_md);
+    existing.latest_review_created_at = existing_snapshot
+        .latest_review_created_at
+        .or(incoming.latest_review_created_at);
+    existing.latest_review_provider = existing_snapshot
+        .latest_review_provider
+        .or(incoming.latest_review_provider);
     existing.reason = merge_optional_string(
         incoming_preferred,
         existing_snapshot.reason,
@@ -957,6 +997,18 @@ fn unix_ts() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl Db {
+        pub fn latest_review_for_pr(
+            &self,
+            owner: &str,
+            repo: &str,
+            number: i64,
+        ) -> anyhow::Result<Option<StoredReview>> {
+            let pr_url = format!("https://github.com/{owner}/{repo}/pull/{number}");
+            self.latest_review_by_url(&pr_url)
+        }
+    }
 
     fn test_db() -> Db {
         let mut path = std::env::temp_dir();

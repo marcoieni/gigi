@@ -1,43 +1,42 @@
-use std::path::Path;
+use std::convert::Infallible;
 
 use axum::{
-    Json, Router,
-    extract::{Path as AxumPath, Query, State},
-    http::StatusCode,
-    response::IntoResponse,
+    Form, Router,
+    extract::{Path as AxumPath, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    response::{Html, IntoResponse, Response, Sse, sse::Event, sse::KeepAlive},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use tokio::fs;
-use tower_http::services::ServeDir;
+use tokio_stream::{StreamExt as _, wrappers::WatchStream};
 
 use crate::{
     config::AppConfig,
-    serve::{AppState, PollStats},
+    dashboard::{self, DashboardSnapshot},
+    db::DashboardThreadFilters,
+    serve::AppState,
 };
 
-pub async fn run_server(
-    state: std::sync::Arc<AppState>,
-    config: &AppConfig,
-    dashboard_dir: &Path,
-) -> anyhow::Result<()> {
+pub async fn run_server(state: std::sync::Arc<AppState>, config: &AppConfig) -> anyhow::Result<()> {
     let app = Router::new()
+        .route("/", get(dashboard_page))
+        .route("/dashboard/fragment", get(dashboard_fragment))
+        .route("/dashboard/events", get(dashboard_events))
+        .route("/dashboard/actions/filters", post(update_dashboard_filters))
+        .route("/dashboard/actions/done", post(mark_done))
+        .route("/dashboard/actions/open/vscode", post(open_vscode))
+        .route("/dashboard/actions/open/terminal", post(open_terminal))
+        .route("/dashboard/actions/refresh", post(refresh))
         .route(
-            "/api/dashboard/filters",
-            get(get_dashboard_filters).post(update_dashboard_filters),
+            "/dashboard/actions/prs/{owner}/{repo}/{number}/review",
+            post(run_review),
         )
-        .route("/api/threads", get(get_threads))
         .route(
-            "/api/prs/{owner}/{repo}/{number}/review/latest",
-            get(get_latest_review),
+            "/dashboard/actions/prs/{owner}/{repo}/{number}/fix",
+            post(run_fix),
         )
-        .route("/api/prs/{owner}/{repo}/{number}/review", post(run_review))
-        .route("/api/threads/done", post(mark_done))
-        .route("/api/prs/{owner}/{repo}/{number}/fix", post(run_fix))
-        .route("/api/open/vscode", post(open_vscode))
-        .route("/api/open/terminal", post(open_terminal))
-        .route("/api/refresh", post(refresh))
-        .fallback_service(ServeDir::new(dashboard_dir).append_index_html_on_directories(true))
+        .route("/styles.css", get(stylesheet))
+        .route("/app.js", get(script))
         .with_state(state);
 
     let listener =
@@ -56,87 +55,56 @@ pub async fn run_server(
         .map_err(anyhow::Error::from)
 }
 
-pub async fn prepare_dashboard_assets(dashboard_dir: &Path) -> anyhow::Result<()> {
-    fs::create_dir_all(dashboard_dir).await?;
-
-    fs::write(
-        dashboard_dir.join("index.html"),
-        include_str!("../assets/dashboard/index.html"),
-    )
-    .await?;
-    fs::write(
-        dashboard_dir.join("app.js"),
-        include_str!("../assets/dashboard/app.js"),
-    )
-    .await?;
-    fs::write(
-        dashboard_dir.join("styles.css"),
-        include_str!("../assets/dashboard/styles.css"),
-    )
-    .await?;
-
-    Ok(())
+async fn dashboard_page(
+    State(state): State<std::sync::Arc<AppState>>,
+) -> Result<Html<String>, ApiErrorResponse> {
+    let snapshot = load_snapshot(&state).map_err(|err| ApiErrorResponse::internal(&err))?;
+    Ok(Html(dashboard::render_page(&snapshot)))
 }
 
-async fn get_threads(
+async fn dashboard_fragment(
     State(state): State<std::sync::Arc<AppState>>,
-    Query(query): Query<ThreadQuery>,
-) -> Result<Json<Vec<crate::db::DashboardThread>>, ApiErrorResponse> {
-    let default_filters = state
-        .db
-        .dashboard_thread_filters()
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    let threads = state
-        .db
-        .list_dashboard_threads_with_filters(query.resolve(default_filters))
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-
-    Ok(Json(threads))
+) -> Result<Html<String>, ApiErrorResponse> {
+    let snapshot = load_snapshot(&state).map_err(|err| ApiErrorResponse::internal(&err))?;
+    Ok(Html(dashboard::render_fragment(snapshot)))
 }
 
-async fn get_dashboard_filters(
+async fn dashboard_events(
     State(state): State<std::sync::Arc<AppState>>,
-) -> Result<Json<crate::db::DashboardThreadFilters>, ApiErrorResponse> {
-    let filters = state
-        .db
-        .dashboard_thread_filters()
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let stream = WatchStream::new(state.subscribe_dashboard_updates())
+        .skip(1)
+        .map(|update| {
+            Ok(Event::default()
+                .event("update")
+                .data(update.version.to_string()))
+        });
 
-    Ok(Json(filters))
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 async fn update_dashboard_filters(
     State(state): State<std::sync::Arc<AppState>>,
-    Json(filters): Json<crate::db::DashboardThreadFilters>,
+    Form(form): Form<DashboardFiltersForm>,
 ) -> Result<StatusCode, ApiErrorResponse> {
+    let filters = form.into_filters();
     state
         .db
         .set_dashboard_thread_filters(filters)
         .map_err(|err| ApiErrorResponse::internal(&err))?;
-
+    state.notify_dashboard("Filters updated");
     Ok(StatusCode::OK)
-}
-
-async fn get_latest_review(
-    State(state): State<std::sync::Arc<AppState>>,
-    AxumPath((owner, repo, number)): AxumPath<(String, String, i64)>,
-) -> Result<Json<Option<crate::db::StoredReview>>, ApiErrorResponse> {
-    let review = state
-        .db
-        .latest_review_for_pr(&owner, &repo, number)
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(Json(review))
 }
 
 async fn mark_done(
     State(state): State<std::sync::Arc<AppState>>,
-    Json(request): Json<MarkDonePayload>,
+    Form(form): Form<MarkDoneForm>,
 ) -> Result<StatusCode, ApiErrorResponse> {
     state
         .mark_done(crate::serve::MarkDoneRequest {
-            github_thread_id: request.github_thread_id,
-            pr_url: request.pr_url,
-            mark_authored_pr: request.mark_authored_pr,
+            github_thread_id: form.github_thread_id,
+            pr_url: form.pr_url,
+            mark_authored_pr: form.mark_authored_pr,
         })
         .await
         .map_err(|err| ApiErrorResponse::internal(&err))?;
@@ -146,13 +114,12 @@ async fn mark_done(
 async fn run_fix(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath((owner, repo, number)): AxumPath<(String, String, i64)>,
-) -> Result<Json<FixResponse>, ApiErrorResponse> {
-    let output = state
+) -> Result<StatusCode, ApiErrorResponse> {
+    state
         .run_fix(owner, repo, number)
         .await
         .map_err(|err| ApiErrorResponse::internal(&err))?;
-
-    Ok(Json(FixResponse { output }))
+    Ok(StatusCode::OK)
 }
 
 async fn run_review(
@@ -163,23 +130,22 @@ async fn run_review(
         .run_review(owner, repo, number)
         .await
         .map_err(|err| ApiErrorResponse::internal(&err))?;
-
     Ok(StatusCode::OK)
 }
 
 async fn refresh(
     State(state): State<std::sync::Arc<AppState>>,
-) -> Result<Json<PollStats>, ApiErrorResponse> {
-    let stats = state
+) -> Result<StatusCode, ApiErrorResponse> {
+    state
         .poll_once_from_dashboard()
         .await
         .map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(Json(stats))
+    Ok(StatusCode::OK)
 }
 
 async fn open_vscode(
     State(state): State<std::sync::Arc<AppState>>,
-    Json(request): Json<OpenProjectRequest>,
+    Form(request): Form<OpenProjectRequest>,
 ) -> Result<StatusCode, ApiErrorResponse> {
     state
         .open_in_vscode(request.repository, request.pr_url)
@@ -190,7 +156,7 @@ async fn open_vscode(
 
 async fn open_terminal(
     State(state): State<std::sync::Arc<AppState>>,
-    Json(request): Json<OpenProjectRequest>,
+    Form(request): Form<OpenProjectRequest>,
 ) -> Result<StatusCode, ApiErrorResponse> {
     state
         .open_in_terminal(request.repository, request.pr_url)
@@ -199,9 +165,34 @@ async fn open_terminal(
     Ok(StatusCode::OK)
 }
 
-#[derive(Debug, Serialize)]
-struct FixResponse {
-    output: String,
+async fn stylesheet() -> impl IntoResponse {
+    let headers = static_asset_headers("text/css; charset=utf-8");
+    (headers, include_str!("../assets/dashboard/styles.css"))
+}
+
+async fn script() -> impl IntoResponse {
+    let headers = static_asset_headers("application/javascript; charset=utf-8");
+    (headers, include_str!("../assets/dashboard/app.js"))
+}
+
+fn static_asset_headers(content_type: &'static str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=300, must-revalidate"),
+    );
+    headers
+}
+
+fn load_snapshot(state: &AppState) -> anyhow::Result<DashboardSnapshot> {
+    let filters = state.db.dashboard_thread_filters()?;
+    let threads = state.db.list_dashboard_threads_with_filters(filters)?;
+    Ok(DashboardSnapshot {
+        filters,
+        threads,
+        status_message: state.dashboard_status_message(),
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,33 +202,30 @@ struct OpenProjectRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct MarkDonePayload {
+struct MarkDoneForm {
     github_thread_id: Option<String>,
     pr_url: Option<String>,
+    #[serde(default)]
     mark_authored_pr: bool,
 }
 
 #[derive(Debug, Deserialize)]
-struct ThreadQuery {
-    show_notifications: Option<bool>,
-    show_prs: Option<bool>,
-    show_done: Option<bool>,
-    show_not_done: Option<bool>,
+struct DashboardFiltersForm {
+    show_notifications: Option<String>,
+    show_prs: Option<String>,
+    show_done: Option<String>,
+    show_not_done: Option<String>,
+    group_by_repository: Option<String>,
 }
 
-impl ThreadQuery {
-    fn resolve(
-        self,
-        defaults: crate::db::DashboardThreadFilters,
-    ) -> crate::db::DashboardThreadFilters {
-        crate::db::DashboardThreadFilters {
-            show_notifications: self
-                .show_notifications
-                .unwrap_or(defaults.show_notifications),
-            show_prs: self.show_prs.unwrap_or(defaults.show_prs),
-            show_done: self.show_done.unwrap_or(defaults.show_done),
-            show_not_done: self.show_not_done.unwrap_or(defaults.show_not_done),
-            group_by_repository: defaults.group_by_repository,
+impl DashboardFiltersForm {
+    fn into_filters(self) -> DashboardThreadFilters {
+        DashboardThreadFilters {
+            show_notifications: self.show_notifications.is_some(),
+            show_prs: self.show_prs.is_some(),
+            show_done: self.show_done.is_some(),
+            show_not_done: self.show_not_done.is_some(),
+            group_by_repository: self.group_by_repository.is_some(),
         }
     }
 }
@@ -256,8 +244,29 @@ impl ApiErrorResponse {
 }
 
 impl IntoResponse for ApiErrorResponse {
-    fn into_response(self) -> axum::response::Response {
-        let body = Json(ApiError { error: self.1 });
+    fn into_response(self) -> Response {
+        let body = axum::Json(ApiError { error: self.1 });
         (self.0, body).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn static_asset_headers_include_cache_control() {
+        let headers = static_asset_headers("text/css; charset=utf-8");
+
+        assert_eq!(
+            headers.get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("text/css; charset=utf-8"))
+        );
+        assert_eq!(
+            headers.get(header::CACHE_CONTROL),
+            Some(&HeaderValue::from_static(
+                "public, max-age=300, must-revalidate"
+            ))
+        );
     }
 }

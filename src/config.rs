@@ -10,7 +10,6 @@ pub const DEFAULT_KIRO_MODEL: &str = "claude-opus-4.6";
 pub struct AppPaths {
     pub config_path: PathBuf,
     pub db_path: PathBuf,
-    pub dashboard_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,12 +109,9 @@ pub fn resolve_paths() -> anyhow::Result<AppPaths> {
     let config_path = home.join(".config").join("gigi").join("config.toml");
     let data_dir = home.join(".local").join("share").join("gigi");
     let db_path = data_dir.join("gigi.db");
-    let dashboard_dir = data_dir.join("dashboard");
-
     Ok(AppPaths {
         config_path,
         db_path,
-        dashboard_dir,
     })
 }
 
@@ -144,14 +140,6 @@ pub async fn ensure_parent_dirs(paths: &AppPaths) -> anyhow::Result<()> {
             .await
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
     }
-    fs::create_dir_all(&paths.dashboard_dir)
-        .await
-        .with_context(|| {
-            format!(
-                "Failed to create dashboard directory {}",
-                paths.dashboard_dir.display()
-            )
-        })?;
     Ok(())
 }
 
