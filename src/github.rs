@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 use anyhow::Context as _;
 use camino::{Utf8Path, Utf8PathBuf};
@@ -21,13 +22,8 @@ pub struct NotificationThread {
     pub subject_title: String,
     pub subject_url: Option<String>,
     pub pr_url: Option<String>,
+    pub issue_api_url: Option<String>,
     pub issue_state: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct NotificationPollData {
-    pub notifications: Vec<NotificationThread>,
-    pub pr_details: Vec<PrDetails>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,7 +73,7 @@ pub struct PrDetails {
     pub is_cross_repository: bool,
 }
 
-pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<NotificationPollData> {
+pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Vec<NotificationThread>> {
     let endpoint = match since {
         Some(since) => format!("/notifications?since={since}"),
         None => "/notifications".to_string(),
@@ -88,10 +84,7 @@ pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Notifica
     output.ensure_success("❌ Failed to fetch notifications")?;
 
     if output.stdout().trim().is_empty() {
-        return Ok(NotificationPollData {
-            notifications: Vec::new(),
-            pr_details: Vec::new(),
-        });
+        return Ok(Vec::new());
     }
 
     let value: Value =
@@ -104,7 +97,6 @@ pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Notifica
     };
 
     let mut results = Vec::new();
-    let mut pr_details_by_url = HashMap::new();
     for page in pages {
         let Value::Array(entries) = page else {
             continue;
@@ -164,32 +156,8 @@ pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Notifica
             let pr_url = raw_subject_url
                 .as_deref()
                 .and_then(|url| api_url_to_pr_url(url, subject_type.as_deref()));
-            if let Some(pr_url) = pr_url.as_deref()
-                && !pr_details_by_url.contains_key(pr_url)
-            {
-                match fetch_pr_details(pr_url).await {
-                    Ok(details) => {
-                        pr_details_by_url.insert(pr_url.to_string(), details);
-                    }
-                    Err(err) => {
-                        eprintln!(
-                            "⚠️ Failed to fetch PR details for notification {thread_id}: {err}"
-                        );
-                    }
-                }
-            }
-            let issue_state = match (subject_type.as_deref(), raw_subject_url.as_deref()) {
-                (Some("Issue"), Some(subject_api_url)) => {
-                    match fetch_issue_state(subject_api_url).await {
-                        Ok(state) => Some(state),
-                        Err(err) => {
-                            eprintln!(
-                                "⚠️ Failed to fetch issue state for notification {thread_id}: {err}"
-                            );
-                            None
-                        }
-                    }
-                }
+            let issue_api_url = match subject_type.as_deref() {
+                Some("Issue") => raw_subject_url.clone(),
                 _ => None,
             };
             let subject_url = raw_subject_url
@@ -207,15 +175,13 @@ pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Notifica
                 subject_title,
                 subject_url,
                 pr_url,
-                issue_state,
+                issue_api_url,
+                issue_state: None,
             });
         }
     }
 
-    Ok(NotificationPollData {
-        notifications: results,
-        pr_details: pr_details_by_url.into_values().collect(),
-    })
+    Ok(results)
 }
 
 pub async fn fetch_authored_prs(since: Option<&str>) -> anyhow::Result<Vec<AuthoredPrSummary>> {
@@ -410,6 +376,235 @@ pub async fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
     })
 }
 
+/// Parse an issue API URL like `https://api.github.com/repos/<org>/<repo>/issues/123`
+/// into `(owner, repo, number)`.
+struct IssueRef {
+    owner: String,
+    repo: String,
+    number: u64,
+}
+
+fn parse_issue_api_url(api_url: &str) -> Option<IssueRef> {
+    let path = api_url
+        .strip_prefix("https://api.github.com/repos/")
+        .or_else(|| api_url.strip_prefix("repos/"))?;
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() >= 4 && parts[2] == "issues" {
+        let number: u64 = parts[3].parse().ok()?;
+        return Some(IssueRef {
+            owner: parts[0].to_string(),
+            repo: parts[1].to_string(),
+            number,
+        });
+    }
+    None
+}
+
+fn parse_pr_graphql_value(
+    pr_val: &Value,
+    owner: &str,
+    repo: &str,
+    is_archived: bool,
+) -> anyhow::Result<PrDetails> {
+    let number = pr_val
+        .get("number")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let pr_url = format!("https://github.com/{owner}/{repo}/pull/{number}");
+    Ok(PrDetails {
+        pr_url,
+        owner: owner.to_string(),
+        repo: repo.to_string(),
+        number,
+        state: pr_val
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("OPEN")
+            .to_string(),
+        title: pr_val
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("(untitled)")
+            .to_string(),
+        head_ref: pr_val
+            .get("headRefName")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        base_ref: pr_val
+            .get("baseRefName")
+            .and_then(Value::as_str)
+            .unwrap_or("main")
+            .to_string(),
+        head_sha: pr_val
+            .get("headRefOid")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        created_at: pr_val
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        updated_at: pr_val
+            .get("updatedAt")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        is_archived,
+        author_login: pr_val
+            .get("author")
+            .and_then(|v| v.get("login"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        head_repo_owner: pr_val
+            .get("headRepositoryOwner")
+            .and_then(|v| v.get("login"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        head_repo_name: pr_val
+            .get("headRepository")
+            .and_then(|v| v.get("name"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        is_cross_repository: pr_val
+            .get("isCrossRepository")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+/// Result of a batch GraphQL fetch.
+#[derive(Debug, Default)]
+pub struct BatchFetchResult {
+    pub pr_details: HashMap<String, PrDetails>,
+    /// Maps issue API URL to uppercase state string.
+    pub issue_states: HashMap<String, String>,
+}
+
+/// Fetch details for multiple PRs and issue states in a single GraphQL call.
+/// `pr_urls` are HTML PR URLs like `https://github.com/owner/repo/pull/123`.
+/// `issue_api_urls` are REST API URLs like `https://api.github.com/repos/o/r/issues/42`.
+pub async fn fetch_batch(
+    pr_urls: &[String],
+    issue_api_urls: &[String],
+) -> anyhow::Result<BatchFetchResult> {
+    if pr_urls.is_empty() && issue_api_urls.is_empty() {
+        return Ok(BatchFetchResult::default());
+    }
+
+    let pr_fields = "number title state headRefName headRefOid baseRefName \
+                     createdAt updatedAt author { login } \
+                     headRepository { name } headRepositoryOwner { login } \
+                     isCrossRepository";
+
+    let mut query = String::from("query {");
+
+    // Deduplicate PRs by (owner, repo, number)
+    let mut pr_refs: Vec<(String, String, u64, String)> = Vec::new();
+    let mut seen_prs = std::collections::HashSet::new();
+    for url in pr_urls {
+        if let Ok(parsed) = parse_github_pr_url(url) {
+            let key = format!("{}/{}/{}", parsed.owner, parsed.repo, parsed.number);
+            if seen_prs.insert(key) {
+                pr_refs.push((parsed.owner, parsed.repo, parsed.number, url.clone()));
+            }
+        }
+    }
+
+    for (i, (owner, repo, number, _)) in pr_refs.iter().enumerate() {
+        write!(
+            query,
+            " pr{i}: repository(owner: \"{owner}\", name: \"{repo}\") {{ \
+                isArchived pullRequest(number: {number}) {{ {pr_fields} }} \
+            }}"
+        )?;
+    }
+
+    // Deduplicate issues
+    let mut issue_refs: Vec<(IssueRef, String)> = Vec::new();
+    let mut seen_issues = std::collections::HashSet::new();
+    for url in issue_api_urls {
+        if let Some(issue) = parse_issue_api_url(url) {
+            let key = format!("{}/{}/{}", issue.owner, issue.repo, issue.number);
+            if seen_issues.insert(key) {
+                issue_refs.push((issue, url.clone()));
+            }
+        }
+    }
+
+    for (i, (issue, _)) in issue_refs.iter().enumerate() {
+        write!(
+            query,
+            " issue{i}: repository(owner: \"{}\", name: \"{}\") {{ \
+                issue(number: {}) {{ state }} \
+            }}",
+            issue.owner, issue.repo, issue.number
+        )?;
+    }
+
+    query.push('}');
+
+    let output = Cmd::new("gh", ["api", "graphql", "-f", &format!("query={query}")])
+        .run()
+        .await?;
+    output.ensure_success("❌ Failed to run batch GraphQL query")?;
+
+    let response: Value =
+        serde_json::from_str(output.stdout()).context("Invalid batch GraphQL JSON")?;
+    let data = response.get("data").unwrap_or(&Value::Null);
+
+    let mut result = BatchFetchResult::default();
+
+    for (i, (owner, repo, _, pr_url)) in pr_refs.iter().enumerate() {
+        let alias = format!("pr{i}");
+        let Some(repo_val) = data.get(&alias) else {
+            eprintln!("⚠️ Missing GraphQL alias {alias} for {pr_url}");
+            continue;
+        };
+        if repo_val.is_null() {
+            eprintln!("⚠️ GraphQL returned null for {alias} ({pr_url})");
+            continue;
+        }
+        let is_archived = repo_val
+            .get("isArchived")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let Some(pr_val) = repo_val.get("pullRequest") else {
+            eprintln!("⚠️ No pullRequest in {alias} for {pr_url}");
+            continue;
+        };
+        if pr_val.is_null() {
+            eprintln!("⚠️ pullRequest is null for {pr_url}");
+            continue;
+        }
+        match parse_pr_graphql_value(pr_val, owner, repo, is_archived) {
+            Ok(details) => {
+                result.pr_details.insert(pr_url.clone(), details);
+            }
+            Err(err) => {
+                eprintln!("⚠️ Failed to parse PR details for {pr_url}: {err}");
+            }
+        }
+    }
+
+    for (i, (_, api_url)) in issue_refs.iter().enumerate() {
+        let alias = format!("issue{i}");
+        if let Some(state) = data
+            .get(&alias)
+            .and_then(|v| v.get("issue"))
+            .and_then(|v| v.get("state"))
+            .and_then(Value::as_str)
+        {
+            result
+                .issue_states
+                .insert(api_url.clone(), state.to_ascii_uppercase());
+        }
+    }
+
+    Ok(result)
+}
+
 async fn fetch_repository_archived(owner: &str, repo: &str) -> anyhow::Result<bool> {
     let endpoint = format!("/repos/{owner}/{repo}");
     let output = Cmd::new("gh", ["api", &endpoint]).run().await?;
@@ -427,22 +622,6 @@ async fn fetch_repository_archived(owner: &str, repo: &str) -> anyhow::Result<bo
         .get("archived")
         .and_then(Value::as_bool)
         .unwrap_or(false))
-}
-
-async fn fetch_issue_state(subject_api_url: &str) -> anyhow::Result<String> {
-    let endpoint = github_api_endpoint(subject_api_url)
-        .with_context(|| format!("Unsupported GitHub API URL: {subject_api_url}"))?;
-    let output = Cmd::new("gh", ["api", endpoint.as_str(), "--jq", ".state"])
-        .run()
-        .await?;
-    output.ensure_success(format!(
-        "❌ Failed to fetch issue state for {subject_api_url}"
-    ))?;
-    anyhow::ensure!(
-        !output.stdout().trim().is_empty(),
-        "❌ Failed to fetch issue state for {subject_api_url}: empty output"
-    );
-    Ok(output.stdout().trim().to_ascii_uppercase())
 }
 
 pub async fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {
@@ -612,24 +791,6 @@ fn is_diverged_local_branch_error(output: &CmdOutput) -> bool {
 fn is_diverged_local_branch_error_text(details: &str) -> bool {
     details.contains("Diverging branches can't be fast-forwarded")
         || details.contains("Not possible to fast-forward, aborting.")
-}
-
-fn github_api_endpoint(url: &str) -> Option<String> {
-    let trimmed = url.trim();
-
-    if let Some(path) = trimmed.strip_prefix("https://api.github.com/") {
-        return Some(format!("/{}", path.trim_start_matches('/')));
-    }
-
-    if let Some(path) = trimmed.strip_prefix('/') {
-        return Some(format!("/{path}"));
-    }
-
-    if let Some(path) = trimmed.strip_prefix("repos/") {
-        return Some(format!("/{path}"));
-    }
-
-    None
 }
 
 fn api_url_to_pr_url(api_url: &str, subject_type: Option<&str>) -> Option<String> {
@@ -863,12 +1024,6 @@ mod tests {
     fn converts_api_issue_url() {
         let issue = api_url_to_html_url("https://api.github.com/repos/o/r/issues/123").unwrap();
         assert_eq!(issue, "https://github.com/o/r/issues/123");
-    }
-
-    #[test]
-    fn converts_api_url_to_gh_endpoint() {
-        let endpoint = github_api_endpoint("https://api.github.com/repos/o/r/issues/123").unwrap();
-        assert_eq!(endpoint, "/repos/o/r/issues/123");
     }
 
     #[test]
