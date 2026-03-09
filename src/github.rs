@@ -378,14 +378,24 @@ pub async fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
 
 /// Parse an issue API URL like `https://api.github.com/repos/<org>/<repo>/issues/123`
 /// into `(owner, repo, number)`.
-fn parse_issue_api_url(api_url: &str) -> Option<(String, String, u64)> {
+struct IssueRef {
+    owner: String,
+    repo: String,
+    number: u64,
+}
+
+fn parse_issue_api_url(api_url: &str) -> Option<IssueRef> {
     let path = api_url
         .strip_prefix("https://api.github.com/repos/")
         .or_else(|| api_url.strip_prefix("repos/"))?;
     let parts: Vec<&str> = path.split('/').collect();
     if parts.len() >= 4 && parts[2] == "issues" {
         let number: u64 = parts[3].parse().ok()?;
-        return Some((parts[0].to_string(), parts[1].to_string(), number));
+        return Some(IssueRef {
+            owner: parts[0].to_string(),
+            repo: parts[1].to_string(),
+            number,
+        });
     }
     None
 }
@@ -512,23 +522,24 @@ pub async fn fetch_batch(
     }
 
     // Deduplicate issues
-    let mut issue_refs: Vec<(String, String, u64, String)> = Vec::new();
+    let mut issue_refs: Vec<(IssueRef, String)> = Vec::new();
     let mut seen_issues = std::collections::HashSet::new();
     for url in issue_api_urls {
-        if let Some((owner, repo, number)) = parse_issue_api_url(url) {
-            let key = format!("{owner}/{repo}/{number}");
+        if let Some(issue) = parse_issue_api_url(url) {
+            let key = format!("{}/{}/{}", issue.owner, issue.repo, issue.number);
             if seen_issues.insert(key) {
-                issue_refs.push((owner, repo, number, url.clone()));
+                issue_refs.push((issue, url.clone()));
             }
         }
     }
 
-    for (i, (owner, repo, number, _)) in issue_refs.iter().enumerate() {
+    for (i, (issue, _)) in issue_refs.iter().enumerate() {
         write!(
             query,
-            " issue{i}: repository(owner: \"{owner}\", name: \"{repo}\") {{ \
-                issue(number: {number}) {{ state }} \
-            }}"
+            " issue{i}: repository(owner: \"{}\", name: \"{}\") {{ \
+                issue(number: {}) {{ state }} \
+            }}",
+            issue.owner, issue.repo, issue.number
         )?;
     }
 
@@ -577,7 +588,7 @@ pub async fn fetch_batch(
         }
     }
 
-    for (i, (_, _, _, api_url)) in issue_refs.iter().enumerate() {
+    for (i, (_, api_url)) in issue_refs.iter().enumerate() {
         let alias = format!("issue{i}");
         if let Some(state) = data
             .get(&alias)
