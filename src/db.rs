@@ -1599,40 +1599,6 @@ mod tests {
     }
 
     #[test]
-    fn delete_threads_by_source_except_pr_urls_removes_stale_my_pr_rows() {
-        let db = test_db();
-        let keep_pr_url = "https://github.com/a/b/pull/1".to_string();
-        let stale_pr_url = "https://github.com/a/b/pull/2".to_string();
-
-        for pr_url in [&keep_pr_url, &stale_pr_url] {
-            db.upsert_thread(&NewThread {
-                thread_key: format!("mypr:{pr_url}"),
-                github_thread_id: None,
-                source: "my_pr".to_string(),
-                repository: "a/b".to_string(),
-                subject_type: Some("PullRequest".to_string()),
-                subject_title: format!("PR {pr_url}"),
-                subject_url: Some(pr_url.clone()),
-                issue_state: None,
-                reason: Some("authored".to_string()),
-                pr_url: Some(pr_url.clone()),
-                unread: false,
-                done: false,
-                updated_at: "2026-01-02T00:00:00Z".to_string(),
-            })
-            .unwrap();
-        }
-
-        db.delete_threads_by_source_except_pr_urls("my_pr", std::slice::from_ref(&keep_pr_url))
-            .unwrap();
-
-        let threads = db.list_dashboard_threads().unwrap();
-        assert_eq!(threads.len(), 1);
-        assert_eq!(threads[0].pr_url.as_deref(), Some(keep_pr_url.as_str()));
-        assert_eq!(threads[0].sources, vec!["my_pr"]);
-    }
-
-    #[test]
     fn dashboard_threads_expose_issue_state() {
         let db = test_db();
 

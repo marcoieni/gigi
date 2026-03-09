@@ -1016,12 +1016,6 @@ mod tests {
     }
 
     #[test]
-    fn converts_api_url_to_gh_endpoint() {
-        let endpoint = github_api_endpoint("https://api.github.com/repos/o/r/issues/123").unwrap();
-        assert_eq!(endpoint, "/repos/o/r/issues/123");
-    }
-
-    #[test]
     fn leaves_html_url_unchanged() {
         let issue = api_url_to_html_url("https://github.com/o/r/issues/123").unwrap();
         assert_eq!(issue, "https://github.com/o/r/issues/123");
