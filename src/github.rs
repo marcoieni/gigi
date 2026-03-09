@@ -613,7 +613,6 @@ async fn fetch_repository_archived(owner: &str, repo: &str) -> anyhow::Result<bo
         .unwrap_or(false))
 }
 
-
 pub async fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {
     let endpoint = format!("/notifications/threads/{thread_id}");
     let output = Cmd::new("gh", ["api", "-X", "DELETE", &endpoint])
@@ -782,7 +781,6 @@ fn is_diverged_local_branch_error_text(details: &str) -> bool {
     details.contains("Diverging branches can't be fast-forwarded")
         || details.contains("Not possible to fast-forward, aborting.")
 }
-
 
 fn api_url_to_pr_url(api_url: &str, subject_type: Option<&str>) -> Option<String> {
     let trimmed = api_url.trim();
