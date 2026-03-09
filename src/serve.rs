@@ -20,6 +20,13 @@ pub struct AppState {
     pub config: AppConfig,
     pub work_dir: Utf8PathBuf,
     pub poll_lock: Arc<tokio::sync::Mutex<()>>,
+    pub dashboard_updates: tokio::sync::watch::Sender<DashboardUpdate>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DashboardUpdate {
+    pub version: u64,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,17 +61,21 @@ pub async fn run_serve() -> anyhow::Result<()> {
 
     let cfg = config::load_config(&paths.config_path).await?;
     let db = Db::new(&paths.db_path)?;
-    web::prepare_dashboard_assets(&paths.dashboard_dir).await?;
-
     let current_dir = std::env::current_dir().context("Failed to read current directory")?;
     let work_dir = Utf8PathBuf::from_path_buf(current_dir)
         .map_err(|p| anyhow::anyhow!("Current directory is not valid UTF-8: {}", p.display()))?;
+
+    let (dashboard_updates, _) = tokio::sync::watch::channel(DashboardUpdate {
+        version: 0,
+        message: "Waiting for the first poll...".to_string(),
+    });
 
     let state = Arc::new(AppState {
         db,
         config: cfg.clone(),
         work_dir,
         poll_lock: Arc::new(tokio::sync::Mutex::new(())),
+        dashboard_updates,
     });
 
     let browser_url = dashboard_browser_url(&cfg);
@@ -100,7 +111,7 @@ pub async fn run_serve() -> anyhow::Result<()> {
     });
 
     tokio::select! {
-        server_result = web::run_server(state, &cfg, &paths.dashboard_dir) => {
+        server_result = web::run_server(state, &cfg) => {
             poll_handle.abort();
             startup_handle.abort();
             server_result
@@ -127,22 +138,75 @@ fn print_poll_stats(prefix: &str, stats: &PollStats) {
 }
 
 impl AppState {
+    pub fn dashboard_status_message(&self) -> String {
+        self.dashboard_updates.borrow().message.clone()
+    }
+
+    pub fn subscribe_dashboard_updates(&self) -> tokio::sync::watch::Receiver<DashboardUpdate> {
+        self.dashboard_updates.subscribe()
+    }
+
+    pub fn notify_dashboard(&self, message: impl Into<String>) {
+        let next = {
+            let current = self.dashboard_updates.borrow().clone();
+            DashboardUpdate {
+                version: current.version.saturating_add(1),
+                message: message.into(),
+            }
+        };
+        drop(self.dashboard_updates.send(next));
+    }
+
     pub async fn poll_once_from_dashboard(&self) -> anyhow::Result<PollStats> {
         println!("🔄 Dashboard refresh requested");
         let result = self.poll_once_regular().await;
         match &result {
-            Ok(stats) => print_poll_stats("✅ Dashboard refresh complete:", stats),
-            Err(err) => eprintln!("❌ Dashboard refresh failed: {err}"),
+            Ok(stats) => {
+                print_poll_stats("✅ Dashboard refresh complete:", stats);
+                self.notify_dashboard(format!(
+                    "Refresh complete: notifications={}, my_prs={}, prs={}, reviews={}",
+                    stats.notifications_fetched,
+                    stats.authored_prs_fetched,
+                    stats.prs_seen,
+                    stats.reviews_run
+                ));
+            }
+            Err(err) => {
+                eprintln!("❌ Dashboard refresh failed: {err}");
+                self.notify_dashboard(format!("Refresh failed: {err}"));
+            }
         }
         result
     }
 
     pub async fn poll_once_startup(&self) -> anyhow::Result<PollStats> {
-        self.poll_once_with_mode(PollMode::Startup).await
+        let result = self.poll_once_with_mode(PollMode::Startup).await;
+        match &result {
+            Ok(stats) => self.notify_dashboard(format!(
+                "Initial poll complete: notifications={}, my_prs={}, prs={}, reviews={}",
+                stats.notifications_fetched,
+                stats.authored_prs_fetched,
+                stats.prs_seen,
+                stats.reviews_run
+            )),
+            Err(err) => self.notify_dashboard(format!("Initial poll failed: {err}")),
+        }
+        result
     }
 
     pub async fn poll_once_regular(&self) -> anyhow::Result<PollStats> {
-        self.poll_once_with_mode(PollMode::Regular).await
+        let result = self.poll_once_with_mode(PollMode::Regular).await;
+        match &result {
+            Ok(stats) => self.notify_dashboard(format!(
+                "Background poll complete: notifications={}, my_prs={}, prs={}, reviews={}",
+                stats.notifications_fetched,
+                stats.authored_prs_fetched,
+                stats.prs_seen,
+                stats.reviews_run
+            )),
+            Err(err) => self.notify_dashboard(format!("Background poll failed: {err}")),
+        }
+        result
     }
 
     async fn poll_once_with_mode(&self, mode: PollMode) -> anyhow::Result<PollStats> {
@@ -172,6 +236,7 @@ impl AppState {
         }
 
         anyhow::ensure!(marked_any, "No done action requested");
+        self.notify_dashboard("Marked item done");
         Ok(())
     }
 
@@ -206,6 +271,7 @@ impl AppState {
             Ok(text) => {
                 self.db
                     .insert_fix_run(&pr_url, provider_name(provider), "success", &text)?;
+                self.notify_dashboard(format!("Fix run completed for {pr_url}"));
                 Ok(text)
             }
             Err(err) => {
@@ -215,6 +281,7 @@ impl AppState {
                     "error",
                     &err.to_string(),
                 )?;
+                self.notify_dashboard(format!("Fix run failed for {pr_url}: {err}"));
                 Err(err)
             }
         }
@@ -233,8 +300,14 @@ impl AppState {
         .await;
 
         match &result {
-            Ok(()) => println!("✅ Review finished: {pr_url}"),
-            Err(err) => eprintln!("❌ Review failed: {pr_url}: {err}"),
+            Ok(()) => {
+                println!("✅ Review finished: {pr_url}");
+                self.notify_dashboard(format!("Review finished for {pr_url}"));
+            }
+            Err(err) => {
+                eprintln!("❌ Review failed: {pr_url}: {err}");
+                self.notify_dashboard(format!("Review failed for {pr_url}: {err}"));
+            }
         }
 
         result
@@ -252,8 +325,14 @@ impl AppState {
         let result = launcher::open_vscode(&repo_dir).await;
 
         match &result {
-            Ok(()) => println!("✅ VS Code opened: {target_label}"),
-            Err(err) => eprintln!("❌ Failed to open VS Code for {target_label}: {err}"),
+            Ok(()) => {
+                println!("✅ VS Code opened: {target_label}");
+                self.notify_dashboard(format!("Opened VS Code for {target_label}"));
+            }
+            Err(err) => {
+                eprintln!("❌ Failed to open VS Code for {target_label}: {err}");
+                self.notify_dashboard(format!("Failed to open VS Code for {target_label}: {err}"));
+            }
         }
 
         result
@@ -271,8 +350,14 @@ impl AppState {
         let result = launcher::open_terminal(&repo_dir).await;
 
         match &result {
-            Ok(()) => println!("✅ Terminal opened: {target_label}"),
-            Err(err) => eprintln!("❌ Failed to open Terminal for {target_label}: {err}"),
+            Ok(()) => {
+                println!("✅ Terminal opened: {target_label}");
+                self.notify_dashboard(format!("Opened Terminal for {target_label}"));
+            }
+            Err(err) => {
+                eprintln!("❌ Failed to open Terminal for {target_label}: {err}");
+                self.notify_dashboard(format!("Failed to open Terminal for {target_label}: {err}"));
+            }
         }
 
         result
