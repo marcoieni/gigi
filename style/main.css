@@ -68,11 +68,6 @@ body {
   opacity: 0.75;
 }
 
-.btn.loading,
-.pill:disabled {
-  position: relative;
-}
-
 .status {
   font-size: 14px;
   color: var(--muted);
@@ -232,25 +227,6 @@ body {
   color: var(--accent);
 }
 
-.source-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  color: var(--muted);
-}
-
-.source-badge svg {
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
 .pill {
   display: inline-flex;
   align-items: center;
@@ -307,15 +283,6 @@ body {
   color: var(--danger);
 }
 
-.spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 999px;
-  animation: spin 0.75s linear infinite;
-}
-
 .unread-dot {
   width: 10px;
   height: 10px;
@@ -323,17 +290,28 @@ body {
   background: #1f6feb;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+.empty {
+  color: var(--muted);
+  text-align: center;
+  padding: 48px 0;
 }
 
-dialog {
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.review-dialog {
   width: min(90vw, 900px);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 0;
+  background: var(--card);
 }
 
 .modal-head {

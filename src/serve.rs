@@ -68,7 +68,6 @@ pub async fn run_serve() -> anyhow::Result<()> {
 
     let cfg = config::load_config(&paths.config_path).await?;
     let db = Db::new(&paths.db_path)?;
-    web::prepare_dashboard_assets(&paths.dashboard_dir).await?;
 
     let current_dir = std::env::current_dir().context("Failed to read current directory")?;
     let work_dir = Utf8PathBuf::from_path_buf(current_dir)
@@ -127,7 +126,7 @@ pub async fn run_serve() -> anyhow::Result<()> {
     });
 
     tokio::select! {
-        server_result = web::run_server(state, &cfg, &paths.dashboard_dir) => {
+        server_result = web::run_server(state, &cfg) => {
             poll_handle.abort();
             startup_handle.abort();
             server_result

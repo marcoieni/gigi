@@ -104,6 +104,7 @@ impl CmdOutput {
     }
 }
 
+#[derive(Debug)]
 pub struct Cmd {
     name: String,
     args: Vec<String>,
