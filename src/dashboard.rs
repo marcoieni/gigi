@@ -324,8 +324,14 @@ fn grouped_threads(threads: &[DashboardThread]) -> Vec<(String, Vec<DashboardThr
 
     let mut grouped: Vec<_> = groups.into_iter().collect();
     grouped.sort_by(|(repository_a, threads_a), (repository_b, threads_b)| {
-        let latest_a = threads_a.iter().map(|thread| thread.updated_at.as_str()).max();
-        let latest_b = threads_b.iter().map(|thread| thread.updated_at.as_str()).max();
+        let latest_a = threads_a
+            .iter()
+            .map(|thread| thread.updated_at.as_str())
+            .max();
+        let latest_b = threads_b
+            .iter()
+            .map(|thread| thread.updated_at.as_str())
+            .max();
         latest_b
             .cmp(&latest_a)
             .then_with(|| repository_a.cmp(repository_b))

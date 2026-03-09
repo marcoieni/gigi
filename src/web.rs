@@ -264,7 +264,9 @@ mod tests {
         );
         assert_eq!(
             headers.get(header::CACHE_CONTROL),
-            Some(&HeaderValue::from_static("public, max-age=300, must-revalidate"))
+            Some(&HeaderValue::from_static(
+                "public, max-age=300, must-revalidate"
+            ))
         );
     }
 }
