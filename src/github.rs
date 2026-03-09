@@ -613,21 +613,6 @@ async fn fetch_repository_archived(owner: &str, repo: &str) -> anyhow::Result<bo
         .unwrap_or(false))
 }
 
-async fn fetch_issue_state(subject_api_url: &str) -> anyhow::Result<String> {
-    let endpoint = github_api_endpoint(subject_api_url)
-        .with_context(|| format!("Unsupported GitHub API URL: {subject_api_url}"))?;
-    let output = Cmd::new("gh", ["api", endpoint.as_str(), "--jq", ".state"])
-        .run()
-        .await?;
-    output.ensure_success(format!(
-        "❌ Failed to fetch issue state for {subject_api_url}"
-    ))?;
-    anyhow::ensure!(
-        !output.stdout().trim().is_empty(),
-        "❌ Failed to fetch issue state for {subject_api_url}: empty output"
-    );
-    Ok(output.stdout().trim().to_ascii_uppercase())
-}
 
 pub async fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {
     let endpoint = format!("/notifications/threads/{thread_id}");
@@ -798,23 +783,6 @@ fn is_diverged_local_branch_error_text(details: &str) -> bool {
         || details.contains("Not possible to fast-forward, aborting.")
 }
 
-fn github_api_endpoint(url: &str) -> Option<String> {
-    let trimmed = url.trim();
-
-    if let Some(path) = trimmed.strip_prefix("https://api.github.com/") {
-        return Some(format!("/{}", path.trim_start_matches('/')));
-    }
-
-    if let Some(path) = trimmed.strip_prefix('/') {
-        return Some(format!("/{path}"));
-    }
-
-    if let Some(path) = trimmed.strip_prefix("repos/") {
-        return Some(format!("/{path}"));
-    }
-
-    None
-}
 
 fn api_url_to_pr_url(api_url: &str, subject_type: Option<&str>) -> Option<String> {
     let trimmed = api_url.trim();
