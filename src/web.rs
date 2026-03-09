@@ -166,21 +166,23 @@ async fn open_terminal(
 }
 
 async fn stylesheet() -> impl IntoResponse {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/css; charset=utf-8"),
-    );
+    let headers = static_asset_headers("text/css; charset=utf-8");
     (headers, include_str!("../assets/dashboard/styles.css"))
 }
 
 async fn script() -> impl IntoResponse {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/javascript; charset=utf-8"),
-    );
+    let headers = static_asset_headers("application/javascript; charset=utf-8");
     (headers, include_str!("../assets/dashboard/app.js"))
+}
+
+fn static_asset_headers(content_type: &'static str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=300, must-revalidate"),
+    );
+    headers
 }
 
 fn load_snapshot(state: &AppState) -> anyhow::Result<DashboardSnapshot> {
@@ -245,5 +247,24 @@ impl IntoResponse for ApiErrorResponse {
     fn into_response(self) -> Response {
         let body = axum::Json(ApiError { error: self.1 });
         (self.0, body).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn static_asset_headers_include_cache_control() {
+        let headers = static_asset_headers("text/css; charset=utf-8");
+
+        assert_eq!(
+            headers.get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("text/css; charset=utf-8"))
+        );
+        assert_eq!(
+            headers.get(header::CACHE_CONTROL),
+            Some(&HeaderValue::from_static("public, max-age=300, must-revalidate"))
+        );
     }
 }

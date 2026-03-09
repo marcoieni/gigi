@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use leptos::prelude::*;
 
@@ -314,14 +314,23 @@ fn SourceBadge(source: String) -> impl IntoView {
 }
 
 fn grouped_threads(threads: &[DashboardThread]) -> Vec<(String, Vec<DashboardThread>)> {
-    let mut groups = BTreeMap::<String, Vec<DashboardThread>>::new();
+    let mut groups = HashMap::<String, Vec<DashboardThread>>::new();
     for thread in threads {
         groups
             .entry(thread.repository.clone())
             .or_default()
             .push(thread.clone());
     }
-    groups.into_iter().collect()
+
+    let mut grouped: Vec<_> = groups.into_iter().collect();
+    grouped.sort_by(|(repository_a, threads_a), (repository_b, threads_b)| {
+        let latest_a = threads_a.iter().map(|thread| thread.updated_at.as_str()).max();
+        let latest_b = threads_b.iter().map(|thread| thread.updated_at.as_str()).max();
+        latest_b
+            .cmp(&latest_a)
+            .then_with(|| repository_a.cmp(repository_b))
+    });
+    grouped
 }
 
 fn source_label(source: &str) -> &'static str {
@@ -381,5 +390,53 @@ fn svg_icon(paths: &'static [&'static str]) -> impl IntoView {
         <svg viewBox="0 0 24 24" aria-hidden="true">
             {paths.iter().map(|path| view! { <path d=*path /> }).collect::<Vec<_>>()}
         </svg>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_thread(repository: &str, updated_at: &str) -> DashboardThread {
+        DashboardThread {
+            thread_key: format!("{repository}:{updated_at}"),
+            github_thread_id: None,
+            sources: vec!["notification".to_string()],
+            repository: repository.to_string(),
+            pr_owner: None,
+            pr_repo: None,
+            pr_number: None,
+            subject_type: None,
+            subject_title: "subject".to_string(),
+            subject_url: None,
+            issue_state: None,
+            reason: None,
+            pr_url: None,
+            unread: false,
+            done: false,
+            updated_at: updated_at.to_string(),
+            latest_requires_code_changes: None,
+            pr_state: None,
+            latest_review_content_md: None,
+            latest_review_created_at: None,
+            latest_review_provider: None,
+        }
+    }
+
+    #[test]
+    fn grouped_threads_orders_repositories_by_latest_updated_at_desc() {
+        let threads = vec![
+            test_thread("beta/repo", "2026-01-03T00:00:00Z"),
+            test_thread("alpha/repo", "2026-01-02T00:00:00Z"),
+            test_thread("alpha/repo", "2026-01-01T00:00:00Z"),
+        ];
+
+        let groups = grouped_threads(&threads);
+        let repositories = groups
+            .into_iter()
+            .map(|(repository, _)| repository)
+            .collect::<Vec<_>>();
+
+        assert_eq!(repositories, vec!["beta/repo", "alpha/repo"]);
     }
 }

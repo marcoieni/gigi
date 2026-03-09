@@ -491,38 +491,28 @@ impl Db {
                     t.unread,
                     t.done,
                     t.updated_at,
-                    (
-                        SELECT r.requires_code_changes
-                        FROM reviews r
-                        WHERE r.pr_url = t.pr_url
-                        ORDER BY r.id DESC
-                        LIMIT 1
-                    ) AS latest_requires_code_changes,
+                    lr.requires_code_changes AS latest_requires_code_changes,
                     p.state,
                     COALESCE(p.is_archived, 0),
-                    (
-                        SELECT r.content_md
-                        FROM reviews r
-                        WHERE r.pr_url = t.pr_url
-                        ORDER BY r.id DESC
-                        LIMIT 1
-                    ) AS latest_review_content_md,
-                    (
-                        SELECT r.created_at
-                        FROM reviews r
-                        WHERE r.pr_url = t.pr_url
-                        ORDER BY r.id DESC
-                        LIMIT 1
-                    ) AS latest_review_created_at,
-                    (
-                        SELECT r.provider
-                        FROM reviews r
-                        WHERE r.pr_url = t.pr_url
-                        ORDER BY r.id DESC
-                        LIMIT 1
-                    ) AS latest_review_provider
+                    lr.content_md AS latest_review_content_md,
+                    lr.created_at AS latest_review_created_at,
+                    lr.provider AS latest_review_provider
                 FROM threads t
                 LEFT JOIN prs p ON p.pr_url = t.pr_url
+                LEFT JOIN (
+                    SELECT
+                        r.pr_url,
+                        r.requires_code_changes,
+                        r.content_md,
+                        r.created_at,
+                        r.provider
+                    FROM reviews r
+                    INNER JOIN (
+                        SELECT pr_url, MAX(id) AS max_id
+                        FROM reviews
+                        GROUP BY pr_url
+                    ) latest ON latest.pr_url = r.pr_url AND latest.max_id = r.id
+                ) lr ON lr.pr_url = t.pr_url
                 ORDER BY t.updated_at DESC
                 "#,
             )?;
