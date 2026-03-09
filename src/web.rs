@@ -59,7 +59,7 @@ async fn dashboard_page(
     State(state): State<std::sync::Arc<AppState>>,
 ) -> Result<Html<String>, ApiErrorResponse> {
     let snapshot = load_snapshot(&state).map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(Html(dashboard::render_page(snapshot)))
+    Ok(Html(dashboard::render_page(&snapshot)))
 }
 
 async fn dashboard_fragment(

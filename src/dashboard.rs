@@ -58,7 +58,7 @@ pub struct DashboardSnapshot {
     pub status_message: String,
 }
 
-pub fn render_page(snapshot: DashboardSnapshot) -> String {
+pub fn render_page(snapshot: &DashboardSnapshot) -> String {
     view! {
         <!doctype html>
         <html lang="en">
@@ -334,7 +334,6 @@ fn source_label(source: &str) -> &'static str {
 
 fn source_icon_paths(source: &str) -> &'static [&'static str] {
     match source {
-        "notification" => NOTIFICATION_ICON_PATHS,
         "my_pr" => MY_PR_ICON_PATHS,
         _ => NOTIFICATION_ICON_PATHS,
     }
