@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -294,11 +294,9 @@ async fn poll_once_async(
 ) -> anyhow::Result<PollStats> {
     let since = db.get_kv("last_notifications_fetch")?;
     let now = chrono::Utc::now().to_rfc3339();
-    let notification_data = github::fetch_notifications(since.as_deref()).await?;
+    let mut notifications = github::fetch_notifications(since.as_deref()).await?;
     db.set_kv("last_notifications_fetch", &now)?;
-    let notifications = notification_data.notifications;
     print_fetched_notifications(&notifications);
-    print_prefetched_pr_details(&notification_data.pr_details);
 
     let authored_prs_since = db.get_kv("last_authored_prs_fetch")?;
     let authored_prs_now = chrono::Utc::now().to_rfc3339();
@@ -307,15 +305,31 @@ async fn poll_once_async(
     print_fetched_authored_prs(&authored_prs);
     sync_authored_pr_threads(db, &authored_prs)?;
 
-    let mut known_pr_details = notification_data
-        .pr_details
-        .into_iter()
-        .map(|details| {
-            let pr_url = details.pr_url.clone();
-            (pr_url, details)
-        })
-        .collect::<HashMap<_, _>>();
+    // Collect all PR URLs and issue API URLs for batch fetch.
     let mut pr_urls = HashSet::new();
+    for n in &notifications {
+        if let Some(pr_url) = &n.pr_url {
+            pr_urls.insert(pr_url.clone());
+        }
+    }
+    for authored in &authored_prs {
+        pr_urls.insert(authored.pr_url.clone());
+    }
+
+    let issue_api_urls: Vec<String> = notifications
+        .iter()
+        .filter_map(|n| n.issue_api_url.clone())
+        .collect();
+
+    let pr_url_list: Vec<String> = pr_urls.iter().cloned().collect();
+    let batch = github::fetch_batch(&pr_url_list, &issue_api_urls).await?;
+
+    // Fill in issue states on notifications from batch result.
+    for n in &mut notifications {
+        if let Some(api_url) = &n.issue_api_url {
+            n.issue_state = batch.issue_states.get(api_url).cloned();
+        }
+    }
 
     for notification in &notifications {
         let thread_key = format!("notif:{}", notification.thread_id);
@@ -336,14 +350,6 @@ async fn poll_once_async(
         };
         db.upsert_thread(&row)?;
         print_thread_db_write(&row);
-
-        if let Some(pr_url) = &notification.pr_url {
-            pr_urls.insert(pr_url.clone());
-        }
-    }
-
-    for authored in &authored_prs {
-        pr_urls.insert(authored.pr_url.clone());
     }
 
     let startup_limits = (mode == PollMode::Startup).then_some(StartupReviewLimits {
@@ -355,15 +361,11 @@ async fn poll_once_async(
     let mut review_candidates = Vec::new();
 
     for pr_url in &pr_urls {
-        let details = if let Some(details) = known_pr_details.remove(pr_url) {
-            details
-        } else {
-            match github::fetch_pr_details(pr_url).await {
-                Ok(details) => details,
-                Err(err) => {
-                    eprintln!("⚠️ Failed to fetch PR details for {pr_url}: {err}");
-                    continue;
-                }
+        let details = match batch.pr_details.get(pr_url) {
+            Some(details) => details.clone(),
+            None => {
+                eprintln!("⚠️ No PR details from batch for {pr_url}");
+                continue;
             }
         };
 
@@ -504,16 +506,6 @@ fn print_fetched_notifications(notifications: &[github::NotificationThread]) {
             notification.updated_at,
             notification.subject_title
         );
-    }
-}
-
-fn print_prefetched_pr_details(details_list: &[github::PrDetails]) {
-    println!(
-        "📥 PR details fetched from notifications: {}",
-        details_list.len()
-    );
-    for details in details_list {
-        print_pr_details("Notification PR details", details);
     }
 }
 
