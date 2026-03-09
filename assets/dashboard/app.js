@@ -810,6 +810,51 @@ async function initializeDashboard() {
     setStatus(`Loading saved filters failed: ${err.message}`);
   }
   await loadThreads();
+  connectEventSource();
+}
+
+function connectEventSource() {
+  const evtSource = new EventSource("/api/events");
+
+  evtSource.addEventListener("poll_complete", async (e) => {
+    try {
+      const stats = JSON.parse(e.data);
+      setStatus(
+        `Auto-refreshed: notifications=${stats.notifications_fetched}, my_prs=${stats.authored_prs_fetched}, reviews=${stats.reviews_run}`
+      );
+    } catch {
+      // ignore parse errors
+    }
+    await loadThreads();
+  });
+
+  evtSource.addEventListener("review_complete", async (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      const prUrl = data.pr_url;
+      if (prUrl) {
+        const parsed = parsePrUrl(prUrl);
+        if (parsed) {
+          const latestReview = await api(
+            `/api/prs/${parsed.owner}/${parsed.repo}/${parsed.number}/review/latest`
+          );
+          updateThreadsForPr(prUrl, (thread) => ({
+            ...thread,
+            latest_requires_code_changes: latestReview?.requires_code_changes ?? null,
+          }));
+          if (activeReviewPrUrl === prUrl && modal.open) {
+            reviewContent.textContent = latestReview?.content_md || "No review stored yet.";
+          }
+        }
+      }
+    } catch {
+      // ignore parse errors
+    }
+  });
+
+  evtSource.onerror = () => {
+    // EventSource auto-reconnects; nothing extra needed.
+  };
 }
 
 initializeDashboard();

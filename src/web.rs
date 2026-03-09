@@ -4,16 +4,22 @@ use axum::{
     Json, Router,
     extract::{Path as AxumPath, Query, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{
+        IntoResponse,
+        sse::{Event, KeepAlive, Sse},
+    },
     routing::{get, post},
 };
+use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt as _;
 use tower_http::services::ServeDir;
 
 use crate::{
     config::AppConfig,
-    serve::{AppState, PollStats},
+    serve::{AppState, DashboardEvent, PollStats},
 };
 
 pub async fn run_server(
@@ -37,6 +43,7 @@ pub async fn run_server(
         .route("/api/open/vscode", post(open_vscode))
         .route("/api/open/terminal", post(open_terminal))
         .route("/api/refresh", post(refresh))
+        .route("/api/events", get(sse_events))
         .fallback_service(ServeDir::new(dashboard_dir).append_index_html_on_directories(true))
         .with_state(state);
 
@@ -165,6 +172,27 @@ async fn run_review(
         .map_err(|err| ApiErrorResponse::internal(&err))?;
 
     Ok(StatusCode::OK)
+}
+
+async fn sse_events(
+    State(state): State<std::sync::Arc<AppState>>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let rx = state.events_tx.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
+        Ok(event) => {
+            let json = serde_json::to_string(&event).unwrap_or_default();
+            Some(Ok(Event::default().event(event_name(&event)).data(json)))
+        }
+        Err(_) => None,
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+fn event_name(event: &DashboardEvent) -> &'static str {
+    match event {
+        DashboardEvent::PollComplete(_) => "poll_complete",
+        DashboardEvent::ReviewComplete { .. } => "review_complete",
+    }
 }
 
 async fn refresh(

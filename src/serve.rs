@@ -7,6 +7,7 @@ use std::{
 use anyhow::Context as _;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Serialize;
+use tokio::sync::broadcast;
 
 use crate::{
     config::{self, AiProvider, AppConfig, RereviewMode},
@@ -20,6 +21,19 @@ pub struct AppState {
     pub config: AppConfig,
     pub work_dir: Utf8PathBuf,
     pub poll_lock: Arc<tokio::sync::Mutex<()>>,
+    pub events_tx: broadcast::Sender<DashboardEvent>,
+}
+
+/// Events pushed to the dashboard via SSE.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
+pub enum DashboardEvent {
+    /// A poll cycle completed — the dashboard should reload threads.
+    #[serde(rename = "poll_complete")]
+    PollComplete(PollStats),
+    /// A single-PR review finished.
+    #[serde(rename = "review_complete")]
+    ReviewComplete { pr_url: String },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,11 +74,14 @@ pub async fn run_serve() -> anyhow::Result<()> {
     let work_dir = Utf8PathBuf::from_path_buf(current_dir)
         .map_err(|p| anyhow::anyhow!("Current directory is not valid UTF-8: {}", p.display()))?;
 
+    let (events_tx, _) = broadcast::channel::<DashboardEvent>(64);
+
     let state = Arc::new(AppState {
         db,
         config: cfg.clone(),
         work_dir,
         poll_lock: Arc::new(tokio::sync::Mutex::new(())),
+        events_tx,
     });
 
     let browser_url = dashboard_browser_url(&cfg);
@@ -79,7 +96,12 @@ pub async fn run_serve() -> anyhow::Result<()> {
     let startup_handle = tokio::spawn(async move {
         println!("🔄 Starting initial poll cycle...");
         match startup_state.poll_once_startup().await {
-            Ok(stats) => print_poll_stats("✅ Initial poll complete:", &stats),
+            Ok(stats) => {
+                print_poll_stats("✅ Initial poll complete:", &stats);
+                drop(startup_state
+                    .events_tx
+                    .send(DashboardEvent::PollComplete(stats)));
+            }
             Err(err) => eprintln!("⚠️ Initial poll cycle failed: {err}"),
         }
     });
@@ -93,8 +115,13 @@ pub async fn run_serve() -> anyhow::Result<()> {
 
         loop {
             interval.tick().await;
-            if let Err(err) = poll_state.poll_once_regular().await {
-                eprintln!("⚠️ Poll cycle failed: {err}");
+            match poll_state.poll_once_regular().await {
+                Ok(stats) => {
+                    drop(poll_state
+                        .events_tx
+                        .send(DashboardEvent::PollComplete(stats)));
+                }
+                Err(err) => eprintln!("⚠️ Poll cycle failed: {err}"),
             }
         }
     });
@@ -131,7 +158,10 @@ impl AppState {
         println!("🔄 Dashboard refresh requested");
         let result = self.poll_once_regular().await;
         match &result {
-            Ok(stats) => print_poll_stats("✅ Dashboard refresh complete:", stats),
+            Ok(stats) => {
+                print_poll_stats("✅ Dashboard refresh complete:", stats);
+                drop(self.events_tx.send(DashboardEvent::PollComplete(stats.clone())));
+            }
             Err(err) => eprintln!("❌ Dashboard refresh failed: {err}"),
         }
         result
@@ -233,7 +263,12 @@ impl AppState {
         .await;
 
         match &result {
-            Ok(()) => println!("✅ Review finished: {pr_url}"),
+            Ok(()) => {
+                println!("✅ Review finished: {pr_url}");
+                drop(self
+                    .events_tx
+                    .send(DashboardEvent::ReviewComplete { pr_url }));
+            }
             Err(err) => eprintln!("❌ Review failed: {pr_url}: {err}"),
         }
 
