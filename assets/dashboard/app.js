@@ -431,7 +431,14 @@ function groupThreadsByRepository(threads) {
     }
     groups.get(thread.repository).push(thread);
   }
-  return groups;
+  // Sort groups by latest thread update time, descending
+  return new Map(
+    [...groups.entries()].sort((a, b) => {
+      const latestA = a[1].reduce((max, t) => t.updated_at > max ? t.updated_at : max, "");
+      const latestB = b[1].reduce((max, t) => t.updated_at > max ? t.updated_at : max, "");
+      return latestB.localeCompare(latestA);
+    })
+  );
 }
 
 function repositorySection(repository, repoThreads) {
