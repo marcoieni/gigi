@@ -207,7 +207,8 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
         Some(false) => "Safe",
         None => "No review",
     };
-    let can_review = thread.pr_owner.is_some() && thread.pr_repo.is_some() && thread.pr_number.is_some();
+    let can_review =
+        thread.pr_owner.is_some() && thread.pr_repo.is_some() && thread.pr_number.is_some();
     let can_fix = can_review && thread.latest_requires_code_changes == Some(true);
     let mark_authored_pr = thread.sources.iter().any(|source| source == "my_pr");
     let review_action = review_action_path(&thread);
@@ -315,7 +316,10 @@ fn SourceBadge(source: String) -> impl IntoView {
 fn grouped_threads(threads: &[DashboardThread]) -> Vec<(String, Vec<DashboardThread>)> {
     let mut groups = BTreeMap::<String, Vec<DashboardThread>>::new();
     for thread in threads {
-        groups.entry(thread.repository.clone()).or_default().push(thread.clone());
+        groups
+            .entry(thread.repository.clone())
+            .or_default()
+            .push(thread.clone());
     }
     groups.into_iter().collect()
 }
@@ -342,9 +346,11 @@ fn thread_state_data(
 ) -> (&'static str, &'static [&'static str], &'static str) {
     match state {
         Some("MERGED") => ("title-state-icon merged", PR_MERGED_ICON_PATHS, "Merged"),
-        Some("CLOSED") if subject_type == Some("Issue") => {
-            ("title-state-icon closed", ISSUE_CLOSED_ICON_PATHS, "Closed issue")
-        }
+        Some("CLOSED") if subject_type == Some("Issue") => (
+            "title-state-icon closed",
+            ISSUE_CLOSED_ICON_PATHS,
+            "Closed issue",
+        ),
         Some("CLOSED") => ("title-state-icon closed", PR_CLOSED_ICON_PATHS, "Closed"),
         Some("OPEN") if subject_type == Some("Issue") => {
             ("title-state-icon open", ISSUE_OPEN_ICON_PATHS, "Open issue")

@@ -1008,6 +1008,18 @@ fn unix_ts() -> i64 {
 mod tests {
     use super::*;
 
+    impl Db {
+        pub fn latest_review_for_pr(
+            &self,
+            owner: &str,
+            repo: &str,
+            number: i64,
+        ) -> anyhow::Result<Option<StoredReview>> {
+            let pr_url = format!("https://github.com/{owner}/{repo}/pull/{number}");
+            self.latest_review_by_url(&pr_url)
+        }
+    }
+
     fn test_db() -> Db {
         let mut path = std::env::temp_dir();
         let ts = std::time::SystemTime::now()
