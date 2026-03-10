@@ -283,7 +283,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                 {if can_review {
                     view! {
                         <form action=review_action method="post" data-async-form>
-                            <button class="btn" type="submit" data-loading-label="Reviewing...">"Run review"</button>
+                            <button class="btn" type="submit" data-loading-label="Reviewing...">"Review"</button>
                         </form>
                     }.into_any()
                 } else {
@@ -292,7 +292,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                 {if can_fix {
                     view! {
                         <form action=fix_action method="post" data-async-form>
-                            <button class="btn" type="submit" data-loading-label="Fixing...">"Do fixes"</button>
+                            <button class="btn" type="submit" data-loading-label="Fixing...">"Fix"</button>
                         </form>
                     }.into_any()
                 } else {
