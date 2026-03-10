@@ -366,21 +366,33 @@ async fn run_kiro(
     model: Option<&str>,
     interactive: bool,
 ) -> anyhow::Result<(String, Option<String>, String)> {
-    ensure_command_available("kiro-cli").await?;
+    ensure_command_available("docker").await?;
 
     let resolved_model = model
         .unwrap_or(crate::config::DEFAULT_KIRO_MODEL)
         .to_string();
-    let mut args = vec!["chat".to_string()];
-    if !interactive {
-        args.push("--no-interactive".to_string());
-    }
-    args.extend(["--model".to_string(), resolved_model.clone()]);
-    args.push(prompt.to_string());
 
-    let mut cmd = Cmd::new("kiro-cli", args);
+    // Build kiro-cli arguments to pass after the "--" separator.
+    let mut kiro_args = vec!["chat".to_string()];
+    if !interactive {
+        kiro_args.push("--no-interactive".to_string());
+    }
+    kiro_args.extend(["--model".to_string(), resolved_model.clone(), "--trust-all-tools".to_string()]);
+    kiro_args.push(prompt.to_string());
+
+    // Assemble the full `docker sandbox run` invocation.
+    let mut args: Vec<String> = vec![
+        "sandbox".to_string(),
+        "run".to_string(),
+        "kiro".to_string(),
+        repo_root.to_string(),
+        "--".to_string(),
+    ];
+    args.extend(kiro_args);
+
+    let mut cmd = Cmd::new("docker", &args);
     cmd.with_title(format!(
-        "🚀 kiro-cli chat {}--model {resolved_model} ...",
+        "🚀 docker sandbox run kiro {repo_root} -- chat {}--model {resolved_model} ...",
         if interactive { "" } else { "--no-interactive " }
     ))
     .with_current_dir(repo_root);
@@ -391,11 +403,11 @@ async fn run_kiro(
         cmd.hide_stdout().run().await?
     };
 
-    output.ensure_success("❌ Failed to generate output with Kiro")?;
+    output.ensure_success("❌ Failed to generate output with Kiro (Docker sandbox)")?;
     if !interactive {
         anyhow::ensure!(
             !output.stdout().trim().is_empty(),
-            "❌ Kiro returned empty output"
+            "❌ Kiro (Docker sandbox) returned empty output"
         );
     }
 
