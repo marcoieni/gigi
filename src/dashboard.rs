@@ -223,24 +223,22 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
             </div>
 
             <div class="row">
-                {if thread.subject_type.as_deref() != Some("Issue") {
-                    if let Some(review) = review_content {
-                        let fix_attr = fix_action_for_modal.clone();
-                        view! {
-                            <button
-                                class=format!("pill {review_tone} review-open")
-                                type="button"
-                                data-review-content=review
-                                data-fix-action=fix_attr
-                            >
-                                {review_label}
-                            </button>
-                        }.into_any()
-                    } else {
-                        view! { <button class=format!("pill {review_tone}") type="button" disabled>{review_label}</button> }.into_any()
-                    }
-                } else {
+                {if thread.subject_type.as_deref() == Some("Issue") {
                     ().into_any()
+                } else if let Some(review) = review_content {
+                    let fix_attr = fix_action_for_modal.clone();
+                    view! {
+                        <button
+                            class=format!("pill {review_tone} review-open")
+                            type="button"
+                            data-review-content=review
+                            data-fix-action=fix_attr
+                        >
+                            {review_label}
+                        </button>
+                    }.into_any()
+                } else {
+                    view! { <button class=format!("pill {review_tone}") type="button" disabled>{review_label}</button> }.into_any()
                 }}
                 {if can_review {
                     view! {

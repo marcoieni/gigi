@@ -602,7 +602,11 @@ fn print_fetched_authored_prs(authored_prs: &[github::AuthoredPrSummary]) {
     for authored in authored_prs {
         println!(
             "  • pr_url={} repo={} updated_at={} is_draft={} title={}",
-            authored.pr_url, authored.repository, authored.updated_at, authored.is_draft, authored.title
+            authored.pr_url,
+            authored.repository,
+            authored.updated_at,
+            authored.is_draft,
+            authored.title
         );
     }
 }
