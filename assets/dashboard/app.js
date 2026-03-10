@@ -41,15 +41,33 @@ function setButtonPending(button, isPending) {
     return;
   }
 
+  const isIcon = button.classList.contains("icon-btn");
+
   if (!button.dataset.label) {
     button.dataset.label = button.textContent.trim();
   }
 
+  if (isIcon && !button.dataset.svgBackup) {
+    const svg = button.querySelector("svg");
+    if (svg) {
+      button.dataset.svgBackup = svg.outerHTML;
+    }
+  }
+
   button.disabled = isPending;
   button.classList.toggle("loading", isPending);
-  button.textContent = isPending
-    ? button.dataset.loadingLabel || "Working..."
-    : button.dataset.label;
+
+  if (isIcon) {
+    if (isPending) {
+      button.innerHTML = '<span class="spinner"></span>';
+    } else if (button.dataset.svgBackup) {
+      button.innerHTML = button.dataset.svgBackup;
+    }
+  } else {
+    button.textContent = isPending
+      ? button.dataset.loadingLabel || "Working..."
+      : button.dataset.label;
+  }
 }
 
 function encodeForm(form) {

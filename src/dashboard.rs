@@ -50,6 +50,13 @@ const ISSUE_CLOSED_ICON_PATHS: &[&str] = &[
     "M9 9l6 6",
     "M15 9l-6 6",
 ];
+const CHECKMARK_ICON_PATHS: &[&str] = &["M20 6 9 17l-5-5"];
+const REFRESH_ICON_PATHS: &[&str] = &[
+    "M21 12a9 9 0 0 1-15.36 6.36",
+    "M3 12a9 9 0 0 1 15.36-6.36",
+    "M21 3v6h-6",
+    "M3 21v-6h6",
+];
 
 #[derive(Debug, Clone)]
 pub struct DashboardSnapshot {
@@ -91,7 +98,7 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                 <h1>"gigi dashboard"</h1>
                 <div class="actions">
                     <form action="/dashboard/actions/refresh" method="post" data-async-form>
-                        <button class="btn" type="submit" data-loading-label="Refreshing...">"Refresh"</button>
+                        <button class="btn icon-btn" type="submit" data-loading-label="Refreshing..." aria-label="Refresh" title="Refresh">{svg_icon(REFRESH_ICON_PATHS)}</button>
                     </form>
                     <span id="status-text" class="status">{snapshot.status_message}</span>
                     <a
@@ -292,7 +299,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                             {thread.github_thread_id.clone().map(|thread_id| view! { <input type="hidden" name="github_thread_id" value=thread_id /> })}
                             {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
                             <input type="hidden" name="mark_authored_pr" value=mark_authored_pr.to_string() />
-                            <button class="btn" type="submit" data-loading-label="Saving...">"Mark done"</button>
+                            <button class="btn icon-btn" type="submit" data-loading-label="Saving..." aria-label="Mark done" title="Mark done">{svg_icon(CHECKMARK_ICON_PATHS)}</button>
                         </form>
                     }.into_any()
                 } else {
