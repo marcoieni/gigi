@@ -418,6 +418,20 @@ async fn run_kiro(
     ))
 }
 
+pub async fn ensure_docker_running() -> anyhow::Result<()> {
+    let output = Cmd::new("docker", ["info"])
+        .hide_stdout()
+        .hide_stderr()
+        .run()
+        .await?;
+    anyhow::ensure!(
+        output.status().success(),
+        "❌ Docker daemon is not running. Please start Docker and try again.\n{}",
+        output.stderr_or_stdout()
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

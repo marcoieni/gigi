@@ -78,6 +78,10 @@ pub async fn run_serve() -> anyhow::Result<()> {
         dashboard_updates,
     });
 
+    if cfg.ai.provider == config::AiProvider::Kiro {
+        review::ensure_docker_running().await?;
+    }
+
     let browser_url = dashboard_browser_url(&cfg);
     println!(
         "🚀 gigi serve: bind {}:{}, open {}",
