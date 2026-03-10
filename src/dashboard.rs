@@ -237,7 +237,10 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                 <span class="meta-separator">"•"</span>
                 {thread.sources.iter().map(|source| view! { <SourceBadge source=source.clone() /> }).collect::<Vec<_>>()}
                 <span class="meta-separator">"•"</span>
-                <span>{thread.updated_at.clone()}</span>
+                {
+                    let (relative, absolute) = format_timestamp(&thread.updated_at);
+                    view! { <span title=absolute>{relative}</span> }
+                }
                 {if let Some(reason) = thread.reason.clone() {
                     view! { <><span class="meta-separator">"•"</span><span>{reason}</span></> }.into_any()
                 } else {
@@ -348,6 +351,35 @@ fn grouped_threads(threads: &[DashboardThread]) -> Vec<(String, Vec<DashboardThr
             .then_with(|| repository_a.cmp(repository_b))
     });
     grouped
+}
+fn format_timestamp(raw: &str) -> (String, String) {
+    use chrono::{NaiveDateTime, Utc};
+    let Ok(dt) = raw.parse::<chrono::DateTime<Utc>>().or_else(|_| {
+        NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S")
+            .map(|naive| naive.and_utc())
+    }) else {
+        return (raw.to_string(), raw.to_string());
+    };
+    let absolute = dt.format("%b %d, %Y at %H:%M").to_string();
+    let now = Utc::now();
+    let duration = now.signed_duration_since(dt);
+
+    let relative = if duration.num_minutes() < 1 {
+        "just now".to_string()
+    } else if duration.num_hours() < 1 {
+        let mins = duration.num_minutes();
+        format!("{mins}m ago")
+    } else if duration.num_hours() < 24 {
+        let hours = duration.num_hours();
+        format!("{hours}h ago")
+    } else if duration.num_days() < 7 {
+        let days = duration.num_days();
+        format!("{days}d ago")
+    } else {
+        return (absolute.clone(), absolute);
+    };
+
+    (relative, absolute)
 }
 
 fn source_label(source: &str) -> &'static str {
