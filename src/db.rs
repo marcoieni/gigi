@@ -27,6 +27,7 @@ pub struct NewThread {
     pub unread: bool,
     pub done: bool,
     pub updated_at: String,
+    pub is_draft: bool,
 }
 
 /// Data required to insert a new PR row. Does not include DB-managed fields.
@@ -43,6 +44,7 @@ pub struct NewPr {
     pub head_sha: String,
     pub updated_at: String,
     pub is_archived: bool,
+    pub is_draft: bool,
 }
 
 /// PR row as read from the DB. Extends [`NewPr`] with DB-managed fields
@@ -111,6 +113,7 @@ pub struct DashboardThread {
     pub latest_review_content_md: Option<String>,
     pub latest_review_created_at: Option<i64>,
     pub latest_review_provider: Option<String>,
+    pub is_draft: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -188,8 +191,8 @@ impl Db {
                 r#"
                 INSERT INTO threads (
                     thread_key, github_thread_id, source, repository, subject_type, subject_title,
-                    subject_url, issue_state, reason, pr_url, unread, done, updated_at, last_seen_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                    subject_url, issue_state, reason, pr_url, unread, done, updated_at, is_draft, last_seen_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
                 ON CONFLICT(thread_key) DO UPDATE SET
                     github_thread_id = excluded.github_thread_id,
                     source = excluded.source,
@@ -203,6 +206,7 @@ impl Db {
                     unread = excluded.unread,
                     done = MAX(threads.done, excluded.done),
                     updated_at = excluded.updated_at,
+                    is_draft = excluded.is_draft,
                     last_seen_at = excluded.last_seen_at
                 "#,
                 params![
@@ -219,6 +223,7 @@ impl Db {
                     bool_to_int(row.unread),
                     bool_to_int(row.done),
                     row.updated_at,
+                    bool_to_int(row.is_draft),
                     now,
                 ],
             )?;
@@ -261,8 +266,8 @@ impl Db {
                 r#"
                 INSERT INTO prs (
                     pr_url, owner, repo, number, state, title, head_ref, base_ref, head_sha,
-                    updated_at, is_archived, last_seen_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    updated_at, is_archived, is_draft, last_seen_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                 ON CONFLICT(pr_url) DO UPDATE SET
                     owner = excluded.owner,
                     repo = excluded.repo,
@@ -274,6 +279,7 @@ impl Db {
                     head_sha = excluded.head_sha,
                     updated_at = excluded.updated_at,
                     is_archived = excluded.is_archived,
+                    is_draft = excluded.is_draft,
                     last_seen_at = excluded.last_seen_at
                 "#,
                 params![
@@ -288,6 +294,7 @@ impl Db {
                     row.head_sha,
                     row.updated_at,
                     bool_to_int(row.is_archived),
+                    bool_to_int(row.is_draft),
                     now,
                 ],
             )?;
@@ -494,6 +501,7 @@ impl Db {
                     lr.requires_code_changes AS latest_requires_code_changes,
                     p.state,
                     COALESCE(p.is_archived, 0),
+                    MAX(COALESCE(t.is_draft, 0), COALESCE(p.is_draft, 0)) AS is_draft,
                     lr.content_md AS latest_review_content_md,
                     lr.created_at AS latest_review_created_at,
                     lr.provider AS latest_review_provider
@@ -541,9 +549,10 @@ impl Db {
                     latest_requires_code_changes: latest_requires.map(|v| v != 0),
                     pr_state: row.get(17)?,
                     is_archived_pr: row.get::<_, i64>(18)? != 0,
-                    latest_review_content_md: row.get(19)?,
-                    latest_review_created_at: row.get(20)?,
-                    latest_review_provider: row.get(21)?,
+                    is_draft: row.get::<_, i64>(19)? != 0,
+                    latest_review_content_md: row.get(20)?,
+                    latest_review_created_at: row.get(21)?,
+                    latest_review_provider: row.get(22)?,
                 })
             })?;
 
@@ -725,6 +734,7 @@ struct DashboardThreadRow {
     latest_review_content_md: Option<String>,
     latest_review_created_at: Option<i64>,
     latest_review_provider: Option<String>,
+    is_draft: bool,
 }
 
 impl DashboardThreadRow {
@@ -751,6 +761,7 @@ impl DashboardThreadRow {
             latest_review_content_md: self.latest_review_content_md,
             latest_review_created_at: self.latest_review_created_at,
             latest_review_provider: self.latest_review_provider,
+            is_draft: self.is_draft,
         }
     }
 }
@@ -817,6 +828,7 @@ fn merge_dashboard_thread(existing: &mut DashboardThread, incoming: DashboardThr
         existing_snapshot.subject_type,
         incoming.subject_type,
     );
+    existing.is_draft = existing_snapshot.is_draft || incoming.is_draft;
 }
 
 fn dashboard_thread_priority(thread: &DashboardThread) -> usize {
@@ -953,7 +965,9 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
     )?;
 
     add_column_if_missing(conn, "prs", "is_archived", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(conn, "prs", "is_draft", "INTEGER NOT NULL DEFAULT 0")?;
     add_column_if_missing(conn, "threads", "issue_state", "TEXT")?;
+    add_column_if_missing(conn, "threads", "is_draft", "INTEGER NOT NULL DEFAULT 0")?;
     add_column_if_missing(
         conn,
         "dashboard_preferences",
@@ -1024,6 +1038,7 @@ mod tests {
     fn upsert_thread_is_idempotent() {
         let db = test_db();
         let row = NewThread {
+            is_draft: false,
             thread_key: "thread-1".to_string(),
             github_thread_id: Some("1".to_string()),
             source: "notification".to_string(),
@@ -1062,6 +1077,7 @@ mod tests {
             head_sha: "sha1".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             is_archived: false,
+            is_draft: false,
         })
         .unwrap();
 
@@ -1095,6 +1111,7 @@ mod tests {
             head_sha: "sha1".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             is_archived: false,
+            is_draft: false,
         })
         .unwrap();
 
@@ -1134,6 +1151,7 @@ mod tests {
                 head_sha: "sha1".to_string(),
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 is_archived: false,
+                is_draft: false,
             })
             .unwrap();
             db.with_conn(|conn| {
@@ -1174,6 +1192,7 @@ mod tests {
             head_sha: "sha1".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             is_archived: false,
+            is_draft: false,
         })
         .unwrap();
 
@@ -1213,9 +1232,11 @@ mod tests {
                 head_sha: "sha1".to_string(),
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 is_archived: false,
+                is_draft: false,
             })
             .unwrap();
             db.upsert_thread(&NewThread {
+                is_draft: false,
                 thread_key: "thread-1".to_string(),
                 github_thread_id: Some("1".to_string()),
                 source: "notification".to_string(),
@@ -1261,6 +1282,7 @@ mod tests {
     fn done_threads_are_hidden_from_dashboard() {
         let db = test_db();
         let row = NewThread {
+            is_draft: false,
             thread_key: "thread-1".to_string(),
             github_thread_id: Some("1".to_string()),
             source: "notification".to_string(),
@@ -1287,6 +1309,7 @@ mod tests {
     fn done_threads_stay_done_after_upsert() {
         let db = test_db();
         let row = NewThread {
+            is_draft: false,
             thread_key: "thread-1".to_string(),
             github_thread_id: Some("1".to_string()),
             source: "notification".to_string(),
@@ -1325,6 +1348,7 @@ mod tests {
         let db = test_db();
         let pr_url = "https://github.com/a/b/pull/1".to_string();
         let row = NewThread {
+            is_draft: false,
             thread_key: format!("mypr:{pr_url}"),
             github_thread_id: None,
             source: "my_pr".to_string(),
@@ -1352,6 +1376,7 @@ mod tests {
         let db = test_db();
         let pr_url = "https://github.com/a/b/pull/1".to_string();
         let row = NewThread {
+            is_draft: false,
             thread_key: format!("mypr:{pr_url}"),
             github_thread_id: None,
             source: "my_pr".to_string(),
@@ -1389,6 +1414,7 @@ mod tests {
     fn dashboard_can_show_done_items_when_requested() {
         let db = test_db();
         let row = NewThread {
+            is_draft: false,
             thread_key: "thread-1".to_string(),
             github_thread_id: Some("1".to_string()),
             source: "notification".to_string(),
@@ -1428,6 +1454,7 @@ mod tests {
         let authored_pr_url = "https://github.com/a/b/pull/2".to_string();
 
         db.upsert_thread(&NewThread {
+            is_draft: false,
             thread_key: "notif:1".to_string(),
             github_thread_id: Some("1".to_string()),
             source: "notification".to_string(),
@@ -1449,6 +1476,7 @@ mod tests {
             github_thread_id: None,
             source: "my_pr".to_string(),
             repository: "a/b".to_string(),
+            is_draft: false,
             subject_type: Some("PullRequest".to_string()),
             subject_title: "authored".to_string(),
             subject_url: Some(authored_pr_url.clone()),
@@ -1519,10 +1547,12 @@ mod tests {
             head_sha: "sha1".to_string(),
             updated_at: "2026-01-02T00:00:00Z".to_string(),
             is_archived: false,
+            is_draft: false,
         })
         .unwrap();
 
         db.upsert_thread(&NewThread {
+            is_draft: false,
             thread_key: format!("mypr:{pr_url}"),
             github_thread_id: None,
             source: "my_pr".to_string(),
@@ -1540,6 +1570,7 @@ mod tests {
         .unwrap();
 
         db.upsert_thread(&NewThread {
+            is_draft: false,
             thread_key: "notif:123".to_string(),
             github_thread_id: Some("123".to_string()),
             source: "notification".to_string(),
@@ -1584,10 +1615,12 @@ mod tests {
             head_sha: "sha1".to_string(),
             updated_at: "2026-01-02T00:00:00Z".to_string(),
             is_archived: true,
+            is_draft: false,
         })
         .unwrap();
 
         db.upsert_thread(&NewThread {
+            is_draft: false,
             thread_key: format!("mypr:{pr_url}"),
             github_thread_id: None,
             source: "my_pr".to_string(),
@@ -1625,10 +1658,12 @@ mod tests {
             head_sha: "sha1".to_string(),
             updated_at: "2026-01-02T00:00:00Z".to_string(),
             is_archived: true,
+            is_draft: false,
         })
         .unwrap();
 
         db.upsert_thread(&NewThread {
+            is_draft: false,
             thread_key: format!("mypr:{pr_url}"),
             github_thread_id: None,
             source: "my_pr".to_string(),
@@ -1655,6 +1690,7 @@ mod tests {
         let db = test_db();
 
         db.upsert_thread(&NewThread {
+            is_draft: false,
             thread_key: "notif:issue-1".to_string(),
             github_thread_id: Some("1".to_string()),
             source: "notification".to_string(),

@@ -432,6 +432,7 @@ async fn poll_once_async(
             unread: notification.unread,
             done: false,
             updated_at: notification.updated_at.clone(),
+            is_draft: false,
         };
         db.upsert_thread(&row)?;
         print_thread_db_write(&row);
@@ -552,6 +553,7 @@ fn sync_authored_pr_threads(
             unread: false,
             done: false,
             updated_at: authored.updated_at.clone(),
+            is_draft: authored.is_draft,
         };
         db.upsert_thread(&row)?;
         print_thread_db_write(&row);
@@ -573,6 +575,7 @@ fn upsert_pr_from_details(db: &Db, details: &github::PrDetails) -> anyhow::Resul
         head_sha: details.head_sha.clone(),
         updated_at: details.updated_at.clone(),
         is_archived: details.is_archived,
+        is_draft: details.is_draft,
     };
     db.upsert_pr(&row)
 }
@@ -598,8 +601,12 @@ fn print_fetched_authored_prs(authored_prs: &[github::AuthoredPrSummary]) {
     println!("📥 Authored open PRs fetched: {}", authored_prs.len());
     for authored in authored_prs {
         println!(
-            "  • pr_url={} repo={} updated_at={} title={}",
-            authored.pr_url, authored.repository, authored.updated_at, authored.title
+            "  • pr_url={} repo={} updated_at={} is_draft={} title={}",
+            authored.pr_url,
+            authored.repository,
+            authored.updated_at,
+            authored.is_draft,
+            authored.title
         );
     }
 }
@@ -959,6 +966,7 @@ mod tests {
             head_repo_owner: None,
             head_repo_name: None,
             is_cross_repository: false,
+            is_draft: false,
         };
         let stored = db::StoredPr {
             pr_url: "u".to_string(),
@@ -1002,6 +1010,7 @@ mod tests {
             head_repo_owner: None,
             head_repo_name: None,
             is_cross_repository: false,
+            is_draft: false,
         };
         let stored = db::StoredPr {
             pr_url: "u".to_string(),
@@ -1089,6 +1098,7 @@ mod tests {
                 head_repo_owner: None,
                 head_repo_name: None,
                 is_cross_repository: false,
+                is_draft: false,
             },
             github::PrDetails {
                 pr_url: "https://github.com/o/r/pull/2".to_string(),
@@ -1107,6 +1117,7 @@ mod tests {
                 head_repo_owner: None,
                 head_repo_name: None,
                 is_cross_repository: false,
+                is_draft: false,
             },
             github::PrDetails {
                 pr_url: "https://github.com/o/r/pull/3".to_string(),
@@ -1125,6 +1136,7 @@ mod tests {
                 head_repo_owner: None,
                 head_repo_name: None,
                 is_cross_repository: false,
+                is_draft: false,
             },
         ];
 
@@ -1152,6 +1164,7 @@ mod tests {
             unread: false,
             done: false,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
+            is_draft: false,
         })
         .unwrap();
 
@@ -1161,6 +1174,7 @@ mod tests {
             title: "stale".to_string(),
             updated_at: "2026-01-02T00:00:00Z".to_string(),
             is_open: false,
+            is_draft: false,
         };
         let current_pr = github::AuthoredPrSummary {
             pr_url: "https://github.com/o/r/pull/2".to_string(),
@@ -1168,6 +1182,7 @@ mod tests {
             title: "current".to_string(),
             updated_at: "2026-01-02T00:00:00Z".to_string(),
             is_open: true,
+            is_draft: false,
         };
 
         sync_authored_pr_threads(&db, &[closed_pr, current_pr.clone()]).unwrap();
@@ -1190,6 +1205,7 @@ mod tests {
             title: "current".to_string(),
             updated_at: "2026-01-02T00:00:00Z".to_string(),
             is_open: true,
+            is_draft: false,
         };
 
         sync_authored_pr_threads(&db, std::slice::from_ref(&current_pr)).unwrap();
