@@ -72,9 +72,12 @@ pub fn render_page(snapshot: &DashboardSnapshot) -> String {
                 <meta name="viewport" content="width=device-width, initial-scale=1" />
                 <title>"gigi dashboard"</title>
                 <link rel="stylesheet" href="/styles.css" />
+                <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" />
             </head>
             <body>
                 <div id="dashboard-root">{render_fragment_view(snapshot.clone())}</div>
+                <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+                <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/markdown.min.js"></script>
                 <script src="/app.js"></script>
             </body>
         </html>

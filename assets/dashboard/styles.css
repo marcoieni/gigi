@@ -369,6 +369,10 @@ pre {
   font-family: Menlo, Monaco, monospace;
 }
 
+pre.hljs {
+  background: #fff;
+}
+
 @media (max-width: 720px) {
   .header {
     align-items: flex-start;

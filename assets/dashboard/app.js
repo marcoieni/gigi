@@ -164,7 +164,14 @@ document.addEventListener("click", (event) => {
     return;
   }
 
-  content.textContent = reviewButton.dataset.reviewContent || "";
+  const raw = reviewButton.dataset.reviewContent || "";
+  content.textContent = raw;
+
+  if (typeof hljs !== "undefined") {
+    content.classList.add("language-markdown");
+    delete content.dataset.highlighted;
+    hljs.highlightElement(content);
+  }
 
   if (fixForm instanceof HTMLFormElement) {
     const fixAction = reviewButton.dataset.fixAction;
