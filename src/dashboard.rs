@@ -155,7 +155,12 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                 <article>
                     <header class="modal-head">
                         <h2>"Review"</h2>
-                        <button id="close-modal" class="btn" type="button">"Close"</button>
+                        <div class="modal-actions">
+                            <form id="fix-form" action="" method="post" data-async-form style="display:none">
+                                <button class="btn" type="submit" data-loading-label="Fixing...">"Fix"</button>
+                            </form>
+                            <button id="close-modal" class="btn" type="button">"Close"</button>
+                        </div>
                     </header>
                     <pre id="review-content"></pre>
                 </article>
@@ -215,9 +220,9 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
     let can_review =
         thread.pr_owner.is_some() && thread.pr_repo.is_some() && thread.pr_number.is_some();
     let can_fix = can_review && thread.latest_requires_code_changes == Some(true);
+    let fix_action_for_modal = can_fix.then(|| fix_action_path(&thread));
     let mark_authored_pr = thread.sources.iter().any(|source| source == "my_pr");
     let review_action = review_action_path(&thread);
-    let fix_action = fix_action_path(&thread);
     let (state_icon_class, state_icon_paths, state_icon_label) = thread_state_data(
         thread.subject_type.as_deref(),
         thread.pr_state.as_deref().or(thread.issue_state.as_deref()),
@@ -265,11 +270,13 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
             <div class="row">
                 {if thread.subject_type.as_deref() != Some("Issue") {
                     if let Some(review) = review_content {
+                        let fix_attr = fix_action_for_modal.clone();
                         view! {
                             <button
                                 class=format!("pill {review_tone} review-open")
                                 type="button"
                                 data-review-content=review
+                                data-fix-action=fix_attr
                             >
                                 {review_label}
                             </button>
@@ -284,15 +291,6 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                     view! {
                         <form action=review_action method="post" data-async-form>
                             <button class="btn" type="submit" data-loading-label="Reviewing...">"Review"</button>
-                        </form>
-                    }.into_any()
-                } else {
-                    ().into_any()
-                }}
-                {if can_fix {
-                    view! {
-                        <form action=fix_action method="post" data-async-form>
-                            <button class="btn" type="submit" data-loading-label="Fixing...">"Fix"</button>
                         </form>
                     }.into_any()
                 } else {

@@ -159,11 +159,23 @@ document.addEventListener("click", (event) => {
 
   const modal = document.getElementById("review-modal");
   const content = document.getElementById("review-content");
+  const fixForm = document.getElementById("fix-form");
   if (!(modal instanceof HTMLDialogElement) || !(content instanceof HTMLElement)) {
     return;
   }
 
   content.textContent = reviewButton.dataset.reviewContent || "";
+
+  if (fixForm instanceof HTMLFormElement) {
+    const fixAction = reviewButton.dataset.fixAction;
+    if (fixAction) {
+      fixForm.action = fixAction;
+      fixForm.style.display = "";
+    } else {
+      fixForm.style.display = "none";
+    }
+  }
+
   modal.showModal();
 });
 
