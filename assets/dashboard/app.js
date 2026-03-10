@@ -165,7 +165,8 @@ document.addEventListener("click", (event) => {
   }
 
   const raw = reviewButton.dataset.reviewContent || "";
-  content.textContent = raw;
+  const cleaned = raw.replace(/\s*REQUIRES_CODE_CHANGES:\s*(YES|NO)\s*/g, "\n").trim();
+  content.textContent = cleaned;
 
   if (typeof hljs !== "undefined") {
     content.classList.add("language-markdown");
