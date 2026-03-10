@@ -323,6 +323,10 @@ body {
   color: var(--danger);
 }
 
+.title-state-icon.draft {
+  color: #6b7280;
+}
+
 .spinner {
   width: 12px;
   height: 12px;

@@ -51,6 +51,7 @@ pub struct AuthoredPrSummary {
     pub title: String,
     pub updated_at: String,
     pub is_open: bool,
+    pub is_draft: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +72,7 @@ pub struct PrDetails {
     pub head_repo_owner: Option<String>,
     pub head_repo_name: Option<String>,
     pub is_cross_repository: bool,
+    pub is_draft: bool,
 }
 
 pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Vec<NotificationThread>> {
@@ -193,7 +195,7 @@ pub async fn fetch_authored_prs(since: Option<&str>) -> anyhow::Result<Vec<Autho
         "--limit",
         "200",
         "--json",
-        "url,title,updatedAt,repository,state",
+        "url,title,updatedAt,repository,state,isDraft",
     ];
     let updated_filter;
     if let Some(since) = since {
@@ -240,6 +242,10 @@ pub async fn fetch_authored_prs(since: Option<&str>) -> anyhow::Result<Vec<Autho
             .and_then(Value::as_str)
             .map(|s| s.eq_ignore_ascii_case("open"))
             .unwrap_or(true);
+        let is_draft = item
+            .get("isDraft")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let repository = item
             .get("repository")
             .and_then(|v| v.get("nameWithOwner"))
@@ -263,6 +269,7 @@ pub async fn fetch_authored_prs(since: Option<&str>) -> anyhow::Result<Vec<Autho
             title,
             updated_at,
             is_open,
+            is_draft,
         });
     }
 
@@ -277,7 +284,7 @@ pub async fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
             "view",
             pr_url,
             "--json",
-            "title,url,state,headRefName,headRefOid,baseRefName,createdAt,updatedAt,number,author,headRepository,headRepositoryOwner,isCrossRepository",
+            "title,url,state,isDraft,headRefName,headRefOid,baseRefName,createdAt,updatedAt,number,author,headRepository,headRepositoryOwner,isCrossRepository",
         ],
     )
     .run()
@@ -355,6 +362,10 @@ pub async fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         .get("isCrossRepository")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let is_draft = value
+        .get("isDraft")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     Ok(PrDetails {
         pr_url: canonical_pr_url,
@@ -373,6 +384,7 @@ pub async fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         head_repo_owner,
         head_repo_name,
         is_cross_repository,
+        is_draft,
     })
 }
 
@@ -471,6 +483,10 @@ fn parse_pr_graphql_value(
             .get("isCrossRepository")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        is_draft: pr_val
+            .get("isDraft")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -493,7 +509,7 @@ pub async fn fetch_batch(
         return Ok(BatchFetchResult::default());
     }
 
-    let pr_fields = "number title state headRefName headRefOid baseRefName \
+    let pr_fields = "number title state isDraft headRefName headRefOid baseRefName \
                      createdAt updatedAt author { login } \
                      headRepository { name } headRepositoryOwner { login } \
                      isCrossRepository";
@@ -1058,6 +1074,7 @@ mod tests {
                 head_repo_owner: Some("me".to_string()),
                 head_repo_name: Some("repo".to_string()),
                 is_cross_repository: true,
+                is_draft: false,
             },
             Some("me"),
         );
@@ -1097,6 +1114,7 @@ mod tests {
                 head_repo_owner: Some("someone-else".to_string()),
                 head_repo_name: Some("repo".to_string()),
                 is_cross_repository: true,
+                is_draft: false,
             },
             Some("me"),
         );

@@ -2,8 +2,14 @@ use std::collections::HashMap;
 
 use leptos::prelude::*;
 
-use crate::{db::{DashboardThread, DashboardThreadFilters}, icons::{CHECKMARK_ICON, ISSUE_CLOSED_ICON, ISSUE_OPEN_ICON, MAIL_ICON, MY_PR_ICON, NOTIFICATION_ICON, PR_CLOSED_ICON, PR_MERGED_ICON, PR_OPEN_ICON, REFRESH_ICON, TERMINAL_ICON, VSCODE_ICON}};
-
+use crate::{
+    db::{DashboardThread, DashboardThreadFilters},
+    icons::{
+        CHECKMARK_ICON, ISSUE_CLOSED_ICON, ISSUE_OPEN_ICON, MAIL_ICON, MY_PR_ICON,
+        NOTIFICATION_ICON, PR_CLOSED_ICON, PR_DRAFT_ICON, PR_MERGED_ICON, PR_OPEN_ICON,
+        REFRESH_ICON, TERMINAL_ICON, VSCODE_ICON,
+    },
+};
 
 #[derive(Debug, Clone)]
 pub struct DashboardSnapshot {
@@ -174,6 +180,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
     let (state_icon_class, state_icon_paths, state_icon_label) = thread_state_data(
         thread.subject_type.as_deref(),
         thread.pr_state.as_deref().or(thread.issue_state.as_deref()),
+        thread.is_draft,
     );
 
     view! {
@@ -299,8 +306,7 @@ fn grouped_threads(threads: &[DashboardThread]) -> Vec<(String, Vec<DashboardThr
 fn format_timestamp(raw: &str) -> (String, String) {
     use chrono::{NaiveDateTime, Utc};
     let Ok(dt) = raw.parse::<chrono::DateTime<Utc>>().or_else(|_| {
-        NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S")
-            .map(|naive| naive.and_utc())
+        NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S").map(|naive| naive.and_utc())
     }) else {
         return (raw.to_string(), raw.to_string());
     };
@@ -344,18 +350,18 @@ fn source_icon(source: &str) -> &'static str {
 fn thread_state_data(
     subject_type: Option<&str>,
     state: Option<&str>,
+    is_draft: bool,
 ) -> (&'static str, &'static str, &'static str) {
     match state {
         Some("MERGED") => ("title-state-icon merged", PR_MERGED_ICON, "Merged"),
-        Some("CLOSED") if subject_type == Some("Issue") => (
-            "title-state-icon closed",
-            ISSUE_CLOSED_ICON,
-            "Closed issue",
-        ),
+        Some("CLOSED") if subject_type == Some("Issue") => {
+            ("title-state-icon closed", ISSUE_CLOSED_ICON, "Closed issue")
+        }
         Some("CLOSED") => ("title-state-icon closed", PR_CLOSED_ICON, "Closed"),
         Some("OPEN") if subject_type == Some("Issue") => {
             ("title-state-icon open", ISSUE_OPEN_ICON, "Open issue")
         }
+        _ if is_draft => ("title-state-icon draft", PR_DRAFT_ICON, "Draft"),
         _ => ("title-state-icon open", PR_OPEN_ICON, "Open"),
     }
 }
@@ -412,6 +418,7 @@ mod tests {
             latest_review_content_md: None,
             latest_review_created_at: None,
             latest_review_provider: None,
+            is_draft: false,
         }
     }
 
