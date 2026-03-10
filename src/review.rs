@@ -377,7 +377,11 @@ async fn run_kiro(
     if !interactive {
         kiro_args.push("--no-interactive".to_string());
     }
-    kiro_args.extend(["--model".to_string(), resolved_model.clone(), "--trust-all-tools".to_string()]);
+    kiro_args.extend([
+        "--model".to_string(),
+        resolved_model.clone(),
+        "--trust-all-tools".to_string(),
+    ]);
     kiro_args.push(prompt.to_string());
 
     // Assemble the full `docker sandbox run` invocation.
