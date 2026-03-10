@@ -97,10 +97,10 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
             <header class="header">
                 <h1>"gigi dashboard"</h1>
                 <div class="actions">
+                    <span id="status-text" class="status">{snapshot.status_message}</span>
                     <form action="/dashboard/actions/refresh" method="post" data-async-form>
                         <button class="btn icon-btn" type="submit" data-loading-label="Refreshing..." aria-label="Refresh" title="Refresh">{svg_icon(REFRESH_ICON_PATHS)}</button>
                     </form>
-                    <span id="status-text" class="status">{snapshot.status_message}</span>
                     <a
                         class="btn icon-btn header-link"
                         href="https://github.com/notifications"
