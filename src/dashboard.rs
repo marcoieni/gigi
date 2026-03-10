@@ -222,7 +222,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
         <article class="thread">
             <h3>
                 <span class=state_icon_class aria-label=state_icon_label title=state_icon_label>{svg_icon(state_icon_paths)}</span>
-                <a class="thread-link" href=destination.clone() target="_blank" rel="noreferrer">{thread.subject_title.clone()}</a>
+                <a class="thread-link" href=destination target="_blank" rel="noreferrer">{thread.subject_title.clone()}</a>
             </h3>
 
             <div class="meta">
@@ -251,7 +251,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                         <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in Terminal" title="Open in Terminal">{svg_icon(TERMINAL_ICON_PATHS)}</button>
                     </form>
                 </div>
-                <a class="btn" href=destination target="_blank" rel="noreferrer">"Open"</a>
+
             </div>
 
             <div class="row">
