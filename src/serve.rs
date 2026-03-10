@@ -1160,6 +1160,7 @@ mod tests {
             unread: false,
             done: false,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
+            is_draft: false,
         })
         .unwrap();
 

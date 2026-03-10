@@ -1038,6 +1038,7 @@ mod tests {
     fn upsert_thread_is_idempotent() {
         let db = test_db();
         let row = NewThread {
+            is_draft: false,
             thread_key: "thread-1".to_string(),
             github_thread_id: Some("1".to_string()),
             source: "notification".to_string(),
@@ -1235,6 +1236,7 @@ mod tests {
             })
             .unwrap();
             db.upsert_thread(&NewThread {
+                is_draft: false,
                 thread_key: "thread-1".to_string(),
                 github_thread_id: Some("1".to_string()),
                 source: "notification".to_string(),
@@ -1280,6 +1282,7 @@ mod tests {
     fn done_threads_are_hidden_from_dashboard() {
         let db = test_db();
         let row = NewThread {
+            is_draft: false,
             thread_key: "thread-1".to_string(),
             github_thread_id: Some("1".to_string()),
             source: "notification".to_string(),
@@ -1306,6 +1309,7 @@ mod tests {
     fn done_threads_stay_done_after_upsert() {
         let db = test_db();
         let row = NewThread {
+            is_draft: false,
             thread_key: "thread-1".to_string(),
             github_thread_id: Some("1".to_string()),
             source: "notification".to_string(),
@@ -1344,6 +1348,7 @@ mod tests {
         let db = test_db();
         let pr_url = "https://github.com/a/b/pull/1".to_string();
         let row = NewThread {
+            is_draft: false,
             thread_key: format!("mypr:{pr_url}"),
             github_thread_id: None,
             source: "my_pr".to_string(),
@@ -1371,6 +1376,7 @@ mod tests {
         let db = test_db();
         let pr_url = "https://github.com/a/b/pull/1".to_string();
         let row = NewThread {
+            is_draft: false,
             thread_key: format!("mypr:{pr_url}"),
             github_thread_id: None,
             source: "my_pr".to_string(),
@@ -1408,6 +1414,7 @@ mod tests {
     fn dashboard_can_show_done_items_when_requested() {
         let db = test_db();
         let row = NewThread {
+            is_draft: false,
             thread_key: "thread-1".to_string(),
             github_thread_id: Some("1".to_string()),
             source: "notification".to_string(),
@@ -1447,6 +1454,7 @@ mod tests {
         let authored_pr_url = "https://github.com/a/b/pull/2".to_string();
 
         db.upsert_thread(&NewThread {
+            is_draft: false,
             thread_key: "notif:1".to_string(),
             github_thread_id: Some("1".to_string()),
             source: "notification".to_string(),
@@ -1468,6 +1476,7 @@ mod tests {
             github_thread_id: None,
             source: "my_pr".to_string(),
             repository: "a/b".to_string(),
+            is_draft: false,
             subject_type: Some("PullRequest".to_string()),
             subject_title: "authored".to_string(),
             subject_url: Some(authored_pr_url.clone()),
@@ -1543,6 +1552,7 @@ mod tests {
         .unwrap();
 
         db.upsert_thread(&NewThread {
+            is_draft: false,
             thread_key: format!("mypr:{pr_url}"),
             github_thread_id: None,
             source: "my_pr".to_string(),
@@ -1560,6 +1570,7 @@ mod tests {
         .unwrap();
 
         db.upsert_thread(&NewThread {
+            is_draft: false,
             thread_key: "notif:123".to_string(),
             github_thread_id: Some("123".to_string()),
             source: "notification".to_string(),
@@ -1609,6 +1620,7 @@ mod tests {
         .unwrap();
 
         db.upsert_thread(&NewThread {
+            is_draft: false,
             thread_key: format!("mypr:{pr_url}"),
             github_thread_id: None,
             source: "my_pr".to_string(),
@@ -1651,6 +1663,7 @@ mod tests {
         .unwrap();
 
         db.upsert_thread(&NewThread {
+            is_draft: false,
             thread_key: format!("mypr:{pr_url}"),
             github_thread_id: None,
             source: "my_pr".to_string(),
@@ -1677,6 +1690,7 @@ mod tests {
         let db = test_db();
 
         db.upsert_thread(&NewThread {
+            is_draft: false,
             thread_key: "notif:issue-1".to_string(),
             github_thread_id: Some("1".to_string()),
             source: "notification".to_string(),
