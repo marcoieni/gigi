@@ -7,6 +7,7 @@ mod config;
 mod dashboard;
 mod db;
 mod github;
+mod icons;
 mod init;
 mod launcher;
 mod review;

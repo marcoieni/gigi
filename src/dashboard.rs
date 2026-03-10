@@ -2,59 +2,8 @@ use std::collections::HashMap;
 
 use leptos::prelude::*;
 
-use crate::db::{DashboardThread, DashboardThreadFilters};
+use crate::{db::{DashboardThread, DashboardThreadFilters}, icons::{CHECKMARK_ICON, ISSUE_CLOSED_ICON, ISSUE_OPEN_ICON, MAIL_ICON, MY_PR_ICON, NOTIFICATION_ICON, PR_CLOSED_ICON, PR_MERGED_ICON, PR_OPEN_ICON, REFRESH_ICON, TERMINAL_ICON, VSCODE_ICON}};
 
-const VSCODE_ICON_PATHS: &[&str] = &["M9 8 5 12l4 4", "m15 8 4 4-4 4", "M14 6 10 18"];
-const TERMINAL_ICON_PATHS: &[&str] = &[
-    "M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v10A1.5 1.5 0 0 1 20 18.5H4A1.5 1.5 0 0 1 2.5 17V7A1.5 1.5 0 0 1 4 5.5Z",
-    "m6.4 9 2.6 2.3-2.6 2.3",
-    "M11.7 13.8h4.9",
-];
-const NOTIFICATION_ICON_PATHS: &[&str] = &[
-    "M15.5 17.5h4l-1.1-1.1a2 2 0 0 1-.6-1.4V11a5.8 5.8 0 1 0-11.6 0v4a2 2 0 0 1-.6 1.4l-1.1 1.1h4",
-    "M10 17.5a2 2 0 0 0 4 0",
-];
-const MY_PR_ICON_PATHS: &[&str] = &[
-    "M6 9a3 3 0 1 1 0-6a3 3 0 0 1 0 6Z",
-    "M6 21a3 3 0 1 1 0-6a3 3 0 0 1 0 6Z",
-    "M6 9v6",
-    "M18 9v5a4 4 0 0 1-4 4H9",
-];
-const PR_OPEN_ICON_PATHS: &[&str] = &[
-    "M6 9a3 3 0 1 1 0-6a3 3 0 0 1 0 6Z",
-    "M6 21a3 3 0 1 1 0-6a3 3 0 0 1 0 6Z",
-    "M18 9a3 3 0 1 1 0-6a3 3 0 0 1 0 6Z",
-    "M6 9v6",
-    "M18 9v5a4 4 0 0 1-4 4H9",
-];
-const PR_MERGED_ICON_PATHS: &[&str] = &[
-    "M6 9a3 3 0 1 1 0-6a3 3 0 0 1 0 6Z",
-    "M6 21a3 3 0 1 1 0-6a3 3 0 0 1 0 6Z",
-    "M18 21a3 3 0 1 1 0-6a3 3 0 0 1 0 6Z",
-    "M6 9c0 4 4 6 12 9",
-];
-const PR_CLOSED_ICON_PATHS: &[&str] = &[
-    "M6 21a3 3 0 1 1 0-6a3 3 0 0 1 0 6Z",
-    "M6 15V9",
-    "M14 4l5 5",
-    "M19 4l-5 5",
-];
-const ISSUE_OPEN_ICON_PATHS: &[&str] = &[
-    "M12 22a10 10 0 1 1 0-20a10 10 0 0 1 0 20Z",
-    "M12 8v5",
-    "M12 16v.01",
-];
-const ISSUE_CLOSED_ICON_PATHS: &[&str] = &[
-    "M12 22a10 10 0 1 1 0-20a10 10 0 0 1 0 20Z",
-    "M8.5 12.5l2 2l5-5",
-];
-const CHECKMARK_ICON_PATHS: &[&str] = &["M20 6 9 17l-5-5"];
-const REFRESH_ICON_PATHS: &[&str] = &[
-    "M21 12a9 9 0 0 1-15.36 6.36",
-    "M3 12a9 9 0 0 1 15.36-6.36",
-    "M21 3v6h-6",
-    "M3 21v-6h6",
-];
 
 #[derive(Debug, Clone)]
 pub struct DashboardSnapshot {
@@ -100,7 +49,7 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                 <div class="actions">
                     <span id="status-text" class="status">{snapshot.status_message}</span>
                     <form action="/dashboard/actions/refresh" method="post" data-async-form>
-                        <button class="btn icon-btn" type="submit" data-loading-label="Refreshing..." aria-label="Refresh" title="Refresh">{svg_icon(REFRESH_ICON_PATHS)}</button>
+                        <button class="btn icon-btn" type="submit" data-loading-label="Refreshing..." aria-label="Refresh" title="Refresh">{svg_icon(REFRESH_ICON)}</button>
                     </form>
                     <a
                         class="btn icon-btn header-link"
@@ -110,11 +59,7 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                         aria-label="Open GitHub notifications"
                         title="Open GitHub notifications"
                     >
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M4.5 7.5A2.5 2.5 0 0 1 7 5h10a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 17 19H7a2.5 2.5 0 0 1-2.5-2.5v-9Z" />
-                            <path d="m6.5 8.5 5.5 4 5.5-4" />
-                            <path d="M8 15.5h8" />
-                        </svg>
+                        {svg_icon(MAIL_ICON)}
                     </a>
                 </div>
             </header>
@@ -259,12 +204,12 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                     <form action="/dashboard/actions/open/vscode" method="post" data-async-form>
                         <input type="hidden" name="repository" value=thread.repository.clone() />
                         {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
-                        <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in VS Code" title="Open in VS Code">{svg_icon(VSCODE_ICON_PATHS)}</button>
+                        <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in VS Code" title="Open in VS Code">{svg_icon(VSCODE_ICON)}</button>
                     </form>
                     <form action="/dashboard/actions/open/terminal" method="post" data-async-form>
                         <input type="hidden" name="repository" value=thread.repository.clone() />
                         {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
-                        <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in Terminal" title="Open in Terminal">{svg_icon(TERMINAL_ICON_PATHS)}</button>
+                        <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in Terminal" title="Open in Terminal">{svg_icon(TERMINAL_ICON)}</button>
                     </form>
                 </div>
 
@@ -305,7 +250,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                             {thread.github_thread_id.clone().map(|thread_id| view! { <input type="hidden" name="github_thread_id" value=thread_id /> })}
                             {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
                             <input type="hidden" name="mark_authored_pr" value=mark_authored_pr.to_string() />
-                            <button class="btn icon-btn" type="submit" data-loading-label="Saving..." aria-label="Mark done" title="Mark done">{svg_icon(CHECKMARK_ICON_PATHS)}</button>
+                            <button class="btn icon-btn" type="submit" data-loading-label="Saving..." aria-label="Mark done" title="Mark done">{svg_icon(CHECKMARK_ICON)}</button>
                         </form>
                     }.into_any()
                 } else {
@@ -319,7 +264,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
 #[component]
 fn SourceBadge(source: String) -> impl IntoView {
     let label = source_label(&source);
-    let icon = source_icon_paths(&source);
+    let icon = source_icon(&source);
 
     view! {
         <span class="source-badge" title=label aria-label=label>{svg_icon(icon)}</span>
@@ -389,29 +334,29 @@ fn source_label(source: &str) -> &'static str {
     }
 }
 
-fn source_icon_paths(source: &str) -> &'static [&'static str] {
+fn source_icon(source: &str) -> &'static str {
     match source {
-        "my_pr" => MY_PR_ICON_PATHS,
-        _ => NOTIFICATION_ICON_PATHS,
+        "my_pr" => MY_PR_ICON,
+        _ => NOTIFICATION_ICON,
     }
 }
 
 fn thread_state_data(
     subject_type: Option<&str>,
     state: Option<&str>,
-) -> (&'static str, &'static [&'static str], &'static str) {
+) -> (&'static str, &'static str, &'static str) {
     match state {
-        Some("MERGED") => ("title-state-icon merged", PR_MERGED_ICON_PATHS, "Merged"),
+        Some("MERGED") => ("title-state-icon merged", PR_MERGED_ICON, "Merged"),
         Some("CLOSED") if subject_type == Some("Issue") => (
             "title-state-icon closed",
-            ISSUE_CLOSED_ICON_PATHS,
+            ISSUE_CLOSED_ICON,
             "Closed issue",
         ),
-        Some("CLOSED") => ("title-state-icon closed", PR_CLOSED_ICON_PATHS, "Closed"),
+        Some("CLOSED") => ("title-state-icon closed", PR_CLOSED_ICON, "Closed"),
         Some("OPEN") if subject_type == Some("Issue") => {
-            ("title-state-icon open", ISSUE_OPEN_ICON_PATHS, "Open issue")
+            ("title-state-icon open", ISSUE_OPEN_ICON, "Open issue")
         }
-        _ => ("title-state-icon open", PR_OPEN_ICON_PATHS, "Open"),
+        _ => ("title-state-icon open", PR_OPEN_ICON, "Open"),
     }
 }
 
@@ -433,10 +378,9 @@ fn fix_action_path(thread: &DashboardThread) -> String {
     )
 }
 
-fn svg_icon(paths: &'static [&'static str]) -> impl IntoView {
+fn svg_icon(inner: &'static str) -> impl IntoView {
     view! {
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-            {paths.iter().map(|path| view! { <path d=*path /> }).collect::<Vec<_>>()}
+        <svg viewBox="0 0 24 24" aria-hidden="true" inner_html=inner>
         </svg>
     }
 }
