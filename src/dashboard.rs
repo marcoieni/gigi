@@ -250,18 +250,6 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                 } else {
                     ().into_any()
                 }}
-                {if thread.github_thread_id.is_some() || mark_authored_pr {
-                    view! {
-                        <form action="/dashboard/actions/done" method="post" data-async-form>
-                            {thread.github_thread_id.clone().map(|thread_id| view! { <input type="hidden" name="github_thread_id" value=thread_id /> })}
-                            {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
-                            <input type="hidden" name="mark_authored_pr" value=mark_authored_pr.to_string() />
-                            <button class="btn icon-btn" type="submit" data-loading-label="Saving..." aria-label="Mark done" title="Mark done">{svg_icon(CHECKMARK_ICON)}</button>
-                        </form>
-                    }.into_any()
-                } else {
-                    ().into_any()
-                }}
                 <div class="icon-actions">
                     <form action="/dashboard/actions/open/vscode" method="post" data-async-form>
                         <input type="hidden" name="repository" value=thread.repository.clone() />
@@ -274,6 +262,18 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                         <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in Terminal" title="Open in Terminal">{svg_icon(TERMINAL_ICON)}</button>
                     </form>
                 </div>
+                {if thread.github_thread_id.is_some() || mark_authored_pr {
+                    view! {
+                        <form action="/dashboard/actions/done" method="post" data-async-form>
+                            {thread.github_thread_id.clone().map(|thread_id| view! { <input type="hidden" name="github_thread_id" value=thread_id /> })}
+                            {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
+                            <input type="hidden" name="mark_authored_pr" value=mark_authored_pr.to_string() />
+                            <button class="btn icon-btn" type="submit" data-loading-label="Saving..." aria-label="Mark done" title="Mark done">{svg_icon(CHECKMARK_ICON)}</button>
+                        </form>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }}
             </div>
         </article>
     }

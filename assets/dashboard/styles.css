@@ -156,6 +156,8 @@ body {
 }
 
 .thread {
+  display: flex;
+  flex-direction: column;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -164,10 +166,14 @@ body {
 
 .thread h3 {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   margin: 0 0 4px;
   font-size: 18px;
+}
+
+.thread h3 .title-state-icon {
+  margin-top: 3px;
 }
 
 .thread-link {
@@ -203,13 +209,15 @@ body {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  margin-top: 6px;
+  margin-top: auto;
+  padding-top: 6px;
 }
 
 .icon-actions {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
 }
 
 .icon-actions form,
