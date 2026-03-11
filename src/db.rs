@@ -120,13 +120,14 @@ pub struct DashboardThread {
     pub participants: Vec<Participant>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DashboardThreadFilters {
     pub show_notifications: bool,
     pub show_prs: bool,
     pub show_done: bool,
     pub show_not_done: bool,
     pub group_by_repository: bool,
+    pub selected_repositories: Vec<String>,
 }
 
 impl Default for DashboardThreadFilters {
@@ -137,6 +138,7 @@ impl Default for DashboardThreadFilters {
             show_done: false,
             show_not_done: true,
             group_by_repository: true,
+            selected_repositories: Vec::new(),
         }
     }
 }
@@ -475,7 +477,7 @@ impl Db {
 
     #[cfg(test)]
     pub fn list_dashboard_threads(&self) -> anyhow::Result<Vec<DashboardThread>> {
-        self.list_dashboard_threads_with_filters(DashboardThreadFilters::default())
+        self.list_dashboard_threads_with_filters(&DashboardThreadFilters::default())
     }
 
     /// Replaces the stored participants for a PR with the given list.
@@ -521,7 +523,7 @@ impl Db {
 
     pub fn list_dashboard_threads_with_filters(
         &self,
-        filters: DashboardThreadFilters,
+        filters: &DashboardThreadFilters,
     ) -> anyhow::Result<Vec<DashboardThread>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
@@ -616,14 +618,16 @@ impl Db {
             Ok(deduped
                 .into_iter()
                 .filter(|thread| filters.include_done_state(thread.done))
+                .filter(|thread| filters.include_repository(&thread.repository))
                 .collect())
         })
     }
 
     pub fn dashboard_thread_filters(&self) -> anyhow::Result<DashboardThreadFilters> {
         self.with_conn(|conn| {
-            conn.query_row(
-                r#"
+            let mut filters = conn
+                .query_row(
+                    r#"
                 SELECT
                     show_notifications,
                     show_prs,
@@ -633,20 +637,29 @@ impl Db {
                 FROM dashboard_preferences
                 WHERE id = 1
                 "#,
-                [],
-                |row| {
-                    Ok(DashboardThreadFilters {
-                        show_notifications: row.get::<_, i64>(0)? != 0,
-                        show_prs: row.get::<_, i64>(1)? != 0,
-                        show_done: row.get::<_, i64>(2)? != 0,
-                        show_not_done: row.get::<_, i64>(3)? != 0,
-                        group_by_repository: row.get::<_, i64>(4)? != 0,
-                    })
-                },
-            )
-            .optional()
-            .map(|filters| filters.unwrap_or_default())
-            .map_err(anyhow::Error::from)
+                    [],
+                    |row| {
+                        Ok(DashboardThreadFilters {
+                            show_notifications: row.get::<_, i64>(0)? != 0,
+                            show_prs: row.get::<_, i64>(1)? != 0,
+                            show_done: row.get::<_, i64>(2)? != 0,
+                            show_not_done: row.get::<_, i64>(3)? != 0,
+                            group_by_repository: row.get::<_, i64>(4)? != 0,
+                            selected_repositories: Vec::new(),
+                        })
+                    },
+                )
+                .optional()
+                .map(|filters| filters.unwrap_or_default())?;
+
+            let mut stmt =
+                conn.prepare("SELECT repository FROM repository_filter ORDER BY repository")?;
+            let repos = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            for repo in repos {
+                filters.selected_repositories.push(repo?);
+            }
+
+            Ok(filters)
         })
     }
 
@@ -685,6 +698,31 @@ impl Db {
                 ],
             )?;
             Ok(())
+        })
+    }
+
+    pub fn set_repository_filter(&self, repositories: &[String]) -> anyhow::Result<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM repository_filter", [])?;
+            let mut stmt =
+                conn.prepare("INSERT INTO repository_filter (repository) VALUES (?1)")?;
+            for repo in repositories {
+                stmt.execute(params![repo])?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn list_all_repositories(&self) -> anyhow::Result<Vec<String>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT DISTINCT repository FROM threads ORDER BY repository")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok(out)
         })
     }
 
@@ -813,7 +851,7 @@ impl DashboardThreadRow {
 }
 
 impl DashboardThreadFilters {
-    fn include_sources(self, sources: &[String]) -> bool {
+    fn include_sources(&self, sources: &[String]) -> bool {
         sources.iter().all(|s| match s.as_str() {
             "notification" => self.show_notifications,
             "my_pr" => self.show_prs,
@@ -821,8 +859,13 @@ impl DashboardThreadFilters {
         })
     }
 
-    fn include_done_state(self, done: bool) -> bool {
+    fn include_done_state(&self, done: bool) -> bool {
         (done && self.show_done) || (!done && self.show_not_done)
+    }
+
+    fn include_repository(&self, repository: &str) -> bool {
+        self.selected_repositories.is_empty()
+            || self.selected_repositories.iter().any(|r| r == repository)
     }
 }
 
@@ -1034,6 +1077,14 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
     )?;
 
     add_column_if_missing(conn, "pr_participants", "last_activity_at", "TEXT")?;
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS repository_filter (
+            repository TEXT PRIMARY KEY
+        );
+        "#,
+    )?;
 
     Ok(())
 }
@@ -1494,12 +1545,13 @@ mod tests {
         db.mark_thread_done_local("1").unwrap();
 
         let threads = db
-            .list_dashboard_threads_with_filters(DashboardThreadFilters {
+            .list_dashboard_threads_with_filters(&DashboardThreadFilters {
                 show_notifications: true,
                 show_prs: true,
                 show_done: true,
                 show_not_done: false,
                 group_by_repository: true,
+                selected_repositories: Vec::new(),
             })
             .unwrap();
 
@@ -1550,12 +1602,13 @@ mod tests {
         .unwrap();
 
         let threads = db
-            .list_dashboard_threads_with_filters(DashboardThreadFilters {
+            .list_dashboard_threads_with_filters(&DashboardThreadFilters {
                 show_notifications: false,
                 show_prs: true,
                 show_done: false,
                 show_not_done: true,
                 group_by_repository: true,
+                selected_repositories: Vec::new(),
             })
             .unwrap();
 
@@ -1583,9 +1636,10 @@ mod tests {
             show_done: true,
             show_not_done: false,
             group_by_repository: false,
+            selected_repositories: Vec::new(),
         };
 
-        db.set_dashboard_thread_filters(filters).unwrap();
+        db.set_dashboard_thread_filters(filters.clone()).unwrap();
 
         assert_eq!(db.dashboard_thread_filters().unwrap(), filters);
     }

@@ -15,6 +15,7 @@ use crate::{
 pub struct DashboardSnapshot {
     pub filters: DashboardThreadFilters,
     pub threads: Vec<DashboardThread>,
+    pub available_repositories: Vec<String>,
     pub status_message: String,
 }
 
@@ -48,6 +49,8 @@ pub fn render_fragment(snapshot: DashboardSnapshot) -> String {
 fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
     let grouped = snapshot.filters.group_by_repository;
     let groups = grouped_threads(&snapshot.threads);
+    let selected_repos = snapshot.filters.selected_repositories.clone();
+    let available_repos = snapshot.available_repositories.clone();
 
     view! {
         <main class="layout">
@@ -71,22 +74,60 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                 </div>
             </header>
 
-            <form class="filters" aria-label="Dashboard filters" action="/dashboard/actions/filters" method="post" data-async-form data-auto-submit-form>
-                <fieldset class="filter-group">
-                    <legend>"Show"</legend>
-                    <FilterCheckbox name="show_notifications" label="Notifications" checked=snapshot.filters.show_notifications />
-                    <FilterCheckbox name="show_prs" label="PRs" checked=snapshot.filters.show_prs />
-                </fieldset>
-                <fieldset class="filter-group">
-                    <legend>"Status"</legend>
-                    <FilterCheckbox name="show_not_done" label="Not done" checked=snapshot.filters.show_not_done />
-                    <FilterCheckbox name="show_done" label="Done" checked=snapshot.filters.show_done />
-                </fieldset>
-                <fieldset class="filter-group">
-                    <legend>"Display"</legend>
-                    <FilterCheckbox name="group_by_repository" label="Group by repository" checked=snapshot.filters.group_by_repository />
-                </fieldset>
-            </form>
+            <div class="filters">
+                <form aria-label="Dashboard filters" action="/dashboard/actions/filters" method="post" data-async-form data-auto-submit-form class="filter-row">
+                    <fieldset class="filter-group">
+                        <legend>"Show"</legend>
+                        <FilterCheckbox name="show_notifications" label="Notifications" checked=snapshot.filters.show_notifications />
+                        <FilterCheckbox name="show_prs" label="PRs" checked=snapshot.filters.show_prs />
+                    </fieldset>
+                    <fieldset class="filter-group">
+                        <legend>"Status"</legend>
+                        <FilterCheckbox name="show_not_done" label="Not done" checked=snapshot.filters.show_not_done />
+                        <FilterCheckbox name="show_done" label="Done" checked=snapshot.filters.show_done />
+                    </fieldset>
+                    <fieldset class="filter-group">
+                        <legend>"Display"</legend>
+                        <FilterCheckbox name="group_by_repository" label="Group by repository" checked=snapshot.filters.group_by_repository />
+                    </fieldset>
+                </form>
+
+                {if !available_repos.is_empty() {
+                    let repos = available_repos.clone();
+                    let selected = selected_repos.clone();
+                    let active_count = if selected.is_empty() { repos.len() } else { selected.len() };
+                    let total_count = repos.len();
+                    let badge_label = if active_count == total_count {
+                        "All".to_string()
+                    } else {
+                        format!("{active_count}/{total_count}")
+                    };
+                    view! {
+                        <details class="repo-dropdown">
+                            <summary class="btn repo-dropdown-toggle">
+                                "Repositories "
+                                <span class="repo-badge">{badge_label}</span>
+                            </summary>
+                            <div class="repo-dropdown-panel">
+                                <form action="/dashboard/actions/repo-filter" method="post" data-async-form id="repo-filter-form">
+                                    {repos.into_iter().map(|repo| {
+                                        let checked = selected.is_empty() || selected.contains(&repo);
+                                        let name = format!("repo:{}", repo);
+                                        view! {
+                                            <label class="repo-dropdown-option">
+                                                <input type="checkbox" name=name checked=checked />
+                                                <span>{repo}</span>
+                                            </label>
+                                        }
+                                    }).collect::<Vec<_>>()}
+                                </form>
+                            </div>
+                        </details>
+                    }.into_any()
+                } else {
+                    ().into_any()
+                }}
+            </div>
 
             <section>
                 {if snapshot.threads.is_empty() {

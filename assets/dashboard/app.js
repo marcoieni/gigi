@@ -15,7 +15,15 @@ async function refreshDashboard() {
       throw new Error(await readError(response));
     }
 
+    const dropdown = document.querySelector("details.repo-dropdown");
+    const wasOpen = dropdown && dropdown.hasAttribute("open");
     dashboardRoot.innerHTML = await response.text();
+    if (wasOpen) {
+      const restored = document.querySelector("details.repo-dropdown");
+      if (restored) {
+        restored.setAttribute("open", "");
+      }
+    }
   })();
 
   try {
@@ -124,9 +132,37 @@ document.addEventListener("submit", async (event) => {
   }
 });
 
+let repoFilterTimer = null;
+
 document.addEventListener("change", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement)) {
+    return;
+  }
+
+  // Repo filter: debounce so the user can toggle several repos.
+  const repoForm = target.closest("#repo-filter-form");
+  if (repoForm instanceof HTMLFormElement) {
+    clearTimeout(repoFilterTimer);
+    repoFilterTimer = setTimeout(async () => {
+      try {
+        setStatus("Working...");
+        const response = await fetch(repoForm.action, {
+          method: "POST",
+          body: encodeForm(repoForm),
+          headers: {
+            "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+          },
+        });
+        if (!response.ok) {
+          throw new Error(await readError(response));
+        }
+        await refreshDashboard();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setStatus(message);
+      }
+    }, 600);
     return;
   }
 
@@ -143,6 +179,12 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  // Close repo dropdown when clicking outside.
+  const openDropdown = document.querySelector("details.repo-dropdown[open]");
+  if (openDropdown && !openDropdown.contains(event.target)) {
+    openDropdown.removeAttribute("open");
+  }
+
   const closeButton = event.target.closest("#close-modal");
   if (closeButton) {
     const modal = document.getElementById("review-modal");

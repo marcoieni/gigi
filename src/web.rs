@@ -1,4 +1,4 @@
-use std::convert::Infallible;
+use std::{collections::HashMap, convert::Infallible};
 
 use axum::{
     Form, Router,
@@ -23,6 +23,7 @@ pub async fn run_server(state: std::sync::Arc<AppState>, config: &AppConfig) -> 
         .route("/dashboard/fragment", get(dashboard_fragment))
         .route("/dashboard/events", get(dashboard_events))
         .route("/dashboard/actions/filters", post(update_dashboard_filters))
+        .route("/dashboard/actions/repo-filter", post(update_repo_filter))
         .route("/dashboard/actions/done", post(mark_done))
         .route("/dashboard/actions/open/vscode", post(open_vscode))
         .route("/dashboard/actions/open/terminal", post(open_terminal))
@@ -93,6 +94,29 @@ async fn update_dashboard_filters(
         .set_dashboard_thread_filters(filters)
         .map_err(|err| ApiErrorResponse::internal(&err))?;
     state.notify_dashboard("Filters updated");
+    Ok(StatusCode::OK)
+}
+
+async fn update_repo_filter(
+    State(state): State<std::sync::Arc<AppState>>,
+    Form(form): Form<RepoFilterForm>,
+) -> Result<StatusCode, ApiErrorResponse> {
+    let all_repos = state
+        .db
+        .list_all_repositories()
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
+    let selected: Vec<String> = form.selected_repositories(&all_repos);
+    // If all repos are selected, store empty (meaning "all") to avoid stale entries.
+    let to_store = if selected.len() == all_repos.len() {
+        Vec::new()
+    } else {
+        selected
+    };
+    state
+        .db
+        .set_repository_filter(&to_store)
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
+    state.notify_dashboard("Repository filter updated");
     Ok(StatusCode::OK)
 }
 
@@ -187,7 +211,8 @@ fn static_asset_headers(content_type: &'static str) -> HeaderMap {
 
 fn load_snapshot(state: &AppState) -> anyhow::Result<DashboardSnapshot> {
     let filters = state.db.dashboard_thread_filters()?;
-    let mut threads = state.db.list_dashboard_threads_with_filters(filters)?;
+    let available_repositories = state.db.list_all_repositories()?;
+    let mut threads = state.db.list_dashboard_threads_with_filters(&filters)?;
     for thread in &mut threads {
         let participant_key = thread.pr_url.as_deref().or(thread.subject_url.as_deref());
         if let Some(key) = participant_key {
@@ -197,6 +222,7 @@ fn load_snapshot(state: &AppState) -> anyhow::Result<DashboardSnapshot> {
     Ok(DashboardSnapshot {
         filters,
         threads,
+        available_repositories,
         status_message: state.dashboard_status_message(),
     })
 }
@@ -232,7 +258,27 @@ impl DashboardFiltersForm {
             show_done: self.show_done.is_some(),
             show_not_done: self.show_not_done.is_some(),
             group_by_repository: self.group_by_repository.is_some(),
+            selected_repositories: Vec::new(),
         }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RepoFilterForm {
+    #[serde(flatten)]
+    fields: HashMap<String, String>,
+}
+
+impl RepoFilterForm {
+    fn selected_repositories(&self, all_repos: &[String]) -> Vec<String> {
+        all_repos
+            .iter()
+            .filter(|repo| {
+                let key = format!("repo:{}", repo);
+                self.fields.contains_key(&key)
+            })
+            .cloned()
+            .collect()
     }
 }
 
