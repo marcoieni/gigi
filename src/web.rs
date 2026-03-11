@@ -187,7 +187,12 @@ fn static_asset_headers(content_type: &'static str) -> HeaderMap {
 
 fn load_snapshot(state: &AppState) -> anyhow::Result<DashboardSnapshot> {
     let filters = state.db.dashboard_thread_filters()?;
-    let threads = state.db.list_dashboard_threads_with_filters(filters)?;
+    let mut threads = state.db.list_dashboard_threads_with_filters(filters)?;
+    for thread in &mut threads {
+        if let Some(pr_url) = &thread.pr_url {
+            thread.participants = state.get_participants(pr_url);
+        }
+    }
     Ok(DashboardSnapshot {
         filters,
         threads,

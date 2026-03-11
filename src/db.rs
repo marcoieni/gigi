@@ -5,6 +5,7 @@ use anyhow::Context as _;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use crate::github::Participant;
 use crate::review::{parse_requires_code_changes, sanitize_review_markdown};
 
 #[derive(Debug, Clone)]
@@ -114,6 +115,9 @@ pub struct DashboardThread {
     pub latest_review_created_at: Option<i64>,
     pub latest_review_provider: Option<String>,
     pub is_draft: bool,
+    /// Participants who interacted with this PR (not persisted, populated at runtime).
+    #[serde(skip_serializing)]
+    pub participants: Vec<Participant>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -762,6 +766,7 @@ impl DashboardThreadRow {
             latest_review_created_at: self.latest_review_created_at,
             latest_review_provider: self.latest_review_provider,
             is_draft: self.is_draft,
+            participants: Vec::new(),
         }
     }
 }
@@ -829,6 +834,9 @@ fn merge_dashboard_thread(existing: &mut DashboardThread, incoming: DashboardThr
         incoming.subject_type,
     );
     existing.is_draft = existing_snapshot.is_draft || incoming.is_draft;
+    if existing.participants.is_empty() {
+        existing.participants = incoming.participants;
+    }
 }
 
 fn dashboard_thread_priority(thread: &DashboardThread) -> usize {

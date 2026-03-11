@@ -204,6 +204,17 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                 } else {
                     ().into_any()
                 }}
+                {if !thread.participants.is_empty() {
+                    let avatars = thread.participants.iter().take(5).map(|p| {
+                        let alt = p.login.clone();
+                        let src = format!("{}&s=40", p.avatar_url);
+                        let profile = format!("https://github.com/{}", p.login);
+                        view! { <a class="avatar-link" href=profile target="_blank" rel="noreferrer" title=alt.clone()><img class="avatar" src=src alt=alt.clone() loading="lazy" /></a> }
+                    }).collect::<Vec<_>>();
+                    view! { <span class="meta-separator">"•"</span><span class="avatar-stack">{avatars}</span> }.into_any()
+                } else {
+                    ().into_any()
+                }}
             </div>
 
             <div class="row">
@@ -417,6 +428,7 @@ mod tests {
             latest_review_created_at: None,
             latest_review_provider: None,
             is_draft: false,
+            participants: Vec::new(),
         }
     }
 

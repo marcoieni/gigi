@@ -400,3 +400,33 @@ pre.hljs {
     flex-wrap: wrap;
   }
 }
+
+.avatar-stack {
+  display: inline-flex;
+  align-items: center;
+}
+
+.avatar-link {
+  display: block;
+  margin-right: -6px;
+  line-height: 0;
+  transition: transform 0.15s ease;
+}
+
+.avatar-link:last-child {
+  margin-right: 0;
+}
+
+.avatar-link:hover {
+  transform: translateY(-1px);
+  z-index: 1;
+}
+
+.avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1.5px solid var(--card);
+  object-fit: cover;
+  vertical-align: middle;
+}

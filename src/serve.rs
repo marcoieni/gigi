@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -14,13 +14,15 @@ use crate::{
     github, launcher, review, web,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AppState {
     pub db: Db,
     pub config: AppConfig,
     pub work_dir: Utf8PathBuf,
     pub poll_lock: Arc<tokio::sync::Mutex<()>>,
     pub dashboard_updates: tokio::sync::watch::Sender<DashboardUpdate>,
+    /// In-memory cache of PR participants (keyed by PR URL).
+    pub participants_cache: std::sync::Mutex<HashMap<String, Vec<github::Participant>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +37,8 @@ pub struct PollStats {
     pub authored_prs_fetched: usize,
     pub prs_seen: usize,
     pub reviews_run: usize,
+    #[serde(skip_serializing)]
+    pub participants: HashMap<String, Vec<github::Participant>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +80,7 @@ pub async fn run_serve() -> anyhow::Result<()> {
         work_dir,
         poll_lock: Arc::new(tokio::sync::Mutex::new(())),
         dashboard_updates,
+        participants_cache: std::sync::Mutex::new(HashMap::new()),
     });
 
     let browser_url = dashboard_browser_url(&cfg);
@@ -91,7 +96,7 @@ pub async fn run_serve() -> anyhow::Result<()> {
         println!("🔄 Starting initial poll cycle...");
         match startup_state.poll_once_startup().await {
             Ok(stats) => print_poll_stats("✅ Initial poll complete:", &stats),
-            Err(err) => eprintln!("⚠️ Initial poll cycle failed: {err}"),
+            Err(err) => eprintln!("⚠️ Initial poll cycle failed: {err:?}"),
         }
     });
 
@@ -140,6 +145,14 @@ fn print_poll_stats(prefix: &str, stats: &PollStats) {
 impl AppState {
     pub fn dashboard_status_message(&self) -> String {
         self.dashboard_updates.borrow().message.clone()
+    }
+
+    pub fn get_participants(&self, pr_url: &str) -> Vec<github::Participant> {
+        self.participants_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(pr_url).cloned())
+            .unwrap_or_default()
     }
 
     pub fn subscribe_dashboard_updates(&self) -> tokio::sync::watch::Receiver<DashboardUpdate> {
@@ -212,9 +225,19 @@ impl AppState {
     async fn poll_once_with_mode(&self, mode: PollMode) -> anyhow::Result<PollStats> {
         let _guard = self.poll_lock.lock().await;
 
-        poll_once_async(&self.db, &self.config, &self.work_dir, mode)
+        let stats = poll_once_async(&self.db, &self.config, &self.work_dir, mode)
             .await
-            .context("polling cycle failed")
+            .context("polling cycle failed")?;
+
+        if !stats.participants.is_empty() {
+            if let Ok(mut cache) = self.participants_cache.lock() {
+                for (pr_url, participants) in &stats.participants {
+                    cache.insert(pr_url.clone(), participants.clone());
+                }
+            }
+        }
+
+        Ok(stats)
     }
 
     pub async fn mark_done(&self, request: MarkDoneRequest) -> anyhow::Result<()> {
@@ -506,6 +529,7 @@ async fn poll_once_async(
         authored_prs_fetched: authored_prs.len(),
         prs_seen: pr_urls.len(),
         reviews_run,
+        participants: batch.participants,
     })
 }
 
