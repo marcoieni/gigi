@@ -205,10 +205,12 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                 } else {
                     ().into_any()
                 }}
-                {if thread.participants.is_empty() {
+                {
+                    let non_bot_participants: Vec<_> = thread.participants.iter().filter(|p| !p.login.ends_with("[bot]")).collect();
+                    if non_bot_participants.is_empty() {
                     ().into_any()
                 } else {
-                    let avatars = thread.participants.iter().take(5).map(|p| {
+                    let avatars = non_bot_participants.into_iter().take(5).map(|p| {
                         let alt = p.login.clone();
                         let src = if p.avatar_url.contains('?') {
                             format!("{}&s=40", p.avatar_url)
@@ -219,7 +221,8 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                         view! { <a class="avatar-link" href=profile target="_blank" rel="noreferrer" title=alt.clone()><img class="avatar" src=src alt=alt.clone() loading="lazy" /></a> }
                     }).collect::<Vec<_>>();
                     view! { <span class="meta-separator">"•"</span><span class="avatar-stack">{avatars}</span> }.into_any()
-                }}
+                }
+                }
             </div>
 
             <div class="row">
