@@ -44,6 +44,13 @@ struct CloneTarget {
     upstream: Option<GitHubRepoRef>,
 }
 
+/// A GitHub user who participated in a PR (for avatar display).
+#[derive(Debug, Clone)]
+pub struct Participant {
+    pub login: String,
+    pub avatar_url: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct AuthoredPrSummary {
     pub pr_url: String,
@@ -496,9 +503,15 @@ pub struct BatchFetchResult {
     pub pr_details: HashMap<String, PrDetails>,
     /// Maps issue API URL to uppercase state string.
     pub issue_states: HashMap<String, String>,
+    /// Maps PR URL to the list of participants (for avatar display).
+    pub participants: HashMap<String, Vec<Participant>>,
 }
 
-/// Fetch details for multiple PRs and issue states in a single GraphQL call.
+/// Maximum number of top-level GraphQL fields per request to stay within
+/// GitHub's query complexity limits.
+const GRAPHQL_BATCH_CHUNK_SIZE: usize = 25;
+
+/// Fetch details for multiple PRs and issue states using batched GraphQL calls.
 /// `pr_urls` are HTML PR URLs like `https://github.com/owner/repo/pull/123`.
 /// `issue_api_urls` are REST API URLs like `https://api.github.com/repos/o/r/issues/42`.
 pub async fn fetch_batch(
@@ -508,13 +521,6 @@ pub async fn fetch_batch(
     if pr_urls.is_empty() && issue_api_urls.is_empty() {
         return Ok(BatchFetchResult::default());
     }
-
-    let pr_fields = "number title state isDraft headRefName headRefOid baseRefName \
-                     createdAt updatedAt author { login } \
-                     headRepository { name } headRepositoryOwner { login } \
-                     isCrossRepository";
-
-    let mut query = String::from("query {");
 
     // Deduplicate PRs by (owner, repo, number)
     let mut pr_refs: Vec<(String, String, u64, String)> = Vec::new();
@@ -526,15 +532,6 @@ pub async fn fetch_batch(
                 pr_refs.push((parsed.owner, parsed.repo, parsed.number, url.clone()));
             }
         }
-    }
-
-    for (i, (owner, repo, number, _)) in pr_refs.iter().enumerate() {
-        write!(
-            query,
-            " pr{i}: repository(owner: \"{owner}\", name: \"{repo}\") {{ \
-                isArchived pullRequest(number: {number}) {{ {pr_fields} }} \
-            }}"
-        )?;
     }
 
     // Deduplicate issues
@@ -549,7 +546,56 @@ pub async fn fetch_batch(
         }
     }
 
-    for (i, (issue, _)) in issue_refs.iter().enumerate() {
+    let mut result = BatchFetchResult::default();
+
+    // Process in chunks to avoid GitHub GraphQL resource limits.
+    let pr_chunks: Vec<&[(String, String, u64, String)]> =
+        pr_refs.chunks(GRAPHQL_BATCH_CHUNK_SIZE).collect();
+    let issue_chunks: Vec<&[(IssueRef, String)]> =
+        issue_refs.chunks(GRAPHQL_BATCH_CHUNK_SIZE).collect();
+    let total_chunks = pr_chunks.len().max(issue_chunks.len());
+
+    for chunk_idx in 0..total_chunks {
+        let pr_chunk = pr_chunks.get(chunk_idx).copied().unwrap_or(&[]);
+        let issue_chunk = issue_chunks.get(chunk_idx).copied().unwrap_or(&[]);
+
+        if pr_chunk.is_empty() && issue_chunk.is_empty() {
+            continue;
+        }
+
+        let chunk_result = fetch_batch_chunk(pr_chunk, issue_chunk).await?;
+
+        result.pr_details.extend(chunk_result.pr_details);
+        result.issue_states.extend(chunk_result.issue_states);
+        result.participants.extend(chunk_result.participants);
+    }
+
+    Ok(result)
+}
+
+/// Execute a single GraphQL batch request for a chunk of PRs and issues.
+async fn fetch_batch_chunk(
+    pr_chunk: &[(String, String, u64, String)],
+    issue_chunk: &[(IssueRef, String)],
+) -> anyhow::Result<BatchFetchResult> {
+    let pr_fields = "number title state isDraft headRefName headRefOid baseRefName \
+                     createdAt updatedAt author { login avatarUrl } \
+                     headRepository { name } headRepositoryOwner { login } \
+                     isCrossRepository \
+                     participants(first: 10) { nodes { login avatarUrl } }";
+
+    let mut query = String::from("query {");
+
+    for (i, (owner, repo, number, _)) in pr_chunk.iter().enumerate() {
+        write!(
+            query,
+            " pr{i}: repository(owner: \"{owner}\", name: \"{repo}\") {{ \
+                isArchived pullRequest(number: {number}) {{ {pr_fields} }} \
+            }}"
+        )?;
+    }
+
+    for (i, (issue, _)) in issue_chunk.iter().enumerate() {
         write!(
             query,
             " issue{i}: repository(owner: \"{}\", name: \"{}\") {{ \
@@ -572,7 +618,7 @@ pub async fn fetch_batch(
 
     let mut result = BatchFetchResult::default();
 
-    for (i, (owner, repo, _, pr_url)) in pr_refs.iter().enumerate() {
+    for (i, (owner, repo, _, pr_url)) in pr_chunk.iter().enumerate() {
         let alias = format!("pr{i}");
         let Some(repo_val) = data.get(&alias) else {
             eprintln!("⚠️ Missing GraphQL alias {alias} for {pr_url}");
@@ -602,9 +648,46 @@ pub async fn fetch_batch(
                 eprintln!("⚠️ Failed to parse PR details for {pr_url}: {err}");
             }
         }
+
+        let mut participants = pr_val
+            .get("participants")
+            .and_then(|v| v.get("nodes"))
+            .and_then(Value::as_array)
+            .map(|nodes| {
+                nodes
+                    .iter()
+                    .filter_map(|node| {
+                        let login = node.get("login")?.as_str()?.to_string();
+                        let avatar_url = node.get("avatarUrl")?.as_str()?.to_string();
+                        Some(Participant { login, avatar_url })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        // Include the PR author if not already in the participants list.
+        if let Some(author) = pr_val.get("author")
+            && let (Some(login), Some(avatar_url)) = (
+                author.get("login").and_then(Value::as_str),
+                author.get("avatarUrl").and_then(Value::as_str),
+            )
+            && !participants.iter().any(|p| p.login == login)
+        {
+            participants.insert(
+                0,
+                Participant {
+                    login: login.to_string(),
+                    avatar_url: avatar_url.to_string(),
+                },
+            );
+        }
+
+        if !participants.is_empty() {
+            result.participants.insert(pr_url.clone(), participants);
+        }
     }
 
-    for (i, (_, api_url)) in issue_refs.iter().enumerate() {
+    for (i, (_, api_url)) in issue_chunk.iter().enumerate() {
         let alias = format!("issue{i}");
         if let Some(state) = data
             .get(&alias)

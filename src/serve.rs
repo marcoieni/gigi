@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -14,7 +14,7 @@ use crate::{
     github, launcher, review, web,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AppState {
     pub db: Db,
     pub config: AppConfig,
@@ -35,6 +35,8 @@ pub struct PollStats {
     pub authored_prs_fetched: usize,
     pub prs_seen: usize,
     pub reviews_run: usize,
+    #[serde(skip_serializing)]
+    pub participants: HashMap<String, Vec<github::Participant>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,7 +93,7 @@ pub async fn run_serve() -> anyhow::Result<()> {
         println!("🔄 Starting initial poll cycle...");
         match startup_state.poll_once_startup().await {
             Ok(stats) => print_poll_stats("✅ Initial poll complete:", &stats),
-            Err(err) => eprintln!("⚠️ Initial poll cycle failed: {err}"),
+            Err(err) => eprintln!("⚠️ Initial poll cycle failed: {err:?}"),
         }
     });
 
@@ -212,9 +214,17 @@ impl AppState {
     async fn poll_once_with_mode(&self, mode: PollMode) -> anyhow::Result<PollStats> {
         let _guard = self.poll_lock.lock().await;
 
-        poll_once_async(&self.db, &self.config, &self.work_dir, mode)
+        let stats = poll_once_async(&self.db, &self.config, &self.work_dir, mode)
             .await
-            .context("polling cycle failed")
+            .context("polling cycle failed")?;
+
+        for (pr_url, participants) in &stats.participants {
+            if let Err(err) = self.db.upsert_pr_participants(pr_url, participants) {
+                eprintln!("⚠️ Failed to persist participants for {pr_url}: {err}");
+            }
+        }
+
+        Ok(stats)
     }
 
     pub async fn mark_done(&self, request: MarkDoneRequest) -> anyhow::Result<()> {
@@ -506,6 +516,7 @@ async fn poll_once_async(
         authored_prs_fetched: authored_prs.len(),
         prs_seen: pr_urls.len(),
         reviews_run,
+        participants: batch.participants,
     })
 }
 
