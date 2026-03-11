@@ -190,7 +190,7 @@ fn load_snapshot(state: &AppState) -> anyhow::Result<DashboardSnapshot> {
     let mut threads = state.db.list_dashboard_threads_with_filters(filters)?;
     for thread in &mut threads {
         if let Some(pr_url) = &thread.pr_url {
-            thread.participants = state.get_participants(pr_url);
+            thread.participants = state.db.get_pr_participants(pr_url).unwrap_or_default();
         }
     }
     Ok(DashboardSnapshot {

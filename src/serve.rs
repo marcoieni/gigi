@@ -21,8 +21,6 @@ pub struct AppState {
     pub work_dir: Utf8PathBuf,
     pub poll_lock: Arc<tokio::sync::Mutex<()>>,
     pub dashboard_updates: tokio::sync::watch::Sender<DashboardUpdate>,
-    /// In-memory cache of PR participants (keyed by PR URL).
-    pub participants_cache: std::sync::Mutex<HashMap<String, Vec<github::Participant>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +78,6 @@ pub async fn run_serve() -> anyhow::Result<()> {
         work_dir,
         poll_lock: Arc::new(tokio::sync::Mutex::new(())),
         dashboard_updates,
-        participants_cache: std::sync::Mutex::new(HashMap::new()),
     });
 
     let browser_url = dashboard_browser_url(&cfg);
@@ -145,14 +142,6 @@ fn print_poll_stats(prefix: &str, stats: &PollStats) {
 impl AppState {
     pub fn dashboard_status_message(&self) -> String {
         self.dashboard_updates.borrow().message.clone()
-    }
-
-    pub fn get_participants(&self, pr_url: &str) -> Vec<github::Participant> {
-        self.participants_cache
-            .lock()
-            .ok()
-            .and_then(|cache| cache.get(pr_url).cloned())
-            .unwrap_or_default()
     }
 
     pub fn subscribe_dashboard_updates(&self) -> tokio::sync::watch::Receiver<DashboardUpdate> {
@@ -229,11 +218,9 @@ impl AppState {
             .await
             .context("polling cycle failed")?;
 
-        if !stats.participants.is_empty() {
-            if let Ok(mut cache) = self.participants_cache.lock() {
-                for (pr_url, participants) in &stats.participants {
-                    cache.insert(pr_url.clone(), participants.clone());
-                }
+        for (pr_url, participants) in &stats.participants {
+            if let Err(err) = self.db.upsert_pr_participants(pr_url, participants) {
+                eprintln!("⚠️ Failed to persist participants for {pr_url}: {err}");
             }
         }
 

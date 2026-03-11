@@ -478,6 +478,44 @@ impl Db {
         self.list_dashboard_threads_with_filters(DashboardThreadFilters::default())
     }
 
+    /// Replaces the stored participants for a PR with the given list.
+    pub fn upsert_pr_participants(
+        &self,
+        pr_url: &str,
+        participants: &[Participant],
+    ) -> anyhow::Result<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM pr_participants WHERE pr_url = ?1", params![pr_url])?;
+            let mut stmt = conn.prepare(
+                "INSERT INTO pr_participants (pr_url, login, avatar_url) VALUES (?1, ?2, ?3)",
+            )?;
+            for p in participants {
+                stmt.execute(params![pr_url, p.login, p.avatar_url])?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Returns the stored participants for a PR.
+    pub fn get_pr_participants(&self, pr_url: &str) -> anyhow::Result<Vec<Participant>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT login, avatar_url FROM pr_participants WHERE pr_url = ?1",
+            )?;
+            let rows = stmt.query_map(params![pr_url], |row| {
+                Ok(Participant {
+                    login: row.get(0)?,
+                    avatar_url: row.get(1)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok(out)
+        })
+    }
+
     pub fn list_dashboard_threads_with_filters(
         &self,
         filters: DashboardThreadFilters,
@@ -969,6 +1007,15 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS pr_participants (
+            pr_url TEXT NOT NULL,
+            login TEXT NOT NULL,
+            avatar_url TEXT NOT NULL,
+            PRIMARY KEY (pr_url, login)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_pr_participants_pr_url ON pr_participants(pr_url);
         "#,
     )?;
 
