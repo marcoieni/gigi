@@ -136,7 +136,6 @@ fn FilterCheckbox(name: &'static str, label: &'static str, checked: bool) -> imp
 
 #[component]
 fn RepositorySection(repository: String, threads: Vec<DashboardThread>) -> impl IntoView {
-    let count = threads.len();
     let repo_link = format!("https://github.com/{repository}");
 
     view! {
@@ -145,7 +144,6 @@ fn RepositorySection(repository: String, threads: Vec<DashboardThread>) -> impl 
                 <h2 class="repo-group-title">
                     <a class="thread-link repo-link" href=repo_link target="_blank" rel="noreferrer">{repository}</a>
                 </h2>
-                <span class="repo-group-count">{format!("{count} {}", if count == 1 { "item" } else { "items" })}</span>
             </header>
             <div class="threads">
                 {threads.into_iter().map(|thread| view! { <ThreadCard thread /> }).collect::<Vec<_>>()}

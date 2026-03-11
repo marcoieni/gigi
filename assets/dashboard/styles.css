@@ -155,11 +155,6 @@ body {
   font-size: 18px;
 }
 
-.repo-group-count {
-  color: var(--muted);
-  font-size: 13px;
-}
-
 .thread {
   background: var(--card);
   border: 1px solid var(--border);
