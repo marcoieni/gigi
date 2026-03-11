@@ -49,6 +49,9 @@ struct CloneTarget {
 pub struct Participant {
     pub login: String,
     pub avatar_url: String,
+    /// ISO 8601 timestamp of the participant's most recent activity on the PR.
+    /// Used to order participants by recency in the dashboard.
+    pub last_activity_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -582,7 +585,15 @@ async fn fetch_batch_chunk(
                      createdAt updatedAt author { login avatarUrl } \
                      headRepository { name } headRepositoryOwner { login } \
                      isCrossRepository \
-                     participants(first: 10) { nodes { login avatarUrl } }";
+                     participants(first: 10) { nodes { login avatarUrl } } \
+                     timelineItems(last: 30, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, PULL_REQUEST_REVIEW_THREAD]) { \
+                       nodes { \
+                         __typename \
+                         ... on IssueComment { createdAt author { login avatarUrl } } \
+                         ... on PullRequestReview { createdAt author { login avatarUrl } } \
+                         ... on PullRequestCommit { commit { authoredDate author { user { login avatarUrl } } } } \
+                       } \
+                     }";
 
     let mut query = String::from("query {");
 
@@ -659,11 +670,33 @@ async fn fetch_batch_chunk(
                     .filter_map(|node| {
                         let login = node.get("login")?.as_str()?.to_string();
                         let avatar_url = node.get("avatarUrl")?.as_str()?.to_string();
-                        Some(Participant { login, avatar_url })
+                        Some(Participant { login, avatar_url, last_activity_at: None })
                     })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+
+        // Extract per-user last activity timestamps (and avatar URLs) from timelineItems.
+        let activity_map = extract_participant_activity(pr_val);
+        for p in &mut participants {
+            if let Some((ts, _)) = activity_map.get(&p.login) {
+                p.last_activity_at = Some(ts.clone());
+            }
+        }
+
+        // Include users from timeline items who aren't in the participants list
+        // (e.g. bots like github-actions[bot] which GitHub's participants field omits).
+        for (login, (ts, avatar_url)) in &activity_map {
+            if !participants.iter().any(|p| p.login == *login) {
+                if let Some(avatar_url) = avatar_url {
+                    participants.push(Participant {
+                        login: login.clone(),
+                        avatar_url: avatar_url.clone(),
+                        last_activity_at: Some(ts.clone()),
+                    });
+                }
+            }
+        }
 
         // Include the PR author if not already in the participants list.
         if let Some(author) = pr_val.get("author")
@@ -673,14 +706,24 @@ async fn fetch_batch_chunk(
             )
             && !participants.iter().any(|p| p.login == login)
         {
+            let last_activity_at = activity_map.get(login).map(|(ts, _)| ts.clone());
             participants.insert(
                 0,
                 Participant {
                     login: login.to_string(),
                     avatar_url: avatar_url.to_string(),
+                    last_activity_at,
                 },
             );
         }
+
+        // Sort participants by last activity (most recent first).
+        // Participants without activity data sink to the end.
+        participants.sort_by(|a, b| {
+            b.last_activity_at
+                .as_deref()
+                .cmp(&a.last_activity_at.as_deref())
+        });
 
         if !participants.is_empty() {
             result.participants.insert(pr_url.clone(), participants);
@@ -702,6 +745,67 @@ async fn fetch_batch_chunk(
     }
 
     Ok(result)
+}
+
+/// Extracts a map of `login -> latest_timestamp` from the PR's `timelineItems`.
+///
+/// Walks through comments, reviews, and commits to find the most recent
+/// activity timestamp for each user.
+fn extract_participant_activity(pr_val: &Value) -> HashMap<String, (String, Option<String>)> {
+    let mut activity: HashMap<String, (String, Option<String>)> = HashMap::new();
+
+    let Some(nodes) = pr_val
+        .get("timelineItems")
+        .and_then(|v| v.get("nodes"))
+        .and_then(Value::as_array)
+    else {
+        return activity;
+    };
+
+    for node in nodes {
+        let typename = node.get("__typename").and_then(Value::as_str).unwrap_or("");
+        let (login, timestamp, avatar_url) = match typename {
+            "IssueComment" | "PullRequestReview" => {
+                let author = node.get("author");
+                let login = author
+                    .and_then(|a| a.get("login"))
+                    .and_then(Value::as_str);
+                let ts = node.get("createdAt").and_then(Value::as_str);
+                let avatar = author
+                    .and_then(|a| a.get("avatarUrl"))
+                    .and_then(Value::as_str);
+                (login, ts, avatar)
+            }
+            "PullRequestCommit" => {
+                let commit = node.get("commit");
+                let author = commit.and_then(|c| c.get("author"));
+                let user = author.and_then(|a| a.get("user"));
+                let login = user
+                    .and_then(|u| u.get("login"))
+                    .and_then(Value::as_str);
+                let ts = commit
+                    .and_then(|c| c.get("authoredDate"))
+                    .and_then(Value::as_str);
+                let avatar = user
+                    .and_then(|u| u.get("avatarUrl"))
+                    .and_then(Value::as_str);
+                (login, ts, avatar)
+            }
+            _ => (None, None, None),
+        };
+
+        if let (Some(login), Some(ts)) = (login, timestamp) {
+            let entry = activity.entry(login.to_string()).or_insert_with(|| (String::new(), None));
+            if entry.0.is_empty() || ts > entry.0.as_str() {
+                entry.0 = ts.to_string();
+            }
+            if entry.1.is_none() {
+                entry.1 = avatar_url.map(|s| s.to_string());
+            }
+        }
+    }
+
+    activity
 }
 
 async fn fetch_repository_archived(owner: &str, repo: &str) -> anyhow::Result<bool> {

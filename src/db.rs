@@ -490,24 +490,25 @@ impl Db {
                 params![pr_url],
             )?;
             let mut stmt = conn.prepare(
-                "INSERT INTO pr_participants (pr_url, login, avatar_url) VALUES (?1, ?2, ?3)",
+                "INSERT INTO pr_participants (pr_url, login, avatar_url, last_activity_at) VALUES (?1, ?2, ?3, ?4)",
             )?;
             for p in participants {
-                stmt.execute(params![pr_url, p.login, p.avatar_url])?;
+                stmt.execute(params![pr_url, p.login, p.avatar_url, p.last_activity_at])?;
             }
             Ok(())
         })
     }
 
-    /// Returns the stored participants for a PR.
+    /// Returns the stored participants for a PR, ordered by last activity (most recent first).
     pub fn get_pr_participants(&self, pr_url: &str) -> anyhow::Result<Vec<Participant>> {
         self.with_conn(|conn| {
             let mut stmt =
-                conn.prepare("SELECT login, avatar_url FROM pr_participants WHERE pr_url = ?1")?;
+                conn.prepare("SELECT login, avatar_url, last_activity_at FROM pr_participants WHERE pr_url = ?1 ORDER BY last_activity_at DESC NULLS LAST")?;
             let rows = stmt.query_map(params![pr_url], |row| {
                 Ok(Participant {
                     login: row.get(0)?,
                     avatar_url: row.get(1)?,
+                    last_activity_at: row.get(2)?,
                 })
             })?;
             let mut out = Vec::new();
@@ -1031,6 +1032,8 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         "group_by_repository",
         "INTEGER NOT NULL DEFAULT 1",
     )?;
+
+    add_column_if_missing(conn, "pr_participants", "last_activity_at", "TEXT")?;
 
     Ok(())
 }
