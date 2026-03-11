@@ -207,7 +207,11 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                 {if !thread.participants.is_empty() {
                     let avatars = thread.participants.iter().take(5).map(|p| {
                         let alt = p.login.clone();
-                        let src = format!("{}&s=40", p.avatar_url);
+                        let src = if p.avatar_url.contains('?') {
+                            format!("{}&s=40", p.avatar_url)
+                        } else {
+                            format!("{}?s=40", p.avatar_url)
+                        };
                         let profile = format!("https://github.com/{}", p.login);
                         view! { <a class="avatar-link" href=profile target="_blank" rel="noreferrer" title=alt.clone()><img class="avatar" src=src alt=alt.clone() loading="lazy" /></a> }
                     }).collect::<Vec<_>>();

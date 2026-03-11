@@ -579,7 +579,7 @@ async fn fetch_batch_chunk(
     issue_chunk: &[(IssueRef, String)],
 ) -> anyhow::Result<BatchFetchResult> {
     let pr_fields = "number title state isDraft headRefName headRefOid baseRefName \
-                     createdAt updatedAt author { login } \
+                     createdAt updatedAt author { login avatarUrl } \
                      headRepository { name } headRepositoryOwner { login } \
                      isCrossRepository \
                      participants(first: 10) { nodes { login avatarUrl } }";
@@ -649,7 +649,7 @@ async fn fetch_batch_chunk(
             }
         }
 
-        let participants = pr_val
+        let mut participants = pr_val
             .get("participants")
             .and_then(|v| v.get("nodes"))
             .and_then(Value::as_array)
@@ -664,6 +664,25 @@ async fn fetch_batch_chunk(
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+
+        // Include the PR author if not already in the participants list.
+        if let Some(author) = pr_val.get("author") {
+            if let (Some(login), Some(avatar_url)) = (
+                author.get("login").and_then(Value::as_str),
+                author.get("avatarUrl").and_then(Value::as_str),
+            ) {
+                if !participants.iter().any(|p| p.login == login) {
+                    participants.insert(
+                        0,
+                        Participant {
+                            login: login.to_string(),
+                            avatar_url: avatar_url.to_string(),
+                        },
+                    );
+                }
+            }
+        }
+
         if !participants.is_empty() {
             result.participants.insert(pr_url.clone(), participants);
         }
