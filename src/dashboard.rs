@@ -223,22 +223,6 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
             </div>
 
             <div class="row">
-                <div class="icon-actions">
-                    <form action="/dashboard/actions/open/vscode" method="post" data-async-form>
-                        <input type="hidden" name="repository" value=thread.repository.clone() />
-                        {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
-                        <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in VS Code" title="Open in VS Code">{svg_icon(VSCODE_ICON)}</button>
-                    </form>
-                    <form action="/dashboard/actions/open/terminal" method="post" data-async-form>
-                        <input type="hidden" name="repository" value=thread.repository.clone() />
-                        {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
-                        <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in Terminal" title="Open in Terminal">{svg_icon(TERMINAL_ICON)}</button>
-                    </form>
-                </div>
-
-            </div>
-
-            <div class="row">
                 {if thread.subject_type.as_deref() == Some("Issue") {
                     ().into_any()
                 } else if let Some(review) = review_content {
@@ -277,6 +261,18 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                 } else {
                     ().into_any()
                 }}
+                <div class="icon-actions">
+                    <form action="/dashboard/actions/open/vscode" method="post" data-async-form>
+                        <input type="hidden" name="repository" value=thread.repository.clone() />
+                        {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
+                        <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in VS Code" title="Open in VS Code">{svg_icon(VSCODE_ICON)}</button>
+                    </form>
+                    <form action="/dashboard/actions/open/terminal" method="post" data-async-form>
+                        <input type="hidden" name="repository" value=thread.repository.clone() />
+                        {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
+                        <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in Terminal" title="Open in Terminal">{svg_icon(TERMINAL_ICON)}</button>
+                    </form>
+                </div>
             </div>
         </article>
     }
