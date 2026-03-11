@@ -606,11 +606,21 @@ async fn fetch_batch_chunk(
         )?;
     }
 
+    let issue_fields = "state \
+                       author { login avatarUrl } \
+                       participants(first: 10) { nodes { login avatarUrl } } \
+                       timelineItems(last: 30, itemTypes: [ISSUE_COMMENT]) { \
+                         nodes { \
+                           __typename \
+                           ... on IssueComment { createdAt author { login avatarUrl } } \
+                         } \
+                       }";
+
     for (i, (issue, _)) in issue_chunk.iter().enumerate() {
         write!(
             query,
             " issue{i}: repository(owner: \"{}\", name: \"{}\") {{ \
-                issue(number: {}) {{ state }} \
+                issue(number: {}) {{ {issue_fields} }} \
             }}",
             issue.owner, issue.repo, issue.number
         )?;
@@ -670,7 +680,11 @@ async fn fetch_batch_chunk(
                     .filter_map(|node| {
                         let login = node.get("login")?.as_str()?.to_string();
                         let avatar_url = node.get("avatarUrl")?.as_str()?.to_string();
-                        Some(Participant { login, avatar_url, last_activity_at: None })
+                        Some(Participant {
+                            login,
+                            avatar_url,
+                            last_activity_at: None,
+                        })
                     })
                     .collect::<Vec<_>>()
             })
@@ -730,17 +744,96 @@ async fn fetch_batch_chunk(
         }
     }
 
-    for (i, (_, api_url)) in issue_chunk.iter().enumerate() {
+    for (i, (issue, api_url)) in issue_chunk.iter().enumerate() {
         let alias = format!("issue{i}");
-        if let Some(state) = data
-            .get(&alias)
-            .and_then(|v| v.get("issue"))
-            .and_then(|v| v.get("state"))
-            .and_then(Value::as_str)
-        {
+        let Some(repo_val) = data.get(&alias) else {
+            continue;
+        };
+        let Some(issue_val) = repo_val.get("issue") else {
+            continue;
+        };
+        if issue_val.is_null() {
+            continue;
+        }
+
+        if let Some(state) = issue_val.get("state").and_then(Value::as_str) {
             result
                 .issue_states
                 .insert(api_url.clone(), state.to_ascii_uppercase());
+        }
+
+        // Extract participants for the issue, mirroring the PR participant logic.
+        let html_url = format!(
+            "https://github.com/{}/{}/issues/{}",
+            issue.owner, issue.repo, issue.number
+        );
+
+        let mut participants = issue_val
+            .get("participants")
+            .and_then(|v| v.get("nodes"))
+            .and_then(Value::as_array)
+            .map(|nodes| {
+                nodes
+                    .iter()
+                    .filter_map(|node| {
+                        let login = node.get("login")?.as_str()?.to_string();
+                        let avatar_url = node.get("avatarUrl")?.as_str()?.to_string();
+                        Some(Participant {
+                            login,
+                            avatar_url,
+                            last_activity_at: None,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let activity_map = extract_participant_activity(issue_val);
+        for p in &mut participants {
+            if let Some((ts, _)) = activity_map.get(&p.login) {
+                p.last_activity_at = Some(ts.clone());
+            }
+        }
+
+        for (login, (ts, avatar_url)) in &activity_map {
+            if !participants.iter().any(|p| p.login == *login) {
+                if let Some(avatar_url) = avatar_url {
+                    participants.push(Participant {
+                        login: login.clone(),
+                        avatar_url: avatar_url.clone(),
+                        last_activity_at: Some(ts.clone()),
+                    });
+                }
+            }
+        }
+
+        // Include the issue author if not already present.
+        if let Some(author) = issue_val.get("author")
+            && let (Some(login), Some(avatar_url)) = (
+                author.get("login").and_then(Value::as_str),
+                author.get("avatarUrl").and_then(Value::as_str),
+            )
+            && !participants.iter().any(|p| p.login == login)
+        {
+            let last_activity_at = activity_map.get(login).map(|(ts, _)| ts.clone());
+            participants.insert(
+                0,
+                Participant {
+                    login: login.to_string(),
+                    avatar_url: avatar_url.to_string(),
+                    last_activity_at,
+                },
+            );
+        }
+
+        participants.sort_by(|a, b| {
+            b.last_activity_at
+                .as_deref()
+                .cmp(&a.last_activity_at.as_deref())
+        });
+
+        if !participants.is_empty() {
+            result.participants.insert(html_url, participants);
         }
     }
 
@@ -767,9 +860,7 @@ fn extract_participant_activity(pr_val: &Value) -> HashMap<String, (String, Opti
         let (login, timestamp, avatar_url) = match typename {
             "IssueComment" | "PullRequestReview" => {
                 let author = node.get("author");
-                let login = author
-                    .and_then(|a| a.get("login"))
-                    .and_then(Value::as_str);
+                let login = author.and_then(|a| a.get("login")).and_then(Value::as_str);
                 let ts = node.get("createdAt").and_then(Value::as_str);
                 let avatar = author
                     .and_then(|a| a.get("avatarUrl"))
@@ -780,9 +871,7 @@ fn extract_participant_activity(pr_val: &Value) -> HashMap<String, (String, Opti
                 let commit = node.get("commit");
                 let author = commit.and_then(|c| c.get("author"));
                 let user = author.and_then(|a| a.get("user"));
-                let login = user
-                    .and_then(|u| u.get("login"))
-                    .and_then(Value::as_str);
+                let login = user.and_then(|u| u.get("login")).and_then(Value::as_str);
                 let ts = commit
                     .and_then(|c| c.get("authoredDate"))
                     .and_then(Value::as_str);
@@ -795,7 +884,9 @@ fn extract_participant_activity(pr_val: &Value) -> HashMap<String, (String, Opti
         };
 
         if let (Some(login), Some(ts)) = (login, timestamp) {
-            let entry = activity.entry(login.to_string()).or_insert_with(|| (String::new(), None));
+            let entry = activity
+                .entry(login.to_string())
+                .or_insert_with(|| (String::new(), None));
             if entry.0.is_empty() || ts > entry.0.as_str() {
                 entry.0 = ts.to_string();
             }
