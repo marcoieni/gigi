@@ -666,21 +666,20 @@ async fn fetch_batch_chunk(
             .unwrap_or_default();
 
         // Include the PR author if not already in the participants list.
-        if let Some(author) = pr_val.get("author") {
-            if let (Some(login), Some(avatar_url)) = (
+        if let Some(author) = pr_val.get("author")
+            && let (Some(login), Some(avatar_url)) = (
                 author.get("login").and_then(Value::as_str),
                 author.get("avatarUrl").and_then(Value::as_str),
-            ) {
-                if !participants.iter().any(|p| p.login == login) {
-                    participants.insert(
-                        0,
-                        Participant {
-                            login: login.to_string(),
-                            avatar_url: avatar_url.to_string(),
-                        },
-                    );
-                }
-            }
+            )
+            && !participants.iter().any(|p| p.login == login)
+        {
+            participants.insert(
+                0,
+                Participant {
+                    login: login.to_string(),
+                    avatar_url: avatar_url.to_string(),
+                },
+            );
         }
 
         if !participants.is_empty() {
