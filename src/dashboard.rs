@@ -7,7 +7,7 @@ use crate::{
     icons::{
         CHECKMARK_ICON, ISSUE_CLOSED_ICON, ISSUE_OPEN_ICON, MAIL_ICON, MY_PR_ICON,
         NOTIFICATION_ICON, PR_CLOSED_ICON, PR_DRAFT_ICON, PR_MERGED_ICON, PR_OPEN_ICON,
-        REFRESH_ICON, TERMINAL_ICON, VSCODE_ICON,
+        PR_QUEUED_ICON, REFRESH_ICON, TERMINAL_ICON, VSCODE_ICON,
     },
 };
 
@@ -220,6 +220,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
     let (state_icon_class, state_icon_paths, state_icon_label) = thread_state_data(
         thread.subject_type.as_deref(),
         thread.pr_state.as_deref().or(thread.issue_state.as_deref()),
+        thread.pr_merge_queue_state.as_deref(),
         thread.is_draft,
     );
 
@@ -402,6 +403,7 @@ fn source_icon(source: &str) -> &'static str {
 fn thread_state_data(
     subject_type: Option<&str>,
     state: Option<&str>,
+    merge_queue_state: Option<&str>,
     is_draft: bool,
 ) -> (&'static str, &'static str, &'static str) {
     match state {
@@ -413,8 +415,23 @@ fn thread_state_data(
         Some("OPEN") if subject_type == Some("Issue") => {
             ("title-state-icon open", ISSUE_OPEN_ICON, "Open issue")
         }
+        Some("OPEN") if merge_queue_state.is_some() => (
+            "title-state-icon queued",
+            PR_QUEUED_ICON,
+            merge_queue_state_label(merge_queue_state.unwrap_or_default()),
+        ),
         _ if is_draft => ("title-state-icon draft", PR_DRAFT_ICON, "Draft"),
         _ => ("title-state-icon open", PR_OPEN_ICON, "Open"),
+    }
+}
+
+fn merge_queue_state_label(state: &str) -> &'static str {
+    match state {
+        "AWAITING_CHECKS" => "Awaiting checks",
+        "MERGEABLE" => "Mergeable in queue",
+        "UNMERGEABLE" => "Blocked in queue",
+        "LOCKED" => "Queue locked",
+        _ => "Queued",
     }
 }
 
@@ -467,6 +484,7 @@ mod tests {
             updated_at: updated_at.to_string(),
             latest_requires_code_changes: None,
             pr_state: None,
+            pr_merge_queue_state: None,
             latest_review_content_md: None,
             latest_review_created_at: None,
             latest_review_provider: None,
@@ -490,5 +508,13 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(repositories, vec!["beta/repo", "alpha/repo"]);
+    }
+
+    #[test]
+    fn thread_state_data_marks_open_prs_in_merge_queue_as_queued() {
+        let (_, _, label) =
+            thread_state_data(Some("PullRequest"), Some("OPEN"), Some("QUEUED"), false);
+
+        assert_eq!(label, "Queued");
     }
 }

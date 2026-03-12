@@ -235,115 +235,17 @@ pub async fn fetch_authored_prs(since: Option<&str>) -> anyhow::Result<Vec<Autho
 }
 
 pub async fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
-    let output = Cmd::new(
-        "gh",
-        [
-            "pr",
-            "view",
-            pr_url,
-            "--json",
-            "title,url,state,isDraft,headRefName,headRefOid,baseRefName,createdAt,updatedAt,number,author,headRepository,headRepositoryOwner,isCrossRepository",
-        ],
-    )
-    .run()
-    .await?;
-
-    output.ensure_success(format!("❌ Failed to fetch PR details for {pr_url}"))?;
-    anyhow::ensure!(
-        !output.stdout().trim().is_empty(),
-        "❌ Failed to fetch PR details for {pr_url}: empty output"
+    let parsed = parse_github_pr_url(pr_url)?;
+    let canonical_pr_url = format!(
+        "https://github.com/{}/{}/pull/{}",
+        parsed.owner, parsed.repo, parsed.number
     );
-
-    let value: Value = serde_json::from_str(output.stdout())?;
-    let canonical_pr_url = value
-        .get("url")
-        .and_then(Value::as_str)
-        .unwrap_or(pr_url)
-        .to_string();
-
-    let parsed = parse_github_pr_url(&canonical_pr_url)?;
-    let is_archived = fetch_repository_archived(&parsed.owner, &parsed.repo).await?;
-    let number = i64::try_from(parsed.number)
-        .with_context(|| format!("PR number is too large for i64: {}", parsed.number))?;
-    let state = value
-        .get("state")
-        .and_then(Value::as_str)
-        .unwrap_or("OPEN")
-        .to_string();
-
-    let title = value
-        .get("title")
-        .and_then(Value::as_str)
-        .unwrap_or("(untitled)")
-        .to_string();
-    let head_ref = value
-        .get("headRefName")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let base_ref = value
-        .get("baseRefName")
-        .and_then(Value::as_str)
-        .unwrap_or("main")
-        .to_string();
-    let head_sha = value
-        .get("headRefOid")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let created_at = value
-        .get("createdAt")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let updated_at = value
-        .get("updatedAt")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let author_login = value
-        .get("author")
-        .and_then(|value| value.get("login"))
-        .and_then(Value::as_str)
-        .map(ToString::to_string);
-    let head_repo_owner = value
-        .get("headRepositoryOwner")
-        .and_then(|value| value.get("login"))
-        .and_then(Value::as_str)
-        .map(ToString::to_string);
-    let head_repo_name = value
-        .get("headRepository")
-        .and_then(|value| value.get("name"))
-        .and_then(Value::as_str)
-        .map(ToString::to_string);
-    let is_cross_repository = value
-        .get("isCrossRepository")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let is_draft = value
-        .get("isDraft")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-
-    Ok(PrDetails {
-        pr_url: canonical_pr_url,
-        owner: parsed.owner,
-        repo: parsed.repo,
-        number,
-        state,
-        title,
-        head_ref,
-        base_ref,
-        head_sha,
-        created_at,
-        updated_at,
-        is_archived,
-        author_login,
-        head_repo_owner,
-        head_repo_name,
-        is_cross_repository,
-        is_draft,
-    })
+    let batch = fetch_batch(std::slice::from_ref(&canonical_pr_url), &[]).await?;
+    batch
+        .pr_details
+        .into_values()
+        .next()
+        .with_context(|| format!("❌ Failed to fetch PR details for {canonical_pr_url}"))
 }
 
 /// Parse an issue API URL like `https://api.github.com/repos/<org>/<repo>/issues/123`
@@ -391,6 +293,7 @@ fn parse_pr_graphql_value(
             .and_then(Value::as_str)
             .unwrap_or("OPEN")
             .to_string(),
+        merge_queue_state: parse_merge_queue_state(pr_val),
         title: pr_val
             .get("title")
             .and_then(Value::as_str)
@@ -446,6 +349,23 @@ fn parse_pr_graphql_value(
             .and_then(Value::as_bool)
             .unwrap_or(false),
     })
+}
+
+fn parse_merge_queue_state(pr_val: &Value) -> Option<String> {
+    if pr_val
+        .get("isInMergeQueue")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return pr_val
+            .get("mergeQueueEntry")
+            .and_then(|value| value.get("state"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or_else(|| Some("QUEUED".to_string()));
+    }
+
+    None
 }
 
 /// Maximum number of top-level GraphQL fields per request to stay within
@@ -519,7 +439,7 @@ async fn fetch_batch_chunk(
     pr_chunk: &[(String, String, u64, String)],
     issue_chunk: &[(IssueRef, String)],
 ) -> anyhow::Result<BatchFetchResult> {
-    let pr_fields = "number title state isDraft headRefName headRefOid baseRefName \
+    let pr_fields = "number title state isDraft isInMergeQueue mergeQueueEntry { state } headRefName headRefOid baseRefName \
                      createdAt updatedAt author { login avatarUrl } \
                      headRepository { name } headRepositoryOwner { login } \
                      isCrossRepository \
@@ -849,25 +769,6 @@ fn extract_participant_activity(pr_val: &Value) -> HashMap<String, (String, Opti
     }
 
     activity
-}
-
-async fn fetch_repository_archived(owner: &str, repo: &str) -> anyhow::Result<bool> {
-    let endpoint = format!("/repos/{owner}/{repo}");
-    let output = Cmd::new("gh", ["api", &endpoint]).run().await?;
-    output.ensure_success(format!(
-        "❌ Failed to fetch repository details for {owner}/{repo}"
-    ))?;
-    anyhow::ensure!(
-        !output.stdout().trim().is_empty(),
-        "❌ Failed to fetch repository details for {owner}/{repo}: empty output"
-    );
-
-    let value: Value =
-        serde_json::from_str(output.stdout()).context("Invalid repository details JSON")?;
-    Ok(value
-        .get("archived")
-        .and_then(Value::as_bool)
-        .unwrap_or(false))
 }
 
 pub async fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {

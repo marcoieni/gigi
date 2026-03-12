@@ -34,6 +34,7 @@ pub(super) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
             repo TEXT NOT NULL,
             number INTEGER NOT NULL,
             state TEXT NOT NULL,
+            merge_queue_state TEXT,
             title TEXT NOT NULL,
             head_ref TEXT NOT NULL,
             base_ref TEXT NOT NULL,
@@ -105,6 +106,7 @@ pub(super) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
 
     add_column_if_missing(conn, "prs", "is_archived", "INTEGER NOT NULL DEFAULT 0")?;
     add_column_if_missing(conn, "prs", "is_draft", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(conn, "prs", "merge_queue_state", "TEXT")?;
     add_column_if_missing(conn, "threads", "issue_state", "TEXT")?;
     add_column_if_missing(conn, "threads", "is_draft", "INTEGER NOT NULL DEFAULT 0")?;
     add_column_if_missing(

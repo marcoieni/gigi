@@ -39,6 +39,7 @@ impl Db {
                     t.updated_at,
                     lr.requires_code_changes AS latest_requires_code_changes,
                     p.state,
+                    p.merge_queue_state,
                     COALESCE(p.is_archived, 0),
                     MAX(COALESCE(t.is_draft, 0), COALESCE(p.is_draft, 0)) AS is_draft,
                     lr.content_md AS latest_review_content_md,
@@ -87,11 +88,12 @@ impl Db {
                     updated_at: row.get(15)?,
                     latest_requires_code_changes: latest_requires.map(|v| v != 0),
                     pr_state: row.get(17)?,
-                    is_archived_pr: row.get::<_, i64>(18)? != 0,
-                    is_draft: row.get::<_, i64>(19)? != 0,
-                    latest_review_content_md: row.get(20)?,
-                    latest_review_created_at: row.get(21)?,
-                    latest_review_provider: row.get(22)?,
+                    pr_merge_queue_state: row.get(18)?,
+                    is_archived_pr: row.get::<_, i64>(19)? != 0,
+                    is_draft: row.get::<_, i64>(20)? != 0,
+                    latest_review_content_md: row.get(21)?,
+                    latest_review_created_at: row.get(22)?,
+                    latest_review_provider: row.get(23)?,
                 })
             })?;
 
@@ -260,6 +262,7 @@ struct DashboardThreadRow {
     updated_at: String,
     latest_requires_code_changes: Option<bool>,
     pr_state: Option<String>,
+    pr_merge_queue_state: Option<String>,
     is_archived_pr: bool,
     latest_review_content_md: Option<String>,
     latest_review_created_at: Option<i64>,
@@ -288,6 +291,7 @@ impl DashboardThreadRow {
             updated_at: self.updated_at,
             latest_requires_code_changes: self.latest_requires_code_changes,
             pr_state: self.pr_state,
+            pr_merge_queue_state: self.pr_merge_queue_state,
             latest_review_content_md: self.latest_review_content_md,
             latest_review_created_at: self.latest_review_created_at,
             latest_review_provider: self.latest_review_provider,
@@ -339,6 +343,9 @@ fn merge_dashboard_thread(existing: &mut DashboardThread, incoming: DashboardThr
         .latest_requires_code_changes
         .or(incoming.latest_requires_code_changes);
     existing.pr_state = existing_snapshot.pr_state.or(incoming.pr_state);
+    existing.pr_merge_queue_state = existing_snapshot
+        .pr_merge_queue_state
+        .or(incoming.pr_merge_queue_state);
     existing.pr_owner = existing_snapshot.pr_owner.or(incoming.pr_owner);
     existing.pr_repo = existing_snapshot.pr_repo.or(incoming.pr_repo);
     existing.pr_number = existing_snapshot.pr_number.or(incoming.pr_number);

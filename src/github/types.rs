@@ -62,6 +62,7 @@ pub struct PrDetails {
     pub repo: String,
     pub number: i64,
     pub state: String,
+    pub merge_queue_state: Option<String>,
     pub title: String,
     pub head_ref: String,
     pub base_ref: String,

@@ -215,6 +215,7 @@ pub(super) fn upsert_pr_from_details(db: &Db, details: &github::PrDetails) -> an
         repo: details.repo.clone(),
         number: details.number,
         state: details.state.clone(),
+        merge_queue_state: details.merge_queue_state.clone(),
         title: details.title.clone(),
         head_ref: details.head_ref.clone(),
         base_ref: details.base_ref.clone(),
