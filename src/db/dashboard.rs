@@ -157,7 +157,7 @@ impl Db {
 
     pub fn set_dashboard_thread_filters(
         &self,
-        filters: DashboardThreadFilters,
+        filters: &DashboardThreadFilters,
     ) -> anyhow::Result<()> {
         let now = unix_ts();
         self.with_conn(|conn| {

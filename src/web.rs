@@ -91,7 +91,7 @@ async fn update_dashboard_filters(
     let filters = form.into_filters();
     state
         .db
-        .set_dashboard_thread_filters(filters)
+        .set_dashboard_thread_filters(&filters)
         .map_err(|err| ApiErrorResponse::internal(&err))?;
     state.notify_dashboard("Filters updated");
     Ok(StatusCode::OK)
@@ -274,7 +274,7 @@ impl RepoFilterForm {
         all_repos
             .iter()
             .filter(|repo| {
-                let key = format!("repo:{}", repo);
+                let key = format!("repo:{repo}");
                 self.fields.contains_key(&key)
             })
             .cloned()

@@ -92,7 +92,9 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                     </fieldset>
                 </form>
 
-                {if !available_repos.is_empty() {
+                {if available_repos.is_empty() {
+                    ().into_any()
+                } else {
                     let repos = available_repos.clone();
                     let selected = selected_repos.clone();
                     let active_count = if selected.is_empty() { repos.len() } else { selected.len() };
@@ -112,7 +114,7 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                                 <form action="/dashboard/actions/repo-filter" method="post" data-async-form id="repo-filter-form">
                                     {repos.into_iter().map(|repo| {
                                         let checked = selected.is_empty() || selected.contains(&repo);
-                                        let name = format!("repo:{}", repo);
+                                        let name = format!("repo:{repo}");
                                         view! {
                                             <label class="repo-dropdown-option">
                                                 <input type="checkbox" name=name checked=checked />
@@ -124,8 +126,6 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                             </div>
                         </details>
                     }.into_any()
-                } else {
-                    ().into_any()
                 }}
             </div>
 
