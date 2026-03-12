@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use camino::Utf8Path;
+use chrono::SecondsFormat;
 
 use crate::{
     config::{AppConfig, RereviewMode},
@@ -20,13 +21,13 @@ pub(super) async fn poll_once_async(
     mode: PollMode,
 ) -> anyhow::Result<PollStats> {
     let since = db.get_kv("last_notifications_fetch")?;
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = poll_cursor_now();
     let mut notifications = github::fetch_notifications(since.as_deref()).await?;
     db.set_kv("last_notifications_fetch", &now)?;
     print_fetched_notifications(&notifications);
 
     let authored_prs_since = db.get_kv("last_authored_prs_fetch")?;
-    let authored_prs_now = chrono::Utc::now().to_rfc3339();
+    let authored_prs_now = poll_cursor_now();
     let authored_prs = github::fetch_authored_prs(authored_prs_since.as_deref()).await?;
     db.set_kv("last_authored_prs_fetch", &authored_prs_now)?;
     print_fetched_authored_prs(&authored_prs);
@@ -148,6 +149,10 @@ pub(super) async fn poll_once_async(
         reviews_run,
         participants: batch.participants,
     })
+}
+
+fn poll_cursor_now() -> String {
+    chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 /// Keeps the `threads` table in sync with the user's authored PRs.

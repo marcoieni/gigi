@@ -11,10 +11,7 @@ use super::{
 };
 
 pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Vec<NotificationThread>> {
-    let endpoint = match since {
-        Some(since) => format!("/notifications?since={since}"),
-        None => "/notifications".to_string(),
-    };
+    let endpoint = notifications_endpoint(since);
     let output = Cmd::new("gh", ["api", &endpoint, "--paginate", "--slurp"])
         .run()
         .await?;
@@ -119,6 +116,32 @@ pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Vec<Noti
     }
 
     Ok(results)
+}
+
+fn notifications_endpoint(since: Option<&str>) -> String {
+    match since {
+        Some(since) => format!("/notifications?since={}", encode_query_component(since)),
+        None => "/notifications".to_string(),
+    }
+}
+
+fn encode_query_component(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        let is_unreserved = matches!(
+            byte,
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~'
+        );
+        if is_unreserved {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 0x0F)]));
+        }
+    }
+    encoded
 }
 
 pub async fn fetch_authored_prs(since: Option<&str>) -> anyhow::Result<Vec<AuthoredPrSummary>> {
@@ -854,4 +877,18 @@ pub async fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {
         .await?;
     output.ensure_success("❌ Failed to mark notification thread as done")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn notifications_endpoint_encodes_since_cursor() {
+        let endpoint = notifications_endpoint(Some("2026-03-13T09:00:00+00:00"));
+        assert_eq!(
+            endpoint,
+            "/notifications?since=2026-03-13T09%3A00%3A00%2B00%3A00"
+        );
+    }
 }
