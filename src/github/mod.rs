@@ -12,7 +12,4 @@ pub use local_repo::{
     prepare_repo_for_pr_checkout, pull_ff_only,
 };
 pub use parsing::parse_github_name_with_owner;
-#[allow(unused_imports)]
-pub use types::{
-    AuthoredPrSummary, BatchFetchResult, LocalPrRepo, NotificationThread, Participant, PrDetails,
-};
+pub use types::{AuthoredPrSummary, NotificationThread, Participant, PrDetails};
