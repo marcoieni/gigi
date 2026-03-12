@@ -4,6 +4,7 @@ use super::{
     time::parse_github_timestamp_to_unix_seconds,
     *,
 };
+use crate::{config, db};
 
 fn test_db() -> Db {
     let mut path = std::env::temp_dir();
