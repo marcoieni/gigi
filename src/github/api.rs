@@ -1,89 +1,14 @@
-use std::collections::HashMap;
-use std::fmt::Write as _;
+use std::{collections::HashMap, fmt::Write as _};
 
 use anyhow::Context as _;
-use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::Value;
-use tokio::fs;
 
-use crate::{
-    checkout::parse_github_pr_url,
-    cmd::{Cmd, CmdOutput},
+use crate::{checkout::parse_github_pr_url, cmd::Cmd};
+
+use super::{
+    parsing::{api_url_to_html_url, api_url_to_pr_url, parse_repo_from_pr_url},
+    types::{AuthoredPrSummary, BatchFetchResult, NotificationThread, Participant, PrDetails},
 };
-
-#[derive(Debug, Clone)]
-pub struct NotificationThread {
-    pub thread_id: String,
-    pub unread: bool,
-    pub reason: Option<String>,
-    pub updated_at: String,
-    pub repository: String,
-    pub subject_type: Option<String>,
-    pub subject_title: String,
-    pub subject_url: Option<String>,
-    pub pr_url: Option<String>,
-    pub issue_api_url: Option<String>,
-    pub issue_state: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct LocalPrRepo {
-    pub repo_dir: Utf8PathBuf,
-    pub details: PrDetails,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct GitHubRepoRef {
-    owner: String,
-    repo: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct CloneTarget {
-    origin: GitHubRepoRef,
-    upstream: Option<GitHubRepoRef>,
-}
-
-/// A GitHub user who participated in a PR (for avatar display).
-#[derive(Debug, Clone)]
-pub struct Participant {
-    pub login: String,
-    pub avatar_url: String,
-    /// ISO 8601 timestamp of the participant's most recent activity on the PR.
-    /// Used to order participants by recency in the dashboard.
-    pub last_activity_at: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AuthoredPrSummary {
-    pub pr_url: String,
-    pub repository: String,
-    pub title: String,
-    pub updated_at: String,
-    pub is_open: bool,
-    pub is_draft: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct PrDetails {
-    pub pr_url: String,
-    pub owner: String,
-    pub repo: String,
-    pub number: i64,
-    pub state: String,
-    pub title: String,
-    pub head_ref: String,
-    pub base_ref: String,
-    pub head_sha: String,
-    pub created_at: String,
-    pub updated_at: String,
-    pub is_archived: bool,
-    pub author_login: Option<String>,
-    pub head_repo_owner: Option<String>,
-    pub head_repo_name: Option<String>,
-    pub is_cross_repository: bool,
-    pub is_draft: bool,
-}
 
 pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Vec<NotificationThread>> {
     let endpoint = match since {
@@ -140,7 +65,7 @@ pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Vec<Noti
 
             let repository = entry
                 .get("repository")
-                .and_then(|v| v.get("full_name"))
+                .and_then(|value| value.get("full_name"))
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
@@ -150,18 +75,18 @@ pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Vec<Noti
 
             let subject_type = entry
                 .get("subject")
-                .and_then(|v| v.get("type"))
+                .and_then(|value| value.get("type"))
                 .and_then(Value::as_str)
                 .map(ToString::to_string);
             let subject_title = entry
                 .get("subject")
-                .and_then(|v| v.get("title"))
+                .and_then(|value| value.get("title"))
                 .and_then(Value::as_str)
                 .unwrap_or("(untitled)")
                 .to_string();
             let raw_subject_url = entry
                 .get("subject")
-                .and_then(|v| v.get("url"))
+                .and_then(|value| value.get("url"))
                 .and_then(Value::as_str)
                 .map(ToString::to_string);
 
@@ -250,7 +175,7 @@ pub async fn fetch_authored_prs(since: Option<&str>) -> anyhow::Result<Vec<Autho
         let is_open = item
             .get("state")
             .and_then(Value::as_str)
-            .map(|s| s.eq_ignore_ascii_case("open"))
+            .map(|state| state.eq_ignore_ascii_case("open"))
             .unwrap_or(true);
         let is_draft = item
             .get("isDraft")
@@ -258,12 +183,12 @@ pub async fn fetch_authored_prs(since: Option<&str>) -> anyhow::Result<Vec<Autho
             .unwrap_or(false);
         let repository = item
             .get("repository")
-            .and_then(|v| v.get("nameWithOwner"))
+            .and_then(|value| value.get("nameWithOwner"))
             .and_then(Value::as_str)
             .map(ToString::to_string)
             .or_else(|| {
                 item.get("repository")
-                    .and_then(|v| v.get("fullName"))
+                    .and_then(|value| value.get("fullName"))
                     .and_then(Value::as_str)
                     .map(ToString::to_string)
             })
@@ -355,17 +280,17 @@ pub async fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         .to_string();
     let author_login = value
         .get("author")
-        .and_then(|v| v.get("login"))
+        .and_then(|value| value.get("login"))
         .and_then(Value::as_str)
         .map(ToString::to_string);
     let head_repo_owner = value
         .get("headRepositoryOwner")
-        .and_then(|v| v.get("login"))
+        .and_then(|value| value.get("login"))
         .and_then(Value::as_str)
         .map(ToString::to_string);
     let head_repo_name = value
         .get("headRepository")
-        .and_then(|v| v.get("name"))
+        .and_then(|value| value.get("name"))
         .and_then(Value::as_str)
         .map(ToString::to_string);
     let is_cross_repository = value
@@ -476,17 +401,17 @@ fn parse_pr_graphql_value(
         is_archived,
         author_login: pr_val
             .get("author")
-            .and_then(|v| v.get("login"))
+            .and_then(|value| value.get("login"))
             .and_then(Value::as_str)
             .map(ToString::to_string),
         head_repo_owner: pr_val
             .get("headRepositoryOwner")
-            .and_then(|v| v.get("login"))
+            .and_then(|value| value.get("login"))
             .and_then(Value::as_str)
             .map(ToString::to_string),
         head_repo_name: pr_val
             .get("headRepository")
-            .and_then(|v| v.get("name"))
+            .and_then(|value| value.get("name"))
             .and_then(Value::as_str)
             .map(ToString::to_string),
         is_cross_repository: pr_val
@@ -498,16 +423,6 @@ fn parse_pr_graphql_value(
             .and_then(Value::as_bool)
             .unwrap_or(false),
     })
-}
-
-/// Result of a batch GraphQL fetch.
-#[derive(Debug, Default)]
-pub struct BatchFetchResult {
-    pub pr_details: HashMap<String, PrDetails>,
-    /// Maps issue API URL to uppercase state string.
-    pub issue_states: HashMap<String, String>,
-    /// Maps PR URL to the list of participants (for avatar display).
-    pub participants: HashMap<String, Vec<Participant>>,
 }
 
 /// Maximum number of top-level GraphQL fields per request to stay within
@@ -597,10 +512,10 @@ async fn fetch_batch_chunk(
 
     let mut query = String::from("query {");
 
-    for (i, (owner, repo, number, _)) in pr_chunk.iter().enumerate() {
+    for (index, (owner, repo, number, _)) in pr_chunk.iter().enumerate() {
         write!(
             query,
-            " pr{i}: repository(owner: \"{owner}\", name: \"{repo}\") {{ \
+            " pr{index}: repository(owner: \"{owner}\", name: \"{repo}\") {{ \
                 isArchived pullRequest(number: {number}) {{ {pr_fields} }} \
             }}"
         )?;
@@ -616,10 +531,10 @@ async fn fetch_batch_chunk(
                          } \
                        }";
 
-    for (i, (issue, _)) in issue_chunk.iter().enumerate() {
+    for (index, (issue, _)) in issue_chunk.iter().enumerate() {
         write!(
             query,
-            " issue{i}: repository(owner: \"{}\", name: \"{}\") {{ \
+            " issue{index}: repository(owner: \"{}\", name: \"{}\") {{ \
                 issue(number: {}) {{ {issue_fields} }} \
             }}",
             issue.owner, issue.repo, issue.number
@@ -639,8 +554,8 @@ async fn fetch_batch_chunk(
 
     let mut result = BatchFetchResult::default();
 
-    for (i, (owner, repo, _, pr_url)) in pr_chunk.iter().enumerate() {
-        let alias = format!("pr{i}");
+    for (index, (owner, repo, _, pr_url)) in pr_chunk.iter().enumerate() {
+        let alias = format!("pr{index}");
         let Some(repo_val) = data.get(&alias) else {
             eprintln!("⚠️ Missing GraphQL alias {alias} for {pr_url}");
             continue;
@@ -672,7 +587,7 @@ async fn fetch_batch_chunk(
 
         let mut participants = pr_val
             .get("participants")
-            .and_then(|v| v.get("nodes"))
+            .and_then(|value| value.get("nodes"))
             .and_then(Value::as_array)
             .map(|nodes| {
                 nodes
@@ -692,23 +607,25 @@ async fn fetch_batch_chunk(
 
         // Extract per-user last activity timestamps (and avatar URLs) from timelineItems.
         let activity_map = extract_participant_activity(pr_val);
-        for p in &mut participants {
-            if let Some((ts, _)) = activity_map.get(&p.login) {
-                p.last_activity_at = Some(ts.clone());
+        for participant in &mut participants {
+            if let Some((ts, _)) = activity_map.get(&participant.login) {
+                participant.last_activity_at = Some(ts.clone());
             }
         }
 
         // Include users from timeline items who aren't in the participants list
         // (e.g. bots like github-actions[bot] which GitHub's participants field omits).
         for (login, (ts, avatar_url)) in &activity_map {
-            if !participants.iter().any(|p| p.login == *login) {
-                if let Some(avatar_url) = avatar_url {
-                    participants.push(Participant {
-                        login: login.clone(),
-                        avatar_url: avatar_url.clone(),
-                        last_activity_at: Some(ts.clone()),
-                    });
-                }
+            if !participants
+                .iter()
+                .any(|participant| participant.login == *login)
+                && let Some(avatar_url) = avatar_url
+            {
+                participants.push(Participant {
+                    login: login.clone(),
+                    avatar_url: avatar_url.clone(),
+                    last_activity_at: Some(ts.clone()),
+                });
             }
         }
 
@@ -718,7 +635,9 @@ async fn fetch_batch_chunk(
                 author.get("login").and_then(Value::as_str),
                 author.get("avatarUrl").and_then(Value::as_str),
             )
-            && !participants.iter().any(|p| p.login == login)
+            && !participants
+                .iter()
+                .any(|participant| participant.login == login)
         {
             let last_activity_at = activity_map.get(login).map(|(ts, _)| ts.clone());
             participants.insert(
@@ -733,10 +652,11 @@ async fn fetch_batch_chunk(
 
         // Sort participants by last activity (most recent first).
         // Participants without activity data sink to the end.
-        participants.sort_by(|a, b| {
-            b.last_activity_at
+        participants.sort_by(|left, right| {
+            right
+                .last_activity_at
                 .as_deref()
-                .cmp(&a.last_activity_at.as_deref())
+                .cmp(&left.last_activity_at.as_deref())
         });
 
         if !participants.is_empty() {
@@ -744,8 +664,8 @@ async fn fetch_batch_chunk(
         }
     }
 
-    for (i, (issue, api_url)) in issue_chunk.iter().enumerate() {
-        let alias = format!("issue{i}");
+    for (index, (issue, api_url)) in issue_chunk.iter().enumerate() {
+        let alias = format!("issue{index}");
         let Some(repo_val) = data.get(&alias) else {
             continue;
         };
@@ -770,7 +690,7 @@ async fn fetch_batch_chunk(
 
         let mut participants = issue_val
             .get("participants")
-            .and_then(|v| v.get("nodes"))
+            .and_then(|value| value.get("nodes"))
             .and_then(Value::as_array)
             .map(|nodes| {
                 nodes
@@ -789,21 +709,23 @@ async fn fetch_batch_chunk(
             .unwrap_or_default();
 
         let activity_map = extract_participant_activity(issue_val);
-        for p in &mut participants {
-            if let Some((ts, _)) = activity_map.get(&p.login) {
-                p.last_activity_at = Some(ts.clone());
+        for participant in &mut participants {
+            if let Some((ts, _)) = activity_map.get(&participant.login) {
+                participant.last_activity_at = Some(ts.clone());
             }
         }
 
         for (login, (ts, avatar_url)) in &activity_map {
-            if !participants.iter().any(|p| p.login == *login) {
-                if let Some(avatar_url) = avatar_url {
-                    participants.push(Participant {
-                        login: login.clone(),
-                        avatar_url: avatar_url.clone(),
-                        last_activity_at: Some(ts.clone()),
-                    });
-                }
+            if !participants
+                .iter()
+                .any(|participant| participant.login == *login)
+                && let Some(avatar_url) = avatar_url
+            {
+                participants.push(Participant {
+                    login: login.clone(),
+                    avatar_url: avatar_url.clone(),
+                    last_activity_at: Some(ts.clone()),
+                });
             }
         }
 
@@ -813,7 +735,9 @@ async fn fetch_batch_chunk(
                 author.get("login").and_then(Value::as_str),
                 author.get("avatarUrl").and_then(Value::as_str),
             )
-            && !participants.iter().any(|p| p.login == login)
+            && !participants
+                .iter()
+                .any(|participant| participant.login == login)
         {
             let last_activity_at = activity_map.get(login).map(|(ts, _)| ts.clone());
             participants.insert(
@@ -826,10 +750,11 @@ async fn fetch_batch_chunk(
             );
         }
 
-        participants.sort_by(|a, b| {
-            b.last_activity_at
+        participants.sort_by(|left, right| {
+            right
+                .last_activity_at
                 .as_deref()
-                .cmp(&a.last_activity_at.as_deref())
+                .cmp(&left.last_activity_at.as_deref())
         });
 
         if !participants.is_empty() {
@@ -849,7 +774,7 @@ fn extract_participant_activity(pr_val: &Value) -> HashMap<String, (String, Opti
 
     let Some(nodes) = pr_val
         .get("timelineItems")
-        .and_then(|v| v.get("nodes"))
+        .and_then(|value| value.get("nodes"))
         .and_then(Value::as_array)
     else {
         return activity;
@@ -860,23 +785,27 @@ fn extract_participant_activity(pr_val: &Value) -> HashMap<String, (String, Opti
         let (login, timestamp, avatar_url) = match typename {
             "IssueComment" | "PullRequestReview" => {
                 let author = node.get("author");
-                let login = author.and_then(|a| a.get("login")).and_then(Value::as_str);
+                let login = author
+                    .and_then(|author| author.get("login"))
+                    .and_then(Value::as_str);
                 let ts = node.get("createdAt").and_then(Value::as_str);
                 let avatar = author
-                    .and_then(|a| a.get("avatarUrl"))
+                    .and_then(|author| author.get("avatarUrl"))
                     .and_then(Value::as_str);
                 (login, ts, avatar)
             }
             "PullRequestCommit" => {
                 let commit = node.get("commit");
-                let author = commit.and_then(|c| c.get("author"));
-                let user = author.and_then(|a| a.get("user"));
-                let login = user.and_then(|u| u.get("login")).and_then(Value::as_str);
+                let author = commit.and_then(|commit| commit.get("author"));
+                let user = author.and_then(|author| author.get("user"));
+                let login = user
+                    .and_then(|user| user.get("login"))
+                    .and_then(Value::as_str);
                 let ts = commit
-                    .and_then(|c| c.get("authoredDate"))
+                    .and_then(|commit| commit.get("authoredDate"))
                     .and_then(Value::as_str);
                 let avatar = user
-                    .and_then(|u| u.get("avatarUrl"))
+                    .and_then(|user| user.get("avatarUrl"))
                     .and_then(Value::as_str);
                 (login, ts, avatar)
             }
@@ -891,7 +820,7 @@ fn extract_participant_activity(pr_val: &Value) -> HashMap<String, (String, Opti
                 entry.0 = ts.to_string();
             }
             if entry.1.is_none() {
-                entry.1 = avatar_url.map(|s| s.to_string());
+                entry.1 = avatar_url.map(|avatar| avatar.to_string());
             }
         }
     }
@@ -925,525 +854,4 @@ pub async fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {
         .await?;
     output.ensure_success("❌ Failed to mark notification thread as done")?;
     Ok(())
-}
-
-pub async fn ensure_local_repo(owner: &str, repo: &str) -> anyhow::Result<Utf8PathBuf> {
-    let repo_dir = local_repo_dir(owner, repo)?;
-    ensure_local_repo_at(owner, repo, &repo_dir).await?;
-    Ok(repo_dir)
-}
-
-pub async fn ensure_local_repo_for_pr(pr_url: &str) -> anyhow::Result<LocalPrRepo> {
-    let details = fetch_pr_details(pr_url).await?;
-    let clone_target = preferred_clone_target(&details, current_viewer_login().ok().as_deref());
-    let repo_dir = local_repo_dir(&clone_target.origin.owner, &clone_target.origin.repo)?;
-    ensure_local_repo_at(
-        &clone_target.origin.owner,
-        &clone_target.origin.repo,
-        &repo_dir,
-    )
-    .await?;
-
-    if let Some(upstream) = clone_target.upstream {
-        ensure_remote_repo(&repo_dir, "upstream", &upstream).await?;
-    }
-
-    Ok(LocalPrRepo { repo_dir, details })
-}
-
-async fn ensure_local_repo_at(owner: &str, repo: &str, repo_dir: &Utf8Path) -> anyhow::Result<()> {
-    if fs::try_exists(repo_dir).await? {
-        anyhow::ensure!(
-            repo_dir.join(".git").exists(),
-            "❌ Path exists but is not a git repository: {repo_dir}"
-        );
-        return Ok(());
-    }
-
-    let parent = repo_dir
-        .parent()
-        .context("Failed to compute repository parent directory")?;
-    fs::create_dir_all(parent)
-        .await
-        .with_context(|| format!("Failed to create {parent}"))?;
-
-    let repo_name = format!("{owner}/{repo}");
-    let output = Cmd::new("gh", ["repo", "clone", &repo_name, repo_dir.as_str()])
-        .run()
-        .await?;
-    output.ensure_success(format!("❌ Failed to clone repository {repo_name}"))?;
-    Ok(())
-}
-
-pub fn local_repo_dir(owner: &str, repo: &str) -> anyhow::Result<Utf8PathBuf> {
-    let home = std::env::var("HOME").context("HOME env var is not set")?;
-    Ok(Utf8PathBuf::from(home).join("proj").join(owner).join(repo))
-}
-
-pub async fn checkout_pr(repo_dir: &Utf8Path, pr_url: &str) -> anyhow::Result<()> {
-    let output = Cmd::new("gh", ["pr", "checkout", pr_url])
-        .with_current_dir(repo_dir)
-        .run()
-        .await?;
-    output.ensure_success("❌ Failed to checkout PR")?;
-    Ok(())
-}
-
-pub async fn checkout_pr_for_open_with_details(
-    repo_dir: &Utf8Path,
-    pr: &PrDetails,
-) -> anyhow::Result<()> {
-    if current_branch(repo_dir).await.ok().as_deref() == Some(pr.head_ref.as_str()) {
-        return Ok(());
-    }
-    let output = Cmd::new("gh", ["pr", "checkout", pr.pr_url.as_str()])
-        .with_current_dir(repo_dir)
-        .run()
-        .await?;
-    if output.status().success() {
-        return Ok(());
-    }
-
-    if is_diverged_local_branch_error(&output) {
-        let detached = Cmd::new("gh", ["pr", "checkout", pr.pr_url.as_str(), "--detach"])
-            .with_current_dir(repo_dir)
-            .run()
-            .await?;
-        detached.ensure_success("❌ Failed to checkout PR")?;
-        return Ok(());
-    }
-
-    output.ensure_success("❌ Failed to checkout PR")?;
-    Ok(())
-}
-
-pub async fn current_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
-    let output = Cmd::new("git", ["branch", "--show-current"])
-        .with_current_dir(repo_dir)
-        .run()
-        .await?;
-    output.ensure_success("❌ Failed to get current branch")?;
-    Ok(output.stdout().to_string())
-}
-
-pub async fn is_clean_repo(repo_dir: &Utf8Path) -> anyhow::Result<bool> {
-    let output = Cmd::new("git", ["status", "--porcelain"])
-        .with_current_dir(repo_dir)
-        .run()
-        .await?;
-    output.ensure_success("❌ Failed to check repository status")?;
-    Ok(output.stdout().trim().is_empty())
-}
-
-pub async fn default_branch(repo_dir: &Utf8Path) -> anyhow::Result<String> {
-    let output = Cmd::new(
-        "gh",
-        [
-            "repo",
-            "view",
-            "--json",
-            "defaultBranchRef",
-            "-q",
-            ".defaultBranchRef.name",
-        ],
-    )
-    .with_current_dir(repo_dir)
-    .run()
-    .await?;
-
-    output.ensure_success("❌ Failed to detect default branch")?;
-    anyhow::ensure!(
-        !output.stdout().trim().is_empty(),
-        "❌ Failed to detect default branch: empty output"
-    );
-
-    Ok(output.stdout().to_string())
-}
-
-pub async fn checkout_branch(repo_dir: &Utf8Path, branch: &str) -> anyhow::Result<()> {
-    let output = Cmd::new("git", ["checkout", branch])
-        .with_current_dir(repo_dir)
-        .run()
-        .await?;
-    output.ensure_success(format!("❌ Failed to checkout branch '{branch}'"))?;
-    Ok(())
-}
-
-pub async fn pull_ff_only(repo_dir: &Utf8Path) -> anyhow::Result<()> {
-    let output = Cmd::new("git", ["pull", "--ff-only"])
-        .with_current_dir(repo_dir)
-        .run()
-        .await?;
-    output.ensure_success("❌ Failed to pull default branch")?;
-    Ok(())
-}
-
-fn is_diverged_local_branch_error(output: &CmdOutput) -> bool {
-    is_diverged_local_branch_error_text(output.stderr_or_stdout())
-}
-
-fn is_diverged_local_branch_error_text(details: &str) -> bool {
-    details.contains("Diverging branches can't be fast-forwarded")
-        || details.contains("Not possible to fast-forward, aborting.")
-}
-
-fn api_url_to_pr_url(api_url: &str, subject_type: Option<&str>) -> Option<String> {
-    let trimmed = api_url.trim();
-
-    if let Some(path) = trimmed
-        .strip_prefix("https://api.github.com/")
-        .unwrap_or(trimmed)
-        .strip_prefix("repos/")
-    {
-        return github_subject_path_to_pr_url(path, subject_type);
-    }
-
-    if let Some(path) = trimmed.strip_prefix("https://github.com/") {
-        return github_subject_path_to_pr_url(path, subject_type);
-    }
-
-    None
-}
-
-fn github_subject_path_to_pr_url(path: &str, subject_type: Option<&str>) -> Option<String> {
-    let parts: Vec<&str> = path.split('/').collect();
-    if parts.len() < 4 {
-        return None;
-    }
-
-    let is_pull_request = match parts[2] {
-        "pulls" | "pull" => true,
-        "issues" => matches!(subject_type, Some("PullRequest")),
-        _ => false,
-    };
-    if !is_pull_request {
-        return None;
-    }
-
-    Some(format!(
-        "https://github.com/{}/{}/pull/{}",
-        parts[0], parts[1], parts[3]
-    ))
-}
-
-fn api_url_to_html_url(api_url: &str) -> Option<String> {
-    let path = api_url
-        .trim()
-        .strip_prefix("https://api.github.com/")
-        .unwrap_or(api_url);
-
-    if let Some(path) = path.strip_prefix("repos/") {
-        let parts: Vec<&str> = path.split('/').collect();
-        if parts.len() < 4 {
-            return None;
-        }
-
-        let owner = parts[0];
-        let repo = parts[1];
-        let kind = parts[2];
-        let number = parts[3];
-
-        let route = match kind {
-            "pulls" => format!("pull/{number}"),
-            "issues" => format!("issues/{number}"),
-            "discussions" => format!("discussions/{number}"),
-            "commits" => format!("commit/{number}"),
-            _ => return None,
-        };
-
-        return Some(format!("https://github.com/{owner}/{repo}/{route}"));
-    }
-
-    Some(api_url.to_string())
-}
-
-fn parse_repo_from_pr_url(pr_url: &str) -> Option<String> {
-    let parsed = parse_github_pr_url(pr_url).ok()?;
-    Some(format!("{}/{}", parsed.owner, parsed.repo))
-}
-
-fn current_viewer_login() -> anyhow::Result<String> {
-    let output = std::process::Command::new("gh")
-        .args(["api", "user", "--jq", ".login"])
-        .output()
-        .context("❌ Failed to detect current GitHub user")?;
-    anyhow::ensure!(
-        output.status.success(),
-        "❌ Failed to detect current GitHub user"
-    );
-    let login = String::from_utf8(output.stdout).context("❌ Failed to parse GitHub user login")?;
-    anyhow::ensure!(
-        !login.trim().is_empty(),
-        "❌ Failed to detect current GitHub user: empty output"
-    );
-    Ok(login.trim().to_string())
-}
-
-fn preferred_clone_target(details: &PrDetails, viewer_login: Option<&str>) -> CloneTarget {
-    let base_repo = GitHubRepoRef {
-        owner: details.owner.clone(),
-        repo: details.repo.clone(),
-    };
-
-    let clone_from_fork = details.is_cross_repository
-        && details.author_login.as_deref() == viewer_login
-        && details.head_repo_owner.as_deref() == viewer_login
-        && details.head_repo_name.is_some();
-
-    if !clone_from_fork {
-        return CloneTarget {
-            origin: base_repo,
-            upstream: None,
-        };
-    }
-
-    CloneTarget {
-        origin: GitHubRepoRef {
-            owner: details.head_repo_owner.clone().unwrap_or_default(),
-            repo: details.head_repo_name.clone().unwrap_or_default(),
-        },
-        upstream: Some(base_repo),
-    }
-}
-
-async fn ensure_remote_repo(
-    repo_dir: &Utf8Path,
-    remote_name: &str,
-    expected_repo: &GitHubRepoRef,
-) -> anyhow::Result<()> {
-    let output = Cmd::new("git", ["remote", "get-url", remote_name])
-        .with_current_dir(repo_dir)
-        .run()
-        .await?;
-
-    if output.status().success()
-        && parse_github_name_with_owner(output.stdout()).as_deref()
-            == Some(format!("{}/{}", expected_repo.owner, expected_repo.repo).as_str())
-    {
-        return Ok(());
-    }
-
-    let expected_url = format!(
-        "https://github.com/{}/{}.git",
-        expected_repo.owner, expected_repo.repo
-    );
-    let command = if output.status().success() {
-        ["remote", "set-url", remote_name, &expected_url]
-    } else {
-        ["remote", "add", remote_name, &expected_url]
-    };
-    let result = Cmd::new("git", command)
-        .with_current_dir(repo_dir)
-        .run()
-        .await?;
-    result.ensure_success(format!(
-        "❌ Failed to configure {remote_name} remote for {}/{}",
-        expected_repo.owner, expected_repo.repo
-    ))?;
-    Ok(())
-}
-
-pub async fn prepare_repo_for_pr_checkout(repo_dir: &Utf8Path) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        is_clean_repo(repo_dir).await?,
-        "❌ Repository is not clean. Commit or stash changes first."
-    );
-    let default_branch = default_branch(repo_dir).await?;
-    Cmd::new("git", ["fetch", "--prune"])
-        .with_current_dir(repo_dir)
-        .run()
-        .await?
-        .ensure_success("❌ git fetch failed")?;
-    checkout_branch(repo_dir, &default_branch).await?;
-    pull_ff_only(repo_dir).await?;
-    Ok(())
-}
-
-pub fn parse_github_name_with_owner(url: &str) -> Option<String> {
-    let trimmed = url.trim().trim_end_matches('/');
-    let path = if let Some(path) = trimmed.strip_prefix("git@github.com:") {
-        path
-    } else if let Some(path) = trimmed.strip_prefix("ssh://git@github.com/") {
-        path
-    } else if let Some(path) = trimmed.strip_prefix("https://github.com/") {
-        path
-    } else if let Some(path) = trimmed.strip_prefix("http://github.com/") {
-        path
-    } else if let Some(path) = trimmed.strip_prefix("git://github.com/") {
-        path
-    } else {
-        return None;
-    };
-
-    let normalized = path.strip_suffix(".git").unwrap_or(path).trim_matches('/');
-    let mut parts = normalized.split('/');
-    let owner = parts.next()?;
-    let repo = parts.next()?;
-    if parts.next().is_some() || owner.is_empty() || repo.is_empty() {
-        return None;
-    }
-
-    Some(format!("{owner}/{repo}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn converts_api_pr_url() {
-        let pr = api_url_to_pr_url("https://api.github.com/repos/o/r/pulls/123", None).unwrap();
-        assert_eq!(pr, "https://github.com/o/r/pull/123");
-    }
-
-    #[test]
-    fn converts_issue_api_url_for_pull_request_notifications() {
-        let pr = api_url_to_pr_url(
-            "https://api.github.com/repos/o/r/issues/123",
-            Some("PullRequest"),
-        )
-        .unwrap();
-        assert_eq!(pr, "https://github.com/o/r/pull/123");
-    }
-
-    #[test]
-    fn ignores_issue_api_url_for_non_pull_request_notifications() {
-        assert!(
-            api_url_to_pr_url("https://api.github.com/repos/o/r/issues/123", Some("Issue"),)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn converts_api_issue_url() {
-        let issue = api_url_to_html_url("https://api.github.com/repos/o/r/issues/123").unwrap();
-        assert_eq!(issue, "https://github.com/o/r/issues/123");
-    }
-
-    #[test]
-    fn leaves_html_url_unchanged() {
-        let issue = api_url_to_html_url("https://github.com/o/r/issues/123").unwrap();
-        assert_eq!(issue, "https://github.com/o/r/issues/123");
-    }
-
-    #[test]
-    fn parse_repo_from_pr_url_works() {
-        let repo = parse_repo_from_pr_url("https://github.com/o/r/pull/5").unwrap();
-        assert_eq!(repo, "o/r");
-    }
-
-    #[test]
-    fn prefers_fork_for_cross_repo_pr_opened_by_viewer() {
-        let target = preferred_clone_target(
-            &PrDetails {
-                pr_url: "https://github.com/upstream/repo/pull/1".to_string(),
-                owner: "upstream".to_string(),
-                repo: "repo".to_string(),
-                number: 1,
-                state: "OPEN".to_string(),
-                title: "t".to_string(),
-                head_ref: "feat".to_string(),
-                base_ref: "main".to_string(),
-                head_sha: "sha".to_string(),
-                created_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: "2026-01-01T00:00:00Z".to_string(),
-                is_archived: false,
-                author_login: Some("me".to_string()),
-                head_repo_owner: Some("me".to_string()),
-                head_repo_name: Some("repo".to_string()),
-                is_cross_repository: true,
-                is_draft: false,
-            },
-            Some("me"),
-        );
-
-        assert_eq!(
-            target,
-            CloneTarget {
-                origin: GitHubRepoRef {
-                    owner: "me".to_string(),
-                    repo: "repo".to_string(),
-                },
-                upstream: Some(GitHubRepoRef {
-                    owner: "upstream".to_string(),
-                    repo: "repo".to_string(),
-                }),
-            }
-        );
-    }
-
-    #[test]
-    fn keeps_base_repo_for_non_viewer_prs() {
-        let target = preferred_clone_target(
-            &PrDetails {
-                pr_url: "https://github.com/upstream/repo/pull/1".to_string(),
-                owner: "upstream".to_string(),
-                repo: "repo".to_string(),
-                number: 1,
-                state: "OPEN".to_string(),
-                title: "t".to_string(),
-                head_ref: "feat".to_string(),
-                base_ref: "main".to_string(),
-                head_sha: "sha".to_string(),
-                created_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: "2026-01-01T00:00:00Z".to_string(),
-                is_archived: false,
-                author_login: Some("someone-else".to_string()),
-                head_repo_owner: Some("someone-else".to_string()),
-                head_repo_name: Some("repo".to_string()),
-                is_cross_repository: true,
-                is_draft: false,
-            },
-            Some("me"),
-        );
-
-        assert_eq!(
-            target,
-            CloneTarget {
-                origin: GitHubRepoRef {
-                    owner: "upstream".to_string(),
-                    repo: "repo".to_string(),
-                },
-                upstream: None,
-            }
-        );
-    }
-
-    #[test]
-    fn detects_diverged_branch_checkout_error() {
-        assert!(is_diverged_local_branch_error_text(
-            "Already on 'feature'\nDiverging branches can't be fast-forwarded, you need to either:\nfatal: Not possible to fast-forward, aborting.\n"
-        ));
-    }
-
-    #[test]
-    fn ignores_other_checkout_errors() {
-        assert!(!is_diverged_local_branch_error_text(
-            "no pull requests found for branch \"feature\"\n"
-        ));
-    }
-
-    #[test]
-    fn test_parse_github_name_with_owner_ssh_style() {
-        assert_eq!(
-            parse_github_name_with_owner("git@github.com:marcoieni/rust-forge.git"),
-            Some("marcoieni/rust-forge".to_string())
-        );
-    }
-
-    #[test]
-    fn test_parse_github_name_with_owner_https_style() {
-        assert_eq!(
-            parse_github_name_with_owner("https://github.com/marcoieni/rust-forge.git"),
-            Some("marcoieni/rust-forge".to_string())
-        );
-    }
-
-    #[test]
-    fn test_parse_github_name_with_owner_rejects_non_github() {
-        assert_eq!(
-            parse_github_name_with_owner("git@gitlab.com:marcoieni/rust-forge.git"),
-            None
-        );
-    }
 }
