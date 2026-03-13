@@ -7,9 +7,7 @@ use crate::{config, github, launcher, review, web};
 
 use super::{
     AppState, DashboardUpdate, MarkDoneRequest, PollMode, PollStats,
-    helpers::{
-        dashboard_browser_url, describe_open_target, provider_name, resolve_open_target_repo,
-    },
+    helpers::{dashboard_browser_url, describe_open_target, resolve_open_target_repo},
     poll::{poll_once_async, print_poll_stats, run_review_for_details, upsert_pr_from_details},
 };
 
@@ -230,17 +228,13 @@ impl AppState {
         match output {
             Ok(text) => {
                 self.db
-                    .insert_fix_run(&pr_url, provider_name(provider), "success", &text)?;
+                    .insert_fix_run(&pr_url, provider.as_str(), "success", &text)?;
                 self.notify_dashboard(format!("Fix run completed for {pr_url}"));
                 Ok(text)
             }
             Err(err) => {
-                self.db.insert_fix_run(
-                    &pr_url,
-                    provider_name(provider),
-                    "error",
-                    &err.to_string(),
-                )?;
+                self.db
+                    .insert_fix_run(&pr_url, provider.as_str(), "error", &err.to_string())?;
                 self.notify_dashboard(format!("Fix run failed for {pr_url}: {err}"));
                 Err(err)
             }

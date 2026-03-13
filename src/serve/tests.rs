@@ -122,6 +122,19 @@ fn wildcard_host_uses_localhost_in_browser_url() {
 }
 
 #[test]
+fn ipv6_host_is_wrapped_in_brackets_in_browser_url() {
+    let cfg = AppConfig {
+        dashboard: crate::config::DashboardConfig {
+            host: "::1".to_string(),
+            port: 8787,
+        },
+        ..AppConfig::default()
+    };
+
+    assert_eq!(dashboard_browser_url(&cfg), "http://[::1]:8787");
+}
+
+#[test]
 fn parses_repository_name() {
     assert_eq!(
         parse_repository_name("marcoieni/gigi").unwrap(),
@@ -130,9 +143,19 @@ fn parses_repository_name() {
 }
 
 #[test]
+fn parses_repository_name_with_surrounding_whitespace() {
+    assert_eq!(
+        parse_repository_name("  marcoieni / gigi  ").unwrap(),
+        ("marcoieni".to_string(), "gigi".to_string())
+    );
+}
+
+#[test]
 fn rejects_invalid_repository_name() {
     assert!(parse_repository_name("marcoieni").is_err());
     assert!(parse_repository_name("marcoieni/gigi/extra").is_err());
+    assert!(parse_repository_name("marco ieni/gigi").is_err());
+    assert!(parse_repository_name("marcoieni/gi gi").is_err());
 }
 
 #[test]

@@ -151,6 +151,14 @@ impl AiProvider {
             Self::Kiro => crate::args::Agent::Kiro,
         }
     }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Copilot => "copilot",
+            Self::Gemini => "gemini",
+            Self::Kiro => "kiro",
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,16 +1,20 @@
 use camino::Utf8PathBuf;
 
-use crate::{
-    config::{AiProvider, AppConfig},
-    github,
-};
+use crate::{config::AppConfig, github};
 
 pub(crate) fn parse_repository_name(repository: &str) -> anyhow::Result<(String, String)> {
+    let repository = repository.trim();
     let Some((owner, repo)) = repository.split_once('/') else {
         anyhow::bail!("Invalid repository name '{repository}' (expected owner/repo)");
     };
+    let owner = owner.trim();
+    let repo = repo.trim();
     anyhow::ensure!(
-        !owner.is_empty() && !repo.is_empty() && !repo.contains('/'),
+        !owner.is_empty()
+            && !repo.is_empty()
+            && !repo.contains('/')
+            && !owner.chars().any(char::is_whitespace)
+            && !repo.chars().any(char::is_whitespace),
         "Invalid repository name '{repository}' (expected owner/repo)"
     );
     Ok((owner.to_string(), repo.to_string()))
@@ -41,18 +45,13 @@ pub(crate) fn describe_open_target(repository: &str, pr_url: Option<&str>) -> St
     }
 }
 
-pub(crate) fn provider_name(provider: AiProvider) -> &'static str {
-    match provider {
-        AiProvider::Copilot => "copilot",
-        AiProvider::Gemini => "gemini",
-        AiProvider::Kiro => "kiro",
-    }
-}
-
 pub(crate) fn dashboard_browser_url(config: &AppConfig) -> String {
-    let host = match config.dashboard.host.as_str() {
-        "0.0.0.0" | "::" => "localhost",
-        other => other,
+    let host = match config.dashboard.host.trim() {
+        "0.0.0.0" | "::" => "localhost".to_string(),
+        other if other.contains(':') && !other.starts_with('[') && !other.ends_with(']') => {
+            format!("[{other}]")
+        }
+        other => other.to_string(),
     };
     format!("http://{host}:{}", config.dashboard.port)
 }
