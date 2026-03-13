@@ -110,14 +110,15 @@ impl Db {
             conn.execute(
                 r#"
                 INSERT INTO prs (
-                    pr_url, owner, repo, number, state, title, head_ref, base_ref, head_sha,
-                    updated_at, is_archived, is_draft, last_seen_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                    pr_url, owner, repo, number, state, merge_queue_state, title, head_ref,
+                    base_ref, head_sha, updated_at, is_archived, is_draft, last_seen_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                 ON CONFLICT(pr_url) DO UPDATE SET
                     owner = excluded.owner,
                     repo = excluded.repo,
                     number = excluded.number,
                     state = excluded.state,
+                    merge_queue_state = excluded.merge_queue_state,
                     title = excluded.title,
                     head_ref = excluded.head_ref,
                     base_ref = excluded.base_ref,
@@ -133,6 +134,7 @@ impl Db {
                     row.repo,
                     row.number,
                     row.state,
+                    row.merge_queue_state,
                     row.title,
                     row.head_ref,
                     row.base_ref,
@@ -152,8 +154,9 @@ impl Db {
             conn.query_row(
                 r#"
                 SELECT
-                    pr_url, owner, repo, number, state, title, head_ref, base_ref, head_sha,
-                    updated_at, is_archived, last_reviewed_sha, last_reviewed_updated_at
+                    pr_url, owner, repo, number, state, merge_queue_state, title, head_ref,
+                    base_ref, head_sha, updated_at, is_archived, last_reviewed_sha,
+                    last_reviewed_updated_at
                 FROM prs
                 WHERE pr_url = ?1
                 "#,
@@ -165,14 +168,15 @@ impl Db {
                         repo: row.get(2)?,
                         number: row.get(3)?,
                         state: row.get(4)?,
-                        title: row.get(5)?,
-                        head_ref: row.get(6)?,
-                        base_ref: row.get(7)?,
-                        head_sha: row.get(8)?,
-                        updated_at: row.get(9)?,
-                        is_archived: row.get::<_, i64>(10)? != 0,
-                        last_reviewed_sha: row.get(11)?,
-                        last_reviewed_updated_at: row.get(12)?,
+                        merge_queue_state: row.get(5)?,
+                        title: row.get(6)?,
+                        head_ref: row.get(7)?,
+                        base_ref: row.get(8)?,
+                        head_sha: row.get(9)?,
+                        updated_at: row.get(10)?,
+                        is_archived: row.get::<_, i64>(11)? != 0,
+                        last_reviewed_sha: row.get(12)?,
+                        last_reviewed_updated_at: row.get(13)?,
                     })
                 },
             )

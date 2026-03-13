@@ -387,6 +387,10 @@ body {
   background: var(--accent);
 }
 
+.title-state-icon.queued {
+  background: #b7791f;
+}
+
 .title-state-icon.merged {
   background: var(--violet);
 }

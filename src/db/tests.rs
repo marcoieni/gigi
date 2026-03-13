@@ -61,6 +61,7 @@ fn latest_review_roundtrip() {
         repo: "b".to_string(),
         number: 1,
         state: "OPEN".to_string(),
+        merge_queue_state: None,
         title: "Title".to_string(),
         head_ref: "feat".to_string(),
         base_ref: "main".to_string(),
@@ -95,6 +96,7 @@ fn insert_review_strips_control_sequences() {
         repo: "b".to_string(),
         number: 1,
         state: "OPEN".to_string(),
+        merge_queue_state: None,
         title: "Title".to_string(),
         head_ref: "feat".to_string(),
         base_ref: "main".to_string(),
@@ -135,6 +137,7 @@ fn db_init_cleans_existing_reviews() {
             repo: "b".to_string(),
             number: 1,
             state: "OPEN".to_string(),
+            merge_queue_state: None,
             title: "Title".to_string(),
             head_ref: "feat".to_string(),
             base_ref: "main".to_string(),
@@ -176,6 +179,7 @@ fn insert_review_prefers_requires_code_changes_header() {
         repo: "b".to_string(),
         number: 1,
         state: "OPEN".to_string(),
+        merge_queue_state: None,
         title: "Title".to_string(),
         head_ref: "feat".to_string(),
         base_ref: "main".to_string(),
@@ -216,6 +220,7 @@ fn db_init_repairs_stale_requires_code_changes() {
             repo: "b".to_string(),
             number: 1,
             state: "OPEN".to_string(),
+            merge_queue_state: None,
             title: "Title".to_string(),
             head_ref: "feat".to_string(),
             base_ref: "main".to_string(),
@@ -536,6 +541,7 @@ fn dashboard_threads_deduplicate_notification_and_my_pr() {
         repo: "b".to_string(),
         number: 1,
         state: "MERGED".to_string(),
+        merge_queue_state: None,
         title: "Title".to_string(),
         head_ref: "feat".to_string(),
         base_ref: "main".to_string(),
@@ -604,6 +610,7 @@ fn archived_open_prs_are_hidden_from_dashboard() {
         repo: "b".to_string(),
         number: 1,
         state: "OPEN".to_string(),
+        merge_queue_state: Some("QUEUED".to_string()),
         title: "Title".to_string(),
         head_ref: "feat".to_string(),
         base_ref: "main".to_string(),
@@ -647,6 +654,7 @@ fn archived_closed_prs_remain_visible_on_dashboard() {
         repo: "b".to_string(),
         number: 1,
         state: "MERGED".to_string(),
+        merge_queue_state: None,
         title: "Title".to_string(),
         head_ref: "feat".to_string(),
         base_ref: "main".to_string(),
@@ -678,6 +686,51 @@ fn archived_closed_prs_remain_visible_on_dashboard() {
     let threads = db.list_dashboard_threads().unwrap();
     assert_eq!(threads.len(), 1);
     assert_eq!(threads[0].pr_state.as_deref(), Some("MERGED"));
+}
+
+#[test]
+fn dashboard_threads_expose_merge_queue_state() {
+    let db = test_db();
+    let pr_url = "https://github.com/a/b/pull/1".to_string();
+
+    db.upsert_pr(&NewPr {
+        pr_url: pr_url.clone(),
+        owner: "a".to_string(),
+        repo: "b".to_string(),
+        number: 1,
+        state: "OPEN".to_string(),
+        merge_queue_state: Some("QUEUED".to_string()),
+        title: "Title".to_string(),
+        head_ref: "feat".to_string(),
+        base_ref: "main".to_string(),
+        head_sha: "sha1".to_string(),
+        updated_at: "2026-01-02T00:00:00Z".to_string(),
+        is_archived: false,
+        is_draft: false,
+    })
+    .unwrap();
+
+    db.upsert_thread(&NewThread {
+        is_draft: false,
+        thread_key: format!("mypr:{pr_url}"),
+        github_thread_id: None,
+        source: "my_pr".to_string(),
+        repository: "a/b".to_string(),
+        subject_type: Some("PullRequest".to_string()),
+        subject_title: "Authored title".to_string(),
+        subject_url: Some(pr_url.clone()),
+        issue_state: None,
+        reason: Some("authored".to_string()),
+        pr_url: Some(pr_url),
+        unread: false,
+        done: false,
+        updated_at: "2026-01-02T00:00:00Z".to_string(),
+    })
+    .unwrap();
+
+    let threads = db.list_dashboard_threads().unwrap();
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].pr_merge_queue_state.as_deref(), Some("QUEUED"));
 }
 
 #[test]
