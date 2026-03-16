@@ -49,7 +49,7 @@ pub fn render_fragment(snapshot: DashboardSnapshot) -> String {
 fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
     let grouped = snapshot.filters.group_by_repository;
     let groups = grouped_threads(&snapshot.threads);
-    let selected_repos = snapshot.filters.selected_repositories.clone();
+    let hidden_repos = snapshot.filters.hidden_repositories.clone();
     let available_repos = snapshot.available_repositories.clone();
 
     view! {
@@ -96,8 +96,8 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                     ().into_any()
                 } else {
                     let repos = available_repos.clone();
-                    let selected = selected_repos.clone();
-                    let active_count = if selected.is_empty() { repos.len() } else { selected.len() };
+                    let hidden = hidden_repos.clone();
+                    let active_count = repos.len().saturating_sub(hidden.len());
                     let total_count = repos.len();
                     let badge_label = if active_count == total_count {
                         "All".to_string()
@@ -113,7 +113,7 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                             <div class="repo-dropdown-panel">
                                 <form action="/dashboard/actions/repo-filter" method="post" data-async-form id="repo-filter-form">
                                     {repos.into_iter().map(|repo| {
-                                        let checked = selected.is_empty() || selected.contains(&repo);
+                                        let checked = !hidden.contains(&repo);
                                         let name = format!("repo:{repo}");
                                         view! {
                                             <label class="repo-dropdown-option">
@@ -133,9 +133,13 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                 {if snapshot.threads.is_empty() {
                     view! { <div class="threads"><article class="thread"><h3>"Nothing to review"</h3><p class="meta">"No cards match the current filters."</p></article></div> }.into_any()
                 } else if grouped {
+                    let available_repositories = snapshot.available_repositories.clone();
                     view! {
                         <div class="threads grouped">
-                            {groups.into_iter().map(|(repository, threads)| view! { <RepositorySection repository threads /> }).collect::<Vec<_>>()}
+                            {groups.into_iter().map(|(repository, threads)| {
+                                let can_hide = available_repositories.len() > 1;
+                                view! { <RepositorySection repository threads can_hide /> }
+                            }).collect::<Vec<_>>()}
                         </div>
                     }.into_any()
                 } else {
@@ -176,8 +180,13 @@ fn FilterCheckbox(name: &'static str, label: &'static str, checked: bool) -> imp
 }
 
 #[component]
-fn RepositorySection(repository: String, threads: Vec<DashboardThread>) -> impl IntoView {
+fn RepositorySection(
+    repository: String,
+    threads: Vec<DashboardThread>,
+    can_hide: bool,
+) -> impl IntoView {
     let repo_link = format!("https://github.com/{repository}");
+    let hide_repository = repository.clone();
 
     view! {
         <section class="repo-group">
@@ -185,6 +194,17 @@ fn RepositorySection(repository: String, threads: Vec<DashboardThread>) -> impl 
                 <h2 class="repo-group-title">
                     <a class="thread-link repo-link" href=repo_link target="_blank" rel="noreferrer">{repository}</a>
                 </h2>
+                {if can_hide {
+                    view! {
+                        <form action="/dashboard/actions/repositories/hide" method="post" data-async-form>
+                            <input type="hidden" name="repository" value=hide_repository />
+                            <button class="btn btn-subtle" type="submit" data-loading-label="Hiding...">"Hide"</button>
+                        </form>
+                    }
+                        .into_any()
+                } else {
+                    ().into_any()
+                }}
             </header>
             <div class="threads">
                 {threads.into_iter().map(|thread| view! { <ThreadCard thread /> }).collect::<Vec<_>>()}

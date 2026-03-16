@@ -118,7 +118,7 @@ pub struct DashboardThreadFilters {
     pub show_done: bool,
     pub show_not_done: bool,
     pub group_by_repository: bool,
-    pub selected_repositories: Vec<String>,
+    pub hidden_repositories: Vec<String>,
 }
 
 impl Default for DashboardThreadFilters {
@@ -129,7 +129,7 @@ impl Default for DashboardThreadFilters {
             show_done: false,
             show_not_done: true,
             group_by_repository: true,
-            selected_repositories: Vec::new(),
+            hidden_repositories: Vec::new(),
         }
     }
 }

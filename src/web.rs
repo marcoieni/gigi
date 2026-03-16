@@ -24,6 +24,10 @@ pub async fn run_server(state: std::sync::Arc<AppState>, config: &AppConfig) -> 
         .route("/dashboard/events", get(dashboard_events))
         .route("/dashboard/actions/filters", post(update_dashboard_filters))
         .route("/dashboard/actions/repo-filter", post(update_repo_filter))
+        .route(
+            "/dashboard/actions/repositories/hide",
+            post(hide_repository),
+        )
         .route("/dashboard/actions/done", post(mark_done))
         .route("/dashboard/actions/open/vscode", post(open_vscode))
         .route("/dashboard/actions/open/terminal", post(open_terminal))
@@ -105,18 +109,49 @@ async fn update_repo_filter(
         .db
         .list_all_repositories()
         .map_err(|err| ApiErrorResponse::internal(&err))?;
-    let selected: Vec<String> = form.selected_repositories(&all_repos);
-    // If all repos are selected, store empty (meaning "all") to avoid stale entries.
-    let to_store = if selected.len() == all_repos.len() {
-        Vec::new()
-    } else {
-        selected
-    };
+    let to_store = form.hidden_repositories(&all_repos);
     state
         .db
         .set_repository_filter(&to_store)
         .map_err(|err| ApiErrorResponse::internal(&err))?;
     state.notify_dashboard("Repository filter updated");
+    Ok(StatusCode::OK)
+}
+
+async fn hide_repository(
+    State(state): State<std::sync::Arc<AppState>>,
+    Form(form): Form<HideRepositoryForm>,
+) -> Result<StatusCode, ApiErrorResponse> {
+    let all_repos = state
+        .db
+        .list_all_repositories()
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
+    if !all_repos.iter().any(|repo| repo == &form.repository) {
+        return Err(ApiErrorResponse(
+            StatusCode::BAD_REQUEST,
+            format!("Unknown repository: {}", form.repository),
+        ));
+    }
+
+    let mut hidden_repositories = state
+        .db
+        .dashboard_thread_filters()
+        .map_err(|err| ApiErrorResponse::internal(&err))?
+        .hidden_repositories;
+
+    if !hidden_repositories
+        .iter()
+        .any(|repo| repo == &form.repository)
+    {
+        hidden_repositories.push(form.repository);
+        hidden_repositories.sort();
+    }
+
+    state
+        .db
+        .set_repository_filter(&hidden_repositories)
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
+    state.notify_dashboard("Repository hidden");
     Ok(StatusCode::OK)
 }
 
@@ -258,7 +293,7 @@ impl DashboardFiltersForm {
             show_done: self.show_done.is_some(),
             show_not_done: self.show_not_done.is_some(),
             group_by_repository: self.group_by_repository.is_some(),
-            selected_repositories: Vec::new(),
+            hidden_repositories: Vec::new(),
         }
     }
 }
@@ -270,16 +305,18 @@ struct RepoFilterForm {
 }
 
 impl RepoFilterForm {
-    fn selected_repositories(&self, all_repos: &[String]) -> Vec<String> {
+    fn hidden_repositories(&self, all_repos: &[String]) -> Vec<String> {
         all_repos
             .iter()
-            .filter(|repo| {
-                let key = format!("repo:{repo}");
-                self.fields.contains_key(&key)
-            })
+            .filter(|repo| !self.fields.contains_key(&format!("repo:{repo}")))
             .cloned()
             .collect()
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct HideRepositoryForm {
+    repository: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -319,6 +356,22 @@ mod tests {
             Some(&HeaderValue::from_static(
                 "public, max-age=300, must-revalidate"
             ))
+        );
+    }
+
+    #[test]
+    fn repo_filter_form_returns_hidden_repositories() {
+        let form = RepoFilterForm {
+            fields: HashMap::from([
+                ("repo:a/b".to_string(), "on".to_string()),
+                ("repo:c/d".to_string(), "on".to_string()),
+            ]),
+        };
+        let all_repos = vec!["a/b".to_string(), "c/d".to_string(), "e/f".to_string()];
+
+        assert_eq!(
+            form.hidden_repositories(&all_repos),
+            vec!["e/f".to_string()]
         );
     }
 }
