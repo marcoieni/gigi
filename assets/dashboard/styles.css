@@ -63,6 +63,11 @@ body {
   border-color: var(--accent);
 }
 
+.btn-subtle {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
 .btn:disabled,
 .pill:disabled {
   cursor: wait;

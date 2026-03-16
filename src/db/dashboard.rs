@@ -139,7 +139,7 @@ impl Db {
                             show_done: row.get::<_, i64>(2)? != 0,
                             show_not_done: row.get::<_, i64>(3)? != 0,
                             group_by_repository: row.get::<_, i64>(4)? != 0,
-                            selected_repositories: Vec::new(),
+                            hidden_repositories: Vec::new(),
                         })
                     },
                 )
@@ -150,7 +150,7 @@ impl Db {
                 conn.prepare("SELECT repository FROM repository_filter ORDER BY repository")?;
             let repos = stmt.query_map([], |row| row.get::<_, String>(0))?;
             for repo in repos {
-                filters.selected_repositories.push(repo?);
+                filters.hidden_repositories.push(repo?);
             }
 
             Ok(filters)
@@ -315,11 +315,10 @@ impl DashboardThreadFilters {
     }
 
     fn include_repository(&self, repository: &str) -> bool {
-        self.selected_repositories.is_empty()
-            || self
-                .selected_repositories
-                .iter()
-                .any(|selected| selected == repository)
+        !self
+            .hidden_repositories
+            .iter()
+            .any(|hidden| hidden == repository)
     }
 }
 

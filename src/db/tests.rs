@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use rusqlite::params;
 
 use super::*;
@@ -15,12 +17,16 @@ impl Db {
 }
 
 fn test_db() -> Db {
+    static NEXT_DB_ID: AtomicU64 = AtomicU64::new(1);
+
     let mut path = std::env::temp_dir();
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    path.push(format!("gigi-test-{ts}.sqlite"));
+    // avoid parallel test collision
+    let id = NEXT_DB_ID.fetch_add(1, Ordering::Relaxed);
+    path.push(format!("gigi-test-{ts}-{id}.sqlite"));
     Db::new(path).unwrap()
 }
 
@@ -435,7 +441,7 @@ fn dashboard_can_show_done_items_when_requested() {
             show_done: true,
             show_not_done: false,
             group_by_repository: true,
-            selected_repositories: Vec::new(),
+            hidden_repositories: Vec::new(),
         })
         .unwrap();
 
@@ -492,7 +498,7 @@ fn dashboard_filters_by_source_type() {
             show_done: false,
             show_not_done: true,
             group_by_repository: true,
-            selected_repositories: Vec::new(),
+            hidden_repositories: Vec::new(),
         })
         .unwrap();
 
@@ -520,11 +526,11 @@ fn dashboard_filter_preferences_roundtrip() {
         show_done: true,
         show_not_done: false,
         group_by_repository: false,
-        selected_repositories: vec!["a/b".to_string(), "c/d".to_string()],
+        hidden_repositories: vec!["a/b".to_string(), "c/d".to_string()],
     };
 
     db.set_dashboard_thread_filters(&filters).unwrap();
-    db.set_repository_filter(&filters.selected_repositories)
+    db.set_repository_filter(&filters.hidden_repositories)
         .unwrap();
 
     assert_eq!(db.dashboard_thread_filters().unwrap(), filters);
