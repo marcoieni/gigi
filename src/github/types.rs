@@ -1,6 +1,9 @@
+#[cfg(feature = "ssr")]
 use std::collections::HashMap;
 
+#[cfg(feature = "ssr")]
 use camino::Utf8PathBuf;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct NotificationThread {
@@ -17,18 +20,21 @@ pub struct NotificationThread {
     pub issue_state: Option<String>,
 }
 
+#[cfg(feature = "ssr")]
 #[derive(Debug, Clone)]
 pub struct LocalPrRepo {
     pub repo_dir: Utf8PathBuf,
     pub details: PrDetails,
 }
 
+#[cfg(feature = "ssr")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct GitHubRepoRef {
     pub owner: String,
     pub repo: String,
 }
 
+#[cfg(feature = "ssr")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CloneTarget {
     pub origin: GitHubRepoRef,
@@ -36,7 +42,7 @@ pub(super) struct CloneTarget {
 }
 
 /// A GitHub user who participated in a PR (for avatar display).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Participant {
     pub login: String,
     pub avatar_url: String,
@@ -45,7 +51,7 @@ pub struct Participant {
     pub last_activity_at: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthoredPrSummary {
     pub pr_url: String,
     pub repository: String,
@@ -55,7 +61,7 @@ pub struct AuthoredPrSummary {
     pub is_draft: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrDetails {
     pub pr_url: String,
     pub owner: String,
@@ -78,6 +84,7 @@ pub struct PrDetails {
 }
 
 /// Result of a batch GraphQL fetch.
+#[cfg(feature = "ssr")]
 #[derive(Debug, Default)]
 pub struct BatchFetchResult {
     pub pr_details: HashMap<String, PrDetails>,

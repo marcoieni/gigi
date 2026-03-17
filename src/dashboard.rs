@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use leptos::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     db::{DashboardThread, DashboardThreadFilters},
@@ -11,7 +12,7 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardSnapshot {
     pub filters: DashboardThreadFilters,
     pub threads: Vec<DashboardThread>,
@@ -19,24 +20,48 @@ pub struct DashboardSnapshot {
     pub status_message: String,
 }
 
-pub fn render_page(snapshot: &DashboardSnapshot) -> String {
+#[component]
+pub fn DashboardPage() -> impl IntoView {
+    let snapshot = Resource::new_blocking(|| (), |_| load_dashboard_snapshot());
+    let snapshot_for_updates = snapshot;
+    use_dashboard_updates(move || snapshot_for_updates.refetch());
+
     view! {
-        <!doctype html>
-        <html lang="en">
-            <head>
-                <meta charset="utf-8" />
-                <meta name="viewport" content="width=device-width, initial-scale=1" />
-                <title>"gigi dashboard"</title>
-                <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎤</text></svg>" />
-                <link rel="stylesheet" href="/styles.css" />
-            </head>
-            <body>
-                <DashboardRoot snapshot=snapshot.clone() />
-                <script src="/app.js"></script>
-            </body>
-        </html>
+        <Suspense fallback=loading_dashboard>
+            {move || {
+                snapshot.get().map(|result| match result {
+                    Ok(snapshot) => view! { <DashboardRoot snapshot /> }.into_any(),
+                    Err(err) => view! {
+                        <main class="layout">
+                            <div class="threads">
+                                <article class="thread">
+                                    <h3>"Dashboard load failed"</h3>
+                                    <p class="meta">{err.to_string()}</p>
+                                </article>
+                            </div>
+                        </main>
+                    }
+                    .into_any(),
+                })
+            }}
+        </Suspense>
     }
-    .to_html()
+}
+
+fn loading_dashboard() -> impl IntoView {
+    view! {
+        <main class="layout">
+            <header class="header">
+                <h1>"gigi dashboard"</h1>
+            </header>
+            <div class="threads">
+                <article class="thread">
+                    <h3>"Loading dashboard…"</h3>
+                    <p class="meta">"Fetching the latest review state."</p>
+                </article>
+            </div>
+        </main>
+    }
 }
 
 #[component]
@@ -156,7 +181,7 @@ fn DashboardRoot(snapshot: DashboardSnapshot) -> impl IntoView {
                             </div>
                         </details>
                     }
-                        .into_any()
+                    .into_any()
                 }}
             </section>
 
@@ -170,7 +195,7 @@ fn DashboardRoot(snapshot: DashboardSnapshot) -> impl IntoView {
                             </article>
                         </div>
                     }
-                        .into_any()
+                    .into_any()
                 } else if grouped {
                     let available_repositories = snapshot.available_repositories.clone();
                     view! {
@@ -184,7 +209,7 @@ fn DashboardRoot(snapshot: DashboardSnapshot) -> impl IntoView {
                                 .collect::<Vec<_>>()}
                         </div>
                     }
-                        .into_any()
+                    .into_any()
                 } else {
                     view! {
                         <div class="threads">
@@ -195,7 +220,7 @@ fn DashboardRoot(snapshot: DashboardSnapshot) -> impl IntoView {
                                 .collect::<Vec<_>>()}
                         </div>
                     }
-                        .into_any()
+                    .into_any()
                 }}
             </section>
         </main>
@@ -236,7 +261,7 @@ fn RepositorySection(
                             <button class="btn btn-subtle" type="submit">"Hide"</button>
                         </form>
                     }
-                        .into_any()
+                    .into_any()
                 } else {
                     ().into_any()
                 }}
@@ -357,7 +382,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                             <span class="meta-separator">"•"</span>
                             <span class="avatar-stack">{avatars}</span>
                         }
-                            .into_any()
+                        .into_any()
                     }
                 }
             </div>
@@ -380,7 +405,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                             <button class="btn" type="submit">"Review"</button>
                         </form>
                     }
-                        .into_any()
+                    .into_any()
                 } else {
                     ().into_any()
                 }}
@@ -420,7 +445,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                             </button>
                         </form>
                     }
-                        .into_any()
+                    .into_any()
                 } else {
                     ().into_any()
                 }}
@@ -438,7 +463,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                             </form>
                         </div>
                     }
-                        .into_any()
+                    .into_any()
                 } else {
                     ().into_any()
                 }
@@ -478,7 +503,7 @@ fn render_review_section(
                                     " below to ask gigi to address the current review."
                                 </p>
                             }
-                                .into_any()
+                            .into_any()
                         } else {
                             ().into_any()
                         }}
@@ -667,6 +692,87 @@ fn svg_icon(inner: &'static str) -> impl IntoView {
     }
 }
 
+#[cfg(feature = "hydrate")]
+fn use_dashboard_updates(on_update: impl Fn() + Clone + 'static) {
+    use std::{cell::Cell, rc::Rc};
+
+    use wasm_bindgen::{JsCast, closure::Closure};
+    use web_sys::{Event as WebEvent, EventSource, MessageEvent};
+
+    Effect::new(move |_| {
+        let Ok(source) = EventSource::new("/dashboard/events") else {
+            return;
+        };
+        let on_update = Rc::new(on_update.clone());
+        let latest_version = Rc::new(Cell::new(None::<u64>));
+
+        let handle_update = {
+            let on_update = Rc::clone(&on_update);
+            let latest_version = Rc::clone(&latest_version);
+            Closure::<dyn FnMut(MessageEvent)>::new(move |event: MessageEvent| {
+                let Some(data) = event.data().as_string() else {
+                    on_update();
+                    return;
+                };
+
+                let Ok(version) = data.parse::<u64>() else {
+                    on_update();
+                    return;
+                };
+
+                if latest_version.get() == Some(version) {
+                    return;
+                }
+
+                latest_version.set(Some(version));
+                on_update();
+            })
+        };
+
+        let handle_error = Closure::<dyn FnMut(WebEvent)>::new(|_| {});
+
+        let _listener = source
+            .add_event_listener_with_callback("update", handle_update.as_ref().unchecked_ref());
+        source.set_onerror(Some(handle_error.as_ref().unchecked_ref()));
+        std::mem::forget(source);
+        handle_update.forget();
+        handle_error.forget();
+    });
+}
+
+#[cfg(not(feature = "hydrate"))]
+fn use_dashboard_updates(_on_update: impl Fn() + Clone + 'static) {}
+
+#[server(name = LoadDashboardSnapshot)]
+async fn load_dashboard_snapshot() -> Result<DashboardSnapshot, ServerFnError> {
+    let state = server_state();
+    load_snapshot(&state).map_err(|err| ServerFnError::new(err.to_string()))
+}
+
+#[cfg(feature = "ssr")]
+fn server_state() -> std::sync::Arc<crate::serve::AppState> {
+    expect_context()
+}
+
+#[cfg(feature = "ssr")]
+fn load_snapshot(state: &crate::serve::AppState) -> anyhow::Result<DashboardSnapshot> {
+    let filters = state.db.dashboard_thread_filters()?;
+    let available_repositories = state.db.list_all_repositories()?;
+    let mut threads = state.db.list_dashboard_threads_with_filters(&filters)?;
+    for thread in &mut threads {
+        let participant_key = thread.pr_url.as_deref().or(thread.subject_url.as_deref());
+        if let Some(key) = participant_key {
+            thread.participants = state.db.get_pr_participants(key).unwrap_or_default();
+        }
+    }
+    Ok(DashboardSnapshot {
+        filters,
+        threads,
+        available_repositories,
+        status_message: state.dashboard_status_message(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -730,18 +836,5 @@ mod tests {
         let raw = "Summary\n\nREQUIRES_CODE_CHANGES: YES\n\nMore detail";
 
         assert_eq!(clean_review_text(raw), "Summary\n\nMore detail");
-    }
-
-    #[test]
-    fn render_page_smoke_test() {
-        let html = render_page(&DashboardSnapshot {
-            filters: DashboardThreadFilters::default(),
-            threads: Vec::new(),
-            available_repositories: Vec::new(),
-            status_message: "Ready".to_string(),
-        });
-
-        assert!(html.contains("gigi dashboard"));
-        assert!(html.contains("/dashboard/actions/refresh"));
     }
 }

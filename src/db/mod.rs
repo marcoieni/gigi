@@ -1,26 +1,35 @@
+#[cfg(feature = "ssr")]
 mod core;
+#[cfg(feature = "ssr")]
 mod dashboard;
+#[cfg(feature = "ssr")]
 mod migrations;
 mod models;
+#[cfg(feature = "ssr")]
 mod util;
 
-#[cfg(test)]
+#[cfg(all(feature = "ssr", test))]
 mod tests;
-
-use std::path::{Path, PathBuf};
-
-use anyhow::Context as _;
-use rusqlite::Connection;
 
 pub use models::{
     DashboardThread, DashboardThreadFilters, NewPr, NewReview, NewThread, StoredPr, StoredReview,
 };
 
+#[cfg(feature = "ssr")]
+use std::path::{Path, PathBuf};
+
+#[cfg(feature = "ssr")]
+use anyhow::Context as _;
+#[cfg(feature = "ssr")]
+use rusqlite::Connection;
+
+#[cfg(feature = "ssr")]
 #[derive(Debug, Clone)]
 pub struct Db {
     path: PathBuf,
 }
 
+#[cfg(feature = "ssr")]
 impl Db {
     pub fn new(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let path = path.as_ref().to_path_buf();

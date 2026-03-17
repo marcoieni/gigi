@@ -12,6 +12,8 @@ use super::{
 };
 
 pub async fn run_serve() -> anyhow::Result<()> {
+    drop(any_spawner::Executor::init_tokio());
+
     let paths = config::resolve_paths()?;
     config::ensure_parent_dirs(&paths).await?;
 

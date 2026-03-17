@@ -81,7 +81,7 @@ pub struct NewReview {
     pub content_md: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardThread {
     pub thread_key: String,
     pub github_thread_id: Option<String>,
@@ -107,7 +107,6 @@ pub struct DashboardThread {
     pub latest_review_provider: Option<String>,
     pub is_draft: bool,
     /// Participants who interacted with this PR (not persisted, populated at runtime).
-    #[serde(skip_serializing)]
     pub participants: Vec<Participant>,
 }
 

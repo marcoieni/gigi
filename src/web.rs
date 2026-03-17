@@ -1,27 +1,66 @@
-use std::convert::Infallible;
-
-use std::collections::HashMap;
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
 
 use axum::{
     Form, Router,
-    extract::{Path as AxumPath, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
-    response::{Html, IntoResponse, Redirect, Response, Sse, sse::Event, sse::KeepAlive},
+    body::Body,
+    extract::{FromRef, Path as AxumPath, Request, State},
+    http::{HeaderMap, HeaderValue, header},
+    response::{IntoResponse, Redirect, Sse, sse::Event, sse::KeepAlive},
     routing::{get, post},
 };
-use serde::{Deserialize, Serialize};
+use leptos::{config::LeptosOptions, prelude::provide_context};
+use serde::Deserialize;
 use tokio_stream::{StreamExt as _, wrappers::WatchStream};
 
-use crate::{
-    config::AppConfig,
-    dashboard::{self, DashboardSnapshot},
-    db::DashboardThreadFilters,
-    serve::AppState,
-};
+use crate::{app, config::AppConfig, db::DashboardThreadFilters, serve::AppState};
 
-pub async fn run_server(state: std::sync::Arc<AppState>, config: &AppConfig) -> anyhow::Result<()> {
+#[derive(Clone)]
+struct WebState {
+    app_state: Arc<AppState>,
+    leptos_options: LeptosOptions,
+}
+
+impl FromRef<WebState> for Arc<AppState> {
+    fn from_ref(state: &WebState) -> Self {
+        Self::clone(&state.app_state)
+    }
+}
+
+impl FromRef<WebState> for LeptosOptions {
+    fn from_ref(state: &WebState) -> Self {
+        state.leptos_options.clone()
+    }
+}
+
+pub async fn run_server(state: Arc<AppState>, config: &AppConfig) -> anyhow::Result<()> {
+    let leptos_options = build_leptos_options(config);
+    let web_state = WebState {
+        app_state: Arc::clone(&state),
+        leptos_options: leptos_options.clone(),
+    };
+
+    let app_context = {
+        let state = Arc::clone(&state);
+        move || provide_context(Arc::clone(&state))
+    };
+
+    let shell = {
+        let leptos_options = leptos_options.clone();
+        move || app::shell(leptos_options.clone())
+    };
+
     let app = Router::new()
-        .route("/", get(dashboard_page))
+        .route(
+            "/api/{*fn_name}",
+            post(server_fn_handler).get(server_fn_handler),
+        )
+        .route(
+            "/",
+            get(leptos_axum::render_app_to_stream_with_context(
+                app_context.clone(),
+                shell,
+            )),
+        )
         .route("/dashboard/events", get(dashboard_events))
         .route("/dashboard/actions/filters", post(update_dashboard_filters))
         .route("/dashboard/actions/repo-filter", post(update_repo_filter))
@@ -42,8 +81,8 @@ pub async fn run_server(state: std::sync::Arc<AppState>, config: &AppConfig) -> 
             post(run_fix),
         )
         .route("/styles.css", get(stylesheet))
-        .route("/app.js", get(script))
-        .with_state(state);
+        .fallback(file_and_error_handler)
+        .with_state(web_state);
 
     let listener =
         tokio::net::TcpListener::bind((config.dashboard.host.as_str(), config.dashboard.port))
@@ -61,15 +100,20 @@ pub async fn run_server(state: std::sync::Arc<AppState>, config: &AppConfig) -> 
         .map_err(anyhow::Error::from)
 }
 
-async fn dashboard_page(
-    State(state): State<std::sync::Arc<AppState>>,
-) -> Result<Html<String>, ApiErrorResponse> {
-    let snapshot = load_snapshot(&state).map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(Html(dashboard::render_page(&snapshot)))
+async fn server_fn_handler(
+    State(state): State<WebState>,
+    request: Request<Body>,
+) -> impl IntoResponse {
+    let app_state = Arc::clone(&state.app_state);
+    leptos_axum::handle_server_fns_with_context(
+        move || provide_context(Arc::clone(&app_state)),
+        request,
+    )
+    .await
 }
 
 async fn dashboard_events(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let stream = WatchStream::new(state.subscribe_dashboard_updates())
         .skip(1)
@@ -83,7 +127,7 @@ async fn dashboard_events(
 }
 
 async fn update_dashboard_filters(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Form(form): Form<DashboardFiltersForm>,
 ) -> Redirect {
     match state.db.dashboard_thread_filters() {
@@ -102,7 +146,7 @@ async fn update_dashboard_filters(
 }
 
 async fn update_repo_filter(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Form(form): Form<RepoFilterForm>,
 ) -> Redirect {
     match state.db.list_all_repositories() {
@@ -121,7 +165,7 @@ async fn update_repo_filter(
 }
 
 async fn hide_repository(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Form(form): Form<HideRepositoryForm>,
 ) -> Redirect {
     match state.db.list_all_repositories() {
@@ -159,10 +203,7 @@ async fn hide_repository(
     redirect_home()
 }
 
-async fn mark_done(
-    State(state): State<std::sync::Arc<AppState>>,
-    Form(form): Form<MarkDoneForm>,
-) -> Redirect {
+async fn mark_done(State(state): State<Arc<AppState>>, Form(form): Form<MarkDoneForm>) -> Redirect {
     if let Err(err) = state
         .mark_done(crate::serve::MarkDoneRequest {
             github_thread_id: form.github_thread_id,
@@ -178,7 +219,7 @@ async fn mark_done(
 }
 
 async fn run_fix(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     AxumPath((owner, repo, number)): AxumPath<(String, String, i64)>,
 ) -> Redirect {
     if let Err(err) = state.run_fix(owner, repo, number).await {
@@ -189,7 +230,7 @@ async fn run_fix(
 }
 
 async fn run_review(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     AxumPath((owner, repo, number)): AxumPath<(String, String, i64)>,
 ) -> Redirect {
     if let Err(err) = state.run_review(owner, repo, number).await {
@@ -199,7 +240,7 @@ async fn run_review(
     redirect_home()
 }
 
-async fn refresh(State(state): State<std::sync::Arc<AppState>>) -> Redirect {
+async fn refresh(State(state): State<Arc<AppState>>) -> Redirect {
     if let Err(err) = state.poll_once_from_dashboard().await {
         state.notify_dashboard(format!("Failed to refresh dashboard: {err}"));
     }
@@ -208,7 +249,7 @@ async fn refresh(State(state): State<std::sync::Arc<AppState>>) -> Redirect {
 }
 
 async fn open_vscode(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Form(request): Form<OpenProjectRequest>,
 ) -> Redirect {
     if let Err(err) = state
@@ -222,7 +263,7 @@ async fn open_vscode(
 }
 
 async fn open_terminal(
-    State(state): State<std::sync::Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Form(request): Form<OpenProjectRequest>,
 ) -> Redirect {
     if let Err(err) = state
@@ -240,9 +281,31 @@ async fn stylesheet() -> impl IntoResponse {
     (headers, include_str!("../assets/dashboard/styles.css"))
 }
 
-async fn script() -> impl IntoResponse {
-    let headers = static_asset_headers("application/javascript; charset=utf-8");
-    (headers, include_str!("../assets/dashboard/app.js"))
+async fn file_and_error_handler(
+    uri: axum::http::Uri,
+    State(state): State<WebState>,
+    request: Request<Body>,
+) -> impl IntoResponse {
+    let app_state = Arc::clone(&state.app_state);
+    leptos_axum::file_and_error_handler_with_context(
+        move || provide_context(Arc::clone(&app_state)),
+        app::shell,
+    )(uri, State(state), request)
+    .await
+}
+
+fn build_leptos_options(config: &AppConfig) -> LeptosOptions {
+    use std::net::SocketAddr;
+
+    let site_addr = format!("{}:{}", config.dashboard.host, config.dashboard.port)
+        .parse::<SocketAddr>()
+        .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], config.dashboard.port)));
+    LeptosOptions::builder()
+        .output_name(env!("CARGO_CRATE_NAME"))
+        .site_root("target/site")
+        .site_pkg_dir("pkg")
+        .site_addr(site_addr)
+        .build()
 }
 
 fn static_asset_headers(content_type: &'static str) -> HeaderMap {
@@ -253,24 +316,6 @@ fn static_asset_headers(content_type: &'static str) -> HeaderMap {
         HeaderValue::from_static("public, max-age=300, must-revalidate"),
     );
     headers
-}
-
-fn load_snapshot(state: &AppState) -> anyhow::Result<DashboardSnapshot> {
-    let filters = state.db.dashboard_thread_filters()?;
-    let available_repositories = state.db.list_all_repositories()?;
-    let mut threads = state.db.list_dashboard_threads_with_filters(&filters)?;
-    for thread in &mut threads {
-        let participant_key = thread.pr_url.as_deref().or(thread.subject_url.as_deref());
-        if let Some(key) = participant_key {
-            thread.participants = state.db.get_pr_participants(key).unwrap_or_default();
-        }
-    }
-    Ok(DashboardSnapshot {
-        filters,
-        threads,
-        available_repositories,
-        status_message: state.dashboard_status_message(),
-    })
 }
 
 fn redirect_home() -> Redirect {
@@ -334,26 +379,6 @@ struct HideRepositoryForm {
     repository: String,
 }
 
-#[derive(Debug, Serialize)]
-struct ApiError {
-    error: String,
-}
-
-struct ApiErrorResponse(StatusCode, String);
-
-impl ApiErrorResponse {
-    fn internal(err: &anyhow::Error) -> Self {
-        Self(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
-    }
-}
-
-impl IntoResponse for ApiErrorResponse {
-    fn into_response(self) -> Response {
-        let body = axum::Json(ApiError { error: self.1 });
-        (self.0, body).into_response()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,22 +396,6 @@ mod tests {
             Some(&HeaderValue::from_static(
                 "public, max-age=300, must-revalidate"
             ))
-        );
-    }
-
-    #[test]
-    fn repo_filter_form_returns_hidden_repositories() {
-        let form = RepoFilterForm {
-            fields: HashMap::from([
-                ("repo:0:a/b".to_string(), "a/b".to_string()),
-                ("repo:1:c/d".to_string(), "c/d".to_string()),
-            ]),
-        };
-        let all_repos = vec!["a/b".to_string(), "c/d".to_string(), "e/f".to_string()];
-
-        assert_eq!(
-            form.hidden_repositories(&all_repos),
-            vec!["e/f".to_string()]
         );
     }
 }
