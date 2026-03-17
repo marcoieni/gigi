@@ -195,11 +195,8 @@ async fn run_review(
 async fn refresh(
     State(state): State<std::sync::Arc<AppState>>,
 ) -> Result<StatusCode, ApiErrorResponse> {
-    state
-        .poll_once_from_dashboard()
-        .await
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(StatusCode::OK)
+    state.request_dashboard_refresh();
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn open_vscode(

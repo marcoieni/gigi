@@ -1,4 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use camino::Utf8PathBuf;
@@ -32,6 +38,7 @@ pub async fn run_serve() -> anyhow::Result<()> {
         config: cfg.clone(),
         work_dir,
         poll_lock: Arc::new(tokio::sync::Mutex::new(())),
+        dashboard_refresh_in_flight: Arc::new(AtomicBool::new(false)),
         dashboard_updates,
     });
 
@@ -107,9 +114,34 @@ impl AppState {
         drop(self.dashboard_updates.send(next));
     }
 
-    pub async fn poll_once_from_dashboard(&self) -> anyhow::Result<PollStats> {
-        println!("🔄 Dashboard refresh requested");
-        let result = self.poll_once_regular().await;
+    pub fn request_dashboard_refresh(self: &Arc<Self>) {
+        if self
+            .dashboard_refresh_in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            self.notify_dashboard("Refresh already in progress...");
+            return;
+        }
+
+        self.notify_dashboard("Refresh requested...");
+        eprintln!("🔄 Dashboard refresh requested");
+
+        let state = Arc::clone(self);
+        tokio::spawn(async move {
+            let result = state.poll_once_from_dashboard().await;
+            state
+                .dashboard_refresh_in_flight
+                .store(false, Ordering::Release);
+
+            if let Err(err) = result {
+                eprintln!("⚠️ Dashboard refresh task failed: {err}");
+            }
+        });
+    }
+
+    async fn poll_once_from_dashboard(&self) -> anyhow::Result<PollStats> {
+        let result = self.poll_once_with_mode(PollMode::Regular).await;
         match &result {
             Ok(stats) => {
                 print_poll_stats("✅ Dashboard refresh complete:", stats);
