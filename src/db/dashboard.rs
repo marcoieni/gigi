@@ -32,6 +32,7 @@ impl Db {
                     t.subject_title,
                     t.subject_url,
                     t.issue_state,
+                    t.discussion_answered,
                     t.reason,
                     t.pr_url,
                     t.unread,
@@ -66,9 +67,9 @@ impl Db {
             )?;
 
             let rows = stmt.query_map([], |row| {
-                let unread: i64 = row.get(13)?;
-                let done: i64 = row.get(14)?;
-                let latest_requires: Option<i64> = row.get(16)?;
+                let unread: i64 = row.get(14)?;
+                let done: i64 = row.get(15)?;
+                let latest_requires: Option<i64> = row.get(17)?;
                 Ok(DashboardThreadRow {
                     thread_key: row.get(0)?,
                     github_thread_id: row.get(1)?,
@@ -81,19 +82,20 @@ impl Db {
                     subject_title: row.get(8)?,
                     subject_url: row.get(9)?,
                     issue_state: row.get(10)?,
-                    reason: row.get(11)?,
-                    pr_url: row.get(12)?,
+                    discussion_answered: row.get::<_, Option<i64>>(11)?.map(|value| value != 0),
+                    reason: row.get(12)?,
+                    pr_url: row.get(13)?,
                     unread: unread != 0,
                     done: done != 0,
-                    updated_at: row.get(15)?,
+                    updated_at: row.get(16)?,
                     latest_requires_code_changes: latest_requires.map(|v| v != 0),
-                    pr_state: row.get(17)?,
-                    pr_merge_queue_state: row.get(18)?,
-                    is_archived_pr: row.get::<_, i64>(19)? != 0,
-                    is_draft: row.get::<_, i64>(20)? != 0,
-                    latest_review_content_md: row.get(21)?,
-                    latest_review_created_at: row.get(22)?,
-                    latest_review_provider: row.get(23)?,
+                    pr_state: row.get(18)?,
+                    pr_merge_queue_state: row.get(19)?,
+                    is_archived_pr: row.get::<_, i64>(20)? != 0,
+                    is_draft: row.get::<_, i64>(21)? != 0,
+                    latest_review_content_md: row.get(22)?,
+                    latest_review_created_at: row.get(23)?,
+                    latest_review_provider: row.get(24)?,
                 })
             })?;
 
@@ -255,6 +257,7 @@ struct DashboardThreadRow {
     subject_title: String,
     subject_url: Option<String>,
     issue_state: Option<String>,
+    discussion_answered: Option<bool>,
     reason: Option<String>,
     pr_url: Option<String>,
     unread: bool,
@@ -284,6 +287,7 @@ impl DashboardThreadRow {
             subject_title: self.subject_title,
             subject_url: self.subject_url,
             issue_state: self.issue_state,
+            discussion_answered: self.discussion_answered,
             reason: self.reason,
             pr_url: self.pr_url,
             unread: self.unread,
@@ -349,6 +353,9 @@ fn merge_dashboard_thread(existing: &mut DashboardThread, incoming: DashboardThr
     existing.pr_repo = existing_snapshot.pr_repo.or(incoming.pr_repo);
     existing.pr_number = existing_snapshot.pr_number.or(incoming.pr_number);
     existing.issue_state = existing_snapshot.issue_state.or(incoming.issue_state);
+    existing.discussion_answered = existing_snapshot
+        .discussion_answered
+        .or(incoming.discussion_answered);
     existing.latest_review_content_md = existing_snapshot
         .latest_review_content_md
         .or(incoming.latest_review_content_md);

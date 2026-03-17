@@ -400,6 +400,10 @@ body {
   background: var(--violet);
 }
 
+.title-state-icon.answered {
+  background: var(--accent);
+}
+
 .title-state-icon.closed {
   background: var(--danger);
 }

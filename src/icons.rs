@@ -15,6 +15,9 @@ pub const PR_CLOSED_ICON: &str = r#"<circle cx="6" cy="6" r="3" /><path d="M6 9v
 pub const ISSUE_OPEN_ICON: &str = r#"<circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" />"#;
 pub const ISSUE_CLOSED_ICON: &str =
     r#"<circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" />"#;
+pub const DISCUSSION_OPEN_ICON: &str =
+    r#"<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />"#;
+pub const DISCUSSION_ANSWERED_ICON: &str = r#"<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><path d="m9 10 2 2 4-4" />"#;
 pub const CHECKMARK_ICON: &str = r#"<path d="M20 6 9 17l-5-5" />"#;
 pub const REFRESH_ICON: &str = r#"<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" />"#;
 pub const MAIL_ICON: &str = r#"<path d="m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7" /><rect x="2" y="4" width="20" height="16" rx="2" />"#;
