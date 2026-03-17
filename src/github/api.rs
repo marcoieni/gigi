@@ -818,27 +818,14 @@ async fn fetch_batch_chunk(
             discussion.owner, discussion.repo, discussion.number
         );
 
-        let mut participants = Vec::new();
         let activity_map = extract_discussion_participant_activity(discussion_val);
-
-        for (login, (ts, avatar_url)) in &activity_map {
-            if let Some(avatar_url) = avatar_url {
-                participants.push(Participant {
-                    login: login.clone(),
-                    avatar_url: avatar_url.clone(),
-                    last_activity_at: Some(ts.clone()),
-                });
-            }
-        }
+        let mut participants_by_login = HashMap::<String, Participant>::new();
 
         if let Some(author) = discussion_val.get("author")
             && let (Some(login), Some(avatar_url)) = (
                 author.get("login").and_then(Value::as_str),
                 author.get("avatarUrl").and_then(Value::as_str),
             )
-            && !participants
-                .iter()
-                .any(|participant| participant.login == login)
         {
             let last_activity_at =
                 activity_map
@@ -850,12 +837,34 @@ async fn fetch_batch_chunk(
                             .and_then(Value::as_str)
                             .map(ToString::to_string)
                     });
-            participants.push(Participant {
-                login: login.to_string(),
-                avatar_url: avatar_url.to_string(),
-                last_activity_at,
-            });
+            participants_by_login.insert(
+                login.to_string(),
+                Participant {
+                    login: login.to_string(),
+                    avatar_url: avatar_url.to_string(),
+                    last_activity_at,
+                },
+            );
         }
+
+        for (login, (ts, avatar_url)) in &activity_map {
+            let Some(avatar_url) = avatar_url else {
+                continue;
+            };
+
+            participants_by_login
+                .entry(login.clone())
+                .and_modify(|participant| {
+                    participant.last_activity_at = Some(ts.clone());
+                })
+                .or_insert_with(|| Participant {
+                    login: login.clone(),
+                    avatar_url: avatar_url.clone(),
+                    last_activity_at: Some(ts.clone()),
+                });
+        }
+
+        let mut participants: Vec<_> = participants_by_login.into_values().collect();
 
         participants.sort_by(|left, right| {
             right

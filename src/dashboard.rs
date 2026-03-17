@@ -234,7 +234,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
     let can_review =
         thread.pr_owner.is_some() && thread.pr_repo.is_some() && thread.pr_number.is_some();
     let can_fix = can_review && thread.latest_requires_code_changes == Some(true);
-    let is_pull_request = thread.subject_type.as_deref() == Some("PullRequest");
+    let shows_review_pill = thread_supports_review_pill(thread.subject_type.as_deref());
     let fix_action_for_modal = can_fix.then(|| fix_action_path(&thread));
     let mark_authored_pr = thread.sources.iter().any(|source| source == "my_pr");
     let review_action = review_action_path(&thread);
@@ -288,7 +288,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
             </div>
 
             <div class="row">
-                {if !is_pull_request {
+                {if !shows_review_pill {
                     ().into_any()
                 } else if let Some(review) = review_content {
                     let fix_attr = fix_action_for_modal.clone();
@@ -429,26 +429,15 @@ fn thread_state_data(
     is_draft: bool,
     discussion_answered: bool,
 ) -> (&'static str, &'static str, &'static str) {
+    if subject_type == Some("Discussion") {
+        return discussion_state_data(state, discussion_answered);
+    }
+
     match state {
         Some("MERGED") => ("title-state-icon merged", PR_MERGED_ICON, "Merged"),
-        _ if subject_type == Some("Discussion") && discussion_answered => (
-            "title-state-icon answered",
-            DISCUSSION_ANSWERED_ICON,
-            "Answered discussion",
-        ),
-        Some("CLOSED") if subject_type == Some("Discussion") => (
-            "title-state-icon closed",
-            ISSUE_CLOSED_ICON,
-            "Closed discussion",
-        ),
         Some("CLOSED") if subject_type == Some("Issue") => {
             ("title-state-icon closed", ISSUE_CLOSED_ICON, "Closed issue")
         }
-        Some("OPEN") if subject_type == Some("Discussion") => (
-            "title-state-icon open",
-            DISCUSSION_OPEN_ICON,
-            "Open discussion",
-        ),
         Some("CLOSED") => ("title-state-icon closed", PR_CLOSED_ICON, "Closed"),
         Some("OPEN") if subject_type == Some("Issue") => {
             ("title-state-icon open", ISSUE_OPEN_ICON, "Open issue")
@@ -458,14 +447,58 @@ fn thread_state_data(
             PR_QUEUED_ICON,
             merge_queue_state_label(merge_queue_state.unwrap_or_default()),
         ),
-        _ if subject_type == Some("Discussion") => (
+        _ if is_draft => ("title-state-icon draft", PR_DRAFT_ICON, "Draft"),
+        _ => ("title-state-icon open", PR_OPEN_ICON, "Open"),
+    }
+}
+
+fn discussion_state_data(
+    state: Option<&str>,
+    discussion_answered: bool,
+) -> (&'static str, &'static str, &'static str) {
+    match state {
+        Some("CLOSED") => (
+            "title-state-icon closed",
+            ISSUE_CLOSED_ICON,
+            "Closed discussion",
+        ),
+        Some("OPEN") if discussion_answered => (
+            "title-state-icon answered",
+            DISCUSSION_ANSWERED_ICON,
+            "Answered discussion",
+        ),
+        Some("OPEN") => (
             "title-state-icon open",
             DISCUSSION_OPEN_ICON,
             "Open discussion",
         ),
-        _ if is_draft => ("title-state-icon draft", PR_DRAFT_ICON, "Draft"),
-        _ => ("title-state-icon open", PR_OPEN_ICON, "Open"),
+        Some(other) => {
+            eprintln!("⚠️ Unknown discussion state {other}; using generic discussion label");
+            (
+                "title-state-icon open",
+                DISCUSSION_OPEN_ICON,
+                "Discussion state unavailable",
+            )
+        }
+        None if discussion_answered => {
+            eprintln!("⚠️ Discussion marked answered without a state; using answered label");
+            (
+                "title-state-icon answered",
+                DISCUSSION_ANSWERED_ICON,
+                "Answered discussion",
+            )
+        }
+        None => (
+            "title-state-icon open",
+            DISCUSSION_OPEN_ICON,
+            "Discussion state unavailable",
+        ),
     }
+}
+
+fn thread_supports_review_pill(subject_type: Option<&str>) -> bool {
+    // Review badges/actions only make sense for PR-backed threads.
+    matches!(subject_type, Some("PullRequest"))
 }
 
 fn merge_queue_state_label(state: &str) -> &'static str {
@@ -572,6 +605,22 @@ mod tests {
         let (_, _, label) = thread_state_data(Some("Discussion"), Some("OPEN"), None, false, true);
 
         assert_eq!(label, "Answered discussion");
+    }
+
+    #[test]
+    fn thread_state_data_marks_closed_answered_discussions_as_closed() {
+        let (_, _, label) =
+            thread_state_data(Some("Discussion"), Some("CLOSED"), None, false, true);
+
+        assert_eq!(label, "Closed discussion");
+    }
+
+    #[test]
+    fn thread_state_data_marks_unknown_discussion_states_as_unavailable() {
+        let (_, _, label) =
+            thread_state_data(Some("Discussion"), Some("ARCHIVED"), None, false, false);
+
+        assert_eq!(label, "Discussion state unavailable");
     }
 
     #[test]
