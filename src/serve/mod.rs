@@ -48,6 +48,7 @@ pub struct PollStats {
 enum PollMode {
     Startup,
     Regular,
+    DashboardRefresh,
 }
 
 #[derive(Debug, Clone, Copy)]

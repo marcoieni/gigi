@@ -141,7 +141,7 @@ impl AppState {
     }
 
     async fn poll_once_from_dashboard(&self) -> anyhow::Result<PollStats> {
-        let result = self.poll_once_with_mode(PollMode::Regular).await;
+        let result = self.poll_once_with_mode(PollMode::DashboardRefresh).await;
         match &result {
             Ok(stats) => {
                 print_poll_stats("✅ Dashboard refresh complete:", stats);
