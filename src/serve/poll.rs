@@ -25,7 +25,7 @@ pub(super) async fn poll_once_async(
     mode: PollMode,
 ) -> anyhow::Result<PollStats> {
     let notification_cursor = db.get_kv("last_notifications_fetch")?;
-    let notification_fetch_since = fetch_since_for_mode(mode, notification_cursor.as_deref());
+    let notification_fetch_since = notification_cursor.as_deref();
     let notification_now = poll_cursor_now();
     println!(
         "🔎 Notification fetch: mode={mode:?} stored_since={} request_since={}",
@@ -52,7 +52,7 @@ pub(super) async fn poll_once_async(
     );
 
     let authored_pr_cursor = db.get_kv("last_authored_prs_fetch")?;
-    let authored_pr_fetch_since = fetch_since_for_mode(mode, authored_pr_cursor.as_deref());
+    let authored_pr_fetch_since = authored_pr_cursor.as_deref();
     let authored_pr_now = poll_cursor_now();
     println!(
         "🔎 Authored PR fetch: mode={mode:?} stored_since={} request_since={}",
@@ -208,13 +208,6 @@ pub(super) async fn poll_once_async(
 
 fn poll_cursor_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
-}
-
-pub(super) fn fetch_since_for_mode(mode: PollMode, stored_cursor: Option<&str>) -> Option<&str> {
-    match mode {
-        PollMode::DashboardRefresh => None,
-        PollMode::Startup | PollMode::Regular => stored_cursor,
-    }
 }
 
 fn newest_seen_timestamp<I, S>(fetched_updated_ats: I) -> Option<i64>

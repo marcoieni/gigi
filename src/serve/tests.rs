@@ -1,8 +1,8 @@
 use super::{
     helpers::{dashboard_browser_url, parse_repository_name},
     poll::{
-        apply_startup_review_limits, fetch_since_for_mode, next_incremental_cursor,
-        should_review_pr, sync_authored_pr_threads,
+        apply_startup_review_limits, next_incremental_cursor, should_review_pr,
+        sync_authored_pr_threads,
     },
     time::parse_github_timestamp_to_unix_seconds,
     *,
@@ -316,18 +316,6 @@ fn sync_authored_pr_threads_preserves_done_entries() {
 
     let threads = db.list_dashboard_threads().unwrap();
     assert!(threads.is_empty());
-}
-
-#[test]
-fn dashboard_refresh_ignores_stored_fetch_cursor() {
-    assert_eq!(
-        fetch_since_for_mode(PollMode::DashboardRefresh, Some("2026-01-10T10:00:00Z")),
-        None
-    );
-    assert_eq!(
-        fetch_since_for_mode(PollMode::Regular, Some("2026-01-10T10:00:00Z")),
-        Some("2026-01-10T10:00:00Z")
-    );
 }
 
 #[test]
