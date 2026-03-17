@@ -10,7 +10,7 @@ use crate::{
 };
 
 use super::{
-    PollMode, PollStats, StartupReviewLimits, StartupReviewSelection,
+    PollMode, PollOutcome, PollStats, StartupReviewLimits, StartupReviewSelection,
     time::{parse_github_timestamp_to_unix_seconds, unix_ts},
 };
 
@@ -21,9 +21,8 @@ const FETCH_CURSOR_OVERLAP_SECS: i64 = 300;
 pub(super) async fn poll_once_async(
     db: &Db,
     config: &AppConfig,
-    work_dir: &Utf8Path,
     mode: PollMode,
-) -> anyhow::Result<PollStats> {
+) -> anyhow::Result<PollOutcome> {
     let notification_cursor = db.get_kv("last_notifications_fetch")?;
     let notification_fetch_since = notification_cursor.as_deref();
     let notification_now = poll_cursor_now();
@@ -136,7 +135,6 @@ pub(super) async fn poll_once_async(
         max_prs: config.initial_review_max_prs,
     });
 
-    let mut reviews_run = 0_usize;
     let mut review_candidates = Vec::new();
 
     for pr_url in &pr_urls {
@@ -181,28 +179,18 @@ pub(super) async fn poll_once_async(
         db.set_pr_review_marker(&details.pr_url, &details.head_sha, &details.updated_at)?;
     }
 
-    for details in selection.to_review {
-        println!("🔍 Auto-review started: {}", details.pr_url);
-        match run_review_for_details(db, config, work_dir, &details).await {
-            Ok(()) => {
-                println!("✅ Auto-review finished: {}", details.pr_url);
-                reviews_run += 1;
-            }
-            Err(err) => {
-                eprintln!("❌ Auto-review failed: {}: {err}", details.pr_url);
-            }
-        }
-    }
-
     db.set_kv("last_notifications_fetch", &next_notification_cursor)?;
     db.set_kv("last_authored_prs_fetch", &next_authored_pr_cursor)?;
 
-    Ok(PollStats {
-        notifications_fetched: notifications.len(),
-        authored_prs_fetched: authored_prs.len(),
-        prs_seen: pr_urls.len(),
-        reviews_run,
-        participants: batch.participants,
+    Ok(PollOutcome {
+        stats: PollStats {
+            notifications_fetched: notifications.len(),
+            authored_prs_fetched: authored_prs.len(),
+            prs_seen: pr_urls.len(),
+            reviews_queued: 0,
+            participants: batch.participants,
+        },
+        review_candidates: selection.to_review,
     })
 }
 
@@ -411,7 +399,7 @@ pub(super) async fn run_review_for_details(
     config: &AppConfig,
     work_dir: &Utf8Path,
     details: &github::PrDetails,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let agent = config.ai.provider.as_agent();
     let review_result = review::generate_review(
         work_dir,
@@ -420,6 +408,15 @@ pub(super) async fn run_review_for_details(
         config.ai.model.as_deref(),
     )
     .await?;
+
+    if !review_target_is_current(db.get_pr(&details.pr_url)?.as_ref(), details) {
+        let message = format!(
+            "Skipped storing review for {} because the PR changed while the review was running.",
+            details.pr_url
+        );
+        db.insert_sync_event(&details.pr_url, "warning", &message)?;
+        return Ok(false);
+    }
 
     db.insert_review(&db::NewReview {
         pr_url: details.pr_url.clone(),
@@ -430,7 +427,7 @@ pub(super) async fn run_review_for_details(
     })?;
     db.set_pr_review_marker(&details.pr_url, &details.head_sha, &details.updated_at)?;
 
-    Ok(())
+    Ok(true)
 }
 
 pub(crate) fn apply_startup_review_limits(
@@ -506,6 +503,17 @@ pub(crate) fn should_review_pr(
     }
 }
 
+pub(crate) fn review_target_is_current(
+    stored: Option<&db::StoredPr>,
+    details: &github::PrDetails,
+) -> bool {
+    let Some(stored) = stored else {
+        return false;
+    };
+
+    stored.head_sha == details.head_sha && stored.updated_at == details.updated_at
+}
+
 async fn handle_closed_pr_branch_sync(db: &Db, details: &github::PrDetails) -> anyhow::Result<()> {
     let repo_dir = github::local_repo_dir(&details.owner, &details.repo)?;
     if !repo_dir.exists() || !repo_dir.join(".git").exists() {
@@ -540,7 +548,10 @@ async fn handle_closed_pr_branch_sync(db: &Db, details: &github::PrDetails) -> a
 
 pub(super) fn print_poll_stats(prefix: &str, stats: &PollStats) {
     println!(
-        "{prefix} notifications={}, my_prs={}, prs={}, reviews={}",
-        stats.notifications_fetched, stats.authored_prs_fetched, stats.prs_seen, stats.reviews_run
+        "{prefix} notifications={}, my_prs={}, prs={}, reviews_queued={}",
+        stats.notifications_fetched,
+        stats.authored_prs_fetched,
+        stats.prs_seen,
+        stats.reviews_queued
     );
 }

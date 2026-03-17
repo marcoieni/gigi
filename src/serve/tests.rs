@@ -1,8 +1,8 @@
 use super::{
     helpers::{dashboard_browser_url, parse_repository_name},
     poll::{
-        apply_startup_review_limits, next_incremental_cursor, should_review_pr,
-        sync_authored_pr_threads,
+        apply_startup_review_limits, next_incremental_cursor, review_target_is_current,
+        should_review_pr, sync_authored_pr_threads,
     },
     time::parse_github_timestamp_to_unix_seconds,
     *,
@@ -109,6 +109,90 @@ fn manual_mode_skips_after_first_review() {
         Some(&stored),
         &details
     ));
+}
+
+#[test]
+fn review_target_must_match_current_pr_head() {
+    let details = github::PrDetails {
+        pr_url: "u".to_string(),
+        owner: "o".to_string(),
+        repo: "r".to_string(),
+        number: 1,
+        state: "OPEN".to_string(),
+        merge_queue_state: None,
+        title: "t".to_string(),
+        head_ref: "feat".to_string(),
+        base_ref: "main".to_string(),
+        head_sha: "sha1".to_string(),
+        created_at: "2025-12-31T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+        is_archived: false,
+        author_login: None,
+        head_repo_owner: None,
+        head_repo_name: None,
+        is_cross_repository: false,
+        is_draft: false,
+    };
+    let stored = db::StoredPr {
+        pr_url: "u".to_string(),
+        owner: "o".to_string(),
+        repo: "r".to_string(),
+        number: 1,
+        state: "OPEN".to_string(),
+        merge_queue_state: None,
+        title: "t".to_string(),
+        head_ref: "feat".to_string(),
+        base_ref: "main".to_string(),
+        head_sha: "sha2".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+        is_archived: false,
+        last_reviewed_sha: None,
+        last_reviewed_updated_at: None,
+    };
+
+    assert!(!review_target_is_current(Some(&stored), &details));
+}
+
+#[test]
+fn review_target_accepts_matching_pr_head() {
+    let details = github::PrDetails {
+        pr_url: "u".to_string(),
+        owner: "o".to_string(),
+        repo: "r".to_string(),
+        number: 1,
+        state: "OPEN".to_string(),
+        merge_queue_state: None,
+        title: "t".to_string(),
+        head_ref: "feat".to_string(),
+        base_ref: "main".to_string(),
+        head_sha: "sha1".to_string(),
+        created_at: "2025-12-31T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+        is_archived: false,
+        author_login: None,
+        head_repo_owner: None,
+        head_repo_name: None,
+        is_cross_repository: false,
+        is_draft: false,
+    };
+    let stored = db::StoredPr {
+        pr_url: "u".to_string(),
+        owner: "o".to_string(),
+        repo: "r".to_string(),
+        number: 1,
+        state: "OPEN".to_string(),
+        merge_queue_state: None,
+        title: "t".to_string(),
+        head_ref: "feat".to_string(),
+        base_ref: "main".to_string(),
+        head_sha: "sha1".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+        is_archived: false,
+        last_reviewed_sha: None,
+        last_reviewed_updated_at: None,
+    };
+
+    assert!(review_target_is_current(Some(&stored), &details));
 }
 
 #[test]

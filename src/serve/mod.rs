@@ -13,6 +13,7 @@ use std::{
 
 use camino::Utf8PathBuf;
 use serde::Serialize;
+use tokio::sync::{Mutex, mpsc};
 
 use crate::{config::AppConfig, db::Db, github};
 
@@ -26,6 +27,8 @@ pub struct AppState {
     pub poll_lock: Arc<tokio::sync::Mutex<()>>,
     pub dashboard_refresh_in_flight: Arc<AtomicBool>,
     pub dashboard_updates: tokio::sync::watch::Sender<DashboardUpdate>,
+    pub review_tx: mpsc::UnboundedSender<ReviewJob>,
+    pub queued_review_keys: Arc<Mutex<std::collections::HashSet<ReviewJobKey>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,9 +42,15 @@ pub struct PollStats {
     pub notifications_fetched: usize,
     pub authored_prs_fetched: usize,
     pub prs_seen: usize,
-    pub reviews_run: usize,
+    pub reviews_queued: usize,
     #[serde(skip_serializing)]
     pub participants: HashMap<String, Vec<github::Participant>>,
+}
+
+#[derive(Debug)]
+struct PollOutcome {
+    stats: PollStats,
+    review_candidates: Vec<github::PrDetails>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +70,28 @@ struct StartupReviewLimits {
 struct StartupReviewSelection {
     to_review: Vec<github::PrDetails>,
     to_mark_baseline: Vec<github::PrDetails>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReviewJob {
+    pub details: github::PrDetails,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ReviewJobKey {
+    pub pr_url: String,
+    pub head_sha: String,
+    pub updated_at: String,
+}
+
+impl ReviewJobKey {
+    fn from_details(details: &github::PrDetails) -> Self {
+        Self {
+            pr_url: details.pr_url.clone(),
+            head_sha: details.head_sha.clone(),
+            updated_at: details.updated_at.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

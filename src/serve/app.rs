@@ -12,7 +12,7 @@ use camino::Utf8PathBuf;
 use crate::{config, github, launcher, review, web};
 
 use super::{
-    AppState, DashboardUpdate, MarkDoneRequest, PollMode, PollStats,
+    AppState, DashboardUpdate, MarkDoneRequest, PollMode, PollStats, ReviewJob, ReviewJobKey,
     helpers::{dashboard_browser_url, describe_open_target, resolve_open_target_repo},
     poll::{poll_once_async, print_poll_stats, run_review_for_details, upsert_pr_from_details},
 };
@@ -32,6 +32,7 @@ pub async fn run_serve() -> anyhow::Result<()> {
         version: 0,
         message: "Waiting for the first poll...".to_string(),
     });
+    let (review_tx, review_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let state = Arc::new(AppState {
         db,
@@ -40,6 +41,13 @@ pub async fn run_serve() -> anyhow::Result<()> {
         poll_lock: Arc::new(tokio::sync::Mutex::new(())),
         dashboard_refresh_in_flight: Arc::new(AtomicBool::new(false)),
         dashboard_updates,
+        review_tx,
+        queued_review_keys: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+    });
+
+    let review_state = Arc::clone(&state);
+    let review_handle = tokio::spawn(async move {
+        review_state.run_review_worker(review_rx).await;
     });
 
     let browser_url = dashboard_browser_url(&cfg);
@@ -78,11 +86,13 @@ pub async fn run_serve() -> anyhow::Result<()> {
         server_result = web::run_server(state, &cfg) => {
             poll_handle.abort();
             startup_handle.abort();
+            review_handle.abort();
             server_result
         }
         signal_result = tokio::signal::ctrl_c() => {
             poll_handle.abort();
             startup_handle.abort();
+            review_handle.abort();
             match signal_result {
                 Ok(()) => {
                     println!("\n🛑 Received Ctrl+C, shutting down gigi serve...");
@@ -146,11 +156,11 @@ impl AppState {
             Ok(stats) => {
                 print_poll_stats("✅ Dashboard refresh complete:", stats);
                 self.notify_dashboard(format!(
-                    "Refresh complete: notifications={}, my_prs={}, prs={}, reviews={}",
+                    "Refresh complete: notifications={}, my_prs={}, prs={}, reviews_queued={}",
                     stats.notifications_fetched,
                     stats.authored_prs_fetched,
                     stats.prs_seen,
-                    stats.reviews_run
+                    stats.reviews_queued
                 ));
             }
             Err(err) => {
@@ -165,11 +175,11 @@ impl AppState {
         let result = self.poll_once_with_mode(PollMode::Startup).await;
         match &result {
             Ok(stats) => self.notify_dashboard(format!(
-                "Initial poll complete: notifications={}, my_prs={}, prs={}, reviews={}",
+                "Initial poll complete: notifications={}, my_prs={}, prs={}, reviews_queued={}",
                 stats.notifications_fetched,
                 stats.authored_prs_fetched,
                 stats.prs_seen,
-                stats.reviews_run
+                stats.reviews_queued
             )),
             Err(err) => self.notify_dashboard(format!("Initial poll failed: {err}")),
         }
@@ -180,11 +190,11 @@ impl AppState {
         let result = self.poll_once_with_mode(PollMode::Regular).await;
         match &result {
             Ok(stats) => self.notify_dashboard(format!(
-                "Background poll complete: notifications={}, my_prs={}, prs={}, reviews={}",
+                "Background poll complete: notifications={}, my_prs={}, prs={}, reviews_queued={}",
                 stats.notifications_fetched,
                 stats.authored_prs_fetched,
                 stats.prs_seen,
-                stats.reviews_run
+                stats.reviews_queued
             )),
             Err(err) => self.notify_dashboard(format!("Background poll failed: {err}")),
         }
@@ -192,15 +202,24 @@ impl AppState {
     }
 
     async fn poll_once_with_mode(&self, mode: PollMode) -> anyhow::Result<PollStats> {
-        let _guard = self.poll_lock.lock().await;
+        let outcome = {
+            let _guard = self.poll_lock.lock().await;
+            poll_once_async(&self.db, &self.config, mode)
+                .await
+                .context("polling cycle failed")?
+        };
 
-        let stats = poll_once_async(&self.db, &self.config, &self.work_dir, mode)
-            .await
-            .context("polling cycle failed")?;
+        let mut stats = outcome.stats;
 
         for (pr_url, participants) in &stats.participants {
             if let Err(err) = self.db.upsert_pr_participants(pr_url, participants) {
                 eprintln!("⚠️ Failed to persist participants for {pr_url}: {err}");
+            }
+        }
+
+        for details in outcome.review_candidates {
+            if self.enqueue_review_job(details).await? {
+                stats.reviews_queued += 1;
             }
         }
 
@@ -274,29 +293,72 @@ impl AppState {
     }
 
     pub async fn run_review(&self, owner: String, repo: String, number: i64) -> anyhow::Result<()> {
-        let _guard = self.poll_lock.lock().await;
         let pr_url = format!("https://github.com/{owner}/{repo}/pull/{number}");
-        println!("🔍 Review started: {pr_url}");
+        println!("🔍 Review requested: {pr_url}");
 
-        let result = async {
-            let details = github::fetch_pr_details(&pr_url).await?;
-            upsert_pr_from_details(&self.db, &details)?;
-            run_review_for_details(&self.db, &self.config, &self.work_dir, &details).await
-        }
-        .await;
+        let details = github::fetch_pr_details(&pr_url).await?;
+        upsert_pr_from_details(&self.db, &details)?;
 
-        match &result {
-            Ok(()) => {
-                println!("✅ Review finished: {pr_url}");
-                self.notify_dashboard(format!("Review finished for {pr_url}"));
-            }
-            Err(err) => {
-                eprintln!("❌ Review failed: {pr_url}: {err}");
-                self.notify_dashboard(format!("Review failed for {pr_url}: {err}"));
-            }
+        if self.enqueue_review_job(details).await? {
+            self.notify_dashboard(format!("Review queued for {pr_url}"));
+        } else {
+            self.notify_dashboard(format!("Review already queued for {pr_url}"));
         }
 
-        result
+        Ok(())
+    }
+
+    async fn enqueue_review_job(&self, details: github::PrDetails) -> anyhow::Result<bool> {
+        let key = ReviewJobKey::from_details(&details);
+        {
+            let mut queued = self.queued_review_keys.lock().await;
+            if !queued.insert(key.clone()) {
+                return Ok(false);
+            }
+        }
+
+        if self.review_tx.send(ReviewJob { details }).is_err() {
+            let mut queued = self.queued_review_keys.lock().await;
+            queued.remove(&key);
+            anyhow::bail!("Review worker is not available");
+        }
+
+        Ok(true)
+    }
+
+    async fn run_review_worker(
+        self: Arc<Self>,
+        mut review_rx: tokio::sync::mpsc::UnboundedReceiver<ReviewJob>,
+    ) {
+        while let Some(job) = review_rx.recv().await {
+            let key = ReviewJobKey::from_details(&job.details);
+            let pr_url = job.details.pr_url.clone();
+            println!("🔍 Review worker started: {pr_url}");
+            self.notify_dashboard(format!("Reviewing {pr_url}..."));
+
+            let result =
+                run_review_for_details(&self.db, &self.config, &self.work_dir, &job.details).await;
+
+            {
+                let mut queued = self.queued_review_keys.lock().await;
+                queued.remove(&key);
+            }
+
+            match result {
+                Ok(true) => {
+                    println!("✅ Review worker finished: {pr_url}");
+                    self.notify_dashboard(format!("Review finished for {pr_url}"));
+                }
+                Ok(false) => {
+                    println!("⏭️ Review worker skipped stale result: {pr_url}");
+                    self.notify_dashboard(format!("Skipped stale review for {pr_url}"));
+                }
+                Err(err) => {
+                    eprintln!("❌ Review worker failed: {pr_url}: {err}");
+                    self.notify_dashboard(format!("Review failed for {pr_url}: {err}"));
+                }
+            }
+        }
     }
 
     pub async fn open_in_vscode(

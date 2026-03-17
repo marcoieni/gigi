@@ -189,7 +189,7 @@ async fn run_review(
         .run_review(owner, repo, number)
         .await
         .map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(StatusCode::OK)
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn refresh(
