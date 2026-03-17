@@ -36,8 +36,9 @@ impl Db {
                 r#"
                 INSERT INTO threads (
                     thread_key, github_thread_id, source, repository, subject_type, subject_title,
-                    subject_url, issue_state, reason, pr_url, unread, done, updated_at, is_draft, last_seen_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                    subject_url, issue_state, discussion_answered, reason, pr_url, unread, done,
+                    updated_at, is_draft, last_seen_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
                 ON CONFLICT(thread_key) DO UPDATE SET
                     github_thread_id = excluded.github_thread_id,
                     source = excluded.source,
@@ -46,6 +47,7 @@ impl Db {
                     subject_title = excluded.subject_title,
                     subject_url = excluded.subject_url,
                     issue_state = excluded.issue_state,
+                    discussion_answered = excluded.discussion_answered,
                     reason = excluded.reason,
                     pr_url = excluded.pr_url,
                     unread = excluded.unread,
@@ -63,6 +65,7 @@ impl Db {
                     row.subject_title,
                     row.subject_url,
                     row.issue_state,
+                    row.discussion_answered.map(bool_to_int),
                     row.reason,
                     row.pr_url,
                     bool_to_int(row.unread),

@@ -14,7 +14,9 @@ pub struct NotificationThread {
     pub subject_url: Option<String>,
     pub pr_url: Option<String>,
     pub issue_api_url: Option<String>,
+    pub discussion_api_url: Option<String>,
     pub issue_state: Option<String>,
+    pub discussion_answered: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +85,10 @@ pub struct BatchFetchResult {
     pub pr_details: HashMap<String, PrDetails>,
     /// Maps issue API URL to uppercase state string.
     pub issue_states: HashMap<String, String>,
+    /// Maps discussion API URL to uppercase state string.
+    pub discussion_states: HashMap<String, String>,
+    /// Maps discussion API URL to whether the discussion has an accepted answer.
+    pub discussion_answers: HashMap<String, bool>,
     /// Maps PR URL to the list of participants (for avatar display).
     pub participants: HashMap<String, Vec<Participant>>,
 }

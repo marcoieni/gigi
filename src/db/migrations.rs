@@ -14,6 +14,7 @@ pub(super) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
             subject_title TEXT NOT NULL,
             subject_url TEXT,
             issue_state TEXT,
+            discussion_answered INTEGER,
             reason TEXT,
             pr_url TEXT,
             unread INTEGER NOT NULL,
@@ -108,6 +109,7 @@ pub(super) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
     add_column_if_missing(conn, "prs", "is_draft", "INTEGER NOT NULL DEFAULT 0")?;
     add_column_if_missing(conn, "prs", "merge_queue_state", "TEXT")?;
     add_column_if_missing(conn, "threads", "issue_state", "TEXT")?;
+    add_column_if_missing(conn, "threads", "discussion_answered", "INTEGER")?;
     add_column_if_missing(conn, "threads", "is_draft", "INTEGER NOT NULL DEFAULT 0")?;
     add_column_if_missing(
         conn,

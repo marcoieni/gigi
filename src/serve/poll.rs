@@ -47,13 +47,21 @@ pub(super) async fn poll_once_async(
         .iter()
         .filter_map(|notification| notification.issue_api_url.clone())
         .collect();
+    let discussion_api_urls: Vec<String> = notifications
+        .iter()
+        .filter_map(|notification| notification.discussion_api_url.clone())
+        .collect();
 
     let pr_url_list: Vec<String> = pr_urls.iter().cloned().collect();
-    let batch = github::fetch_batch(&pr_url_list, &issue_api_urls).await?;
+    let batch = github::fetch_batch(&pr_url_list, &issue_api_urls, &discussion_api_urls).await?;
 
     for notification in &mut notifications {
         if let Some(api_url) = &notification.issue_api_url {
             notification.issue_state = batch.issue_states.get(api_url).cloned();
+        }
+        if let Some(api_url) = &notification.discussion_api_url {
+            notification.issue_state = batch.discussion_states.get(api_url).cloned();
+            notification.discussion_answered = batch.discussion_answers.get(api_url).copied();
         }
     }
 
@@ -68,6 +76,7 @@ pub(super) async fn poll_once_async(
             subject_title: notification.subject_title.clone(),
             subject_url: notification.subject_url.clone(),
             issue_state: notification.issue_state.clone(),
+            discussion_answered: notification.discussion_answered,
             reason: notification.reason.clone(),
             pr_url: notification.pr_url.clone(),
             unread: notification.unread,
@@ -194,6 +203,7 @@ pub(crate) fn sync_authored_pr_threads(
             subject_title: authored.title.clone(),
             subject_url: Some(authored.pr_url.clone()),
             issue_state: None,
+            discussion_answered: None,
             reason: Some("authored".to_string()),
             pr_url: Some(authored.pr_url.clone()),
             unread: false,

@@ -5,9 +5,9 @@ use leptos::prelude::*;
 use crate::{
     db::{DashboardThread, DashboardThreadFilters},
     icons::{
-        CHECKMARK_ICON, ISSUE_CLOSED_ICON, ISSUE_OPEN_ICON, MAIL_ICON, MY_PR_ICON,
-        NOTIFICATION_ICON, PR_CLOSED_ICON, PR_DRAFT_ICON, PR_MERGED_ICON, PR_OPEN_ICON,
-        PR_QUEUED_ICON, REFRESH_ICON, TERMINAL_ICON, VSCODE_ICON,
+        CHECKMARK_ICON, DISCUSSION_ANSWERED_ICON, DISCUSSION_OPEN_ICON, ISSUE_CLOSED_ICON,
+        ISSUE_OPEN_ICON, MAIL_ICON, MY_PR_ICON, NOTIFICATION_ICON, PR_CLOSED_ICON, PR_DRAFT_ICON,
+        PR_MERGED_ICON, PR_OPEN_ICON, PR_QUEUED_ICON, REFRESH_ICON, TERMINAL_ICON, VSCODE_ICON,
     },
 };
 
@@ -234,6 +234,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
     let can_review =
         thread.pr_owner.is_some() && thread.pr_repo.is_some() && thread.pr_number.is_some();
     let can_fix = can_review && thread.latest_requires_code_changes == Some(true);
+    let is_pull_request = thread.subject_type.as_deref() == Some("PullRequest");
     let fix_action_for_modal = can_fix.then(|| fix_action_path(&thread));
     let mark_authored_pr = thread.sources.iter().any(|source| source == "my_pr");
     let review_action = review_action_path(&thread);
@@ -242,6 +243,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
         thread.pr_state.as_deref().or(thread.issue_state.as_deref()),
         thread.pr_merge_queue_state.as_deref(),
         thread.is_draft,
+        thread.discussion_answered.unwrap_or(false),
     );
 
     view! {
@@ -286,7 +288,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
             </div>
 
             <div class="row">
-                {if thread.subject_type.as_deref() == Some("Issue") {
+                {if !is_pull_request {
                     ().into_any()
                 } else if let Some(review) = review_content {
                     let fix_attr = fix_action_for_modal.clone();
@@ -425,12 +427,28 @@ fn thread_state_data(
     state: Option<&str>,
     merge_queue_state: Option<&str>,
     is_draft: bool,
+    discussion_answered: bool,
 ) -> (&'static str, &'static str, &'static str) {
     match state {
         Some("MERGED") => ("title-state-icon merged", PR_MERGED_ICON, "Merged"),
+        _ if subject_type == Some("Discussion") && discussion_answered => (
+            "title-state-icon answered",
+            DISCUSSION_ANSWERED_ICON,
+            "Answered discussion",
+        ),
+        Some("CLOSED") if subject_type == Some("Discussion") => (
+            "title-state-icon closed",
+            ISSUE_CLOSED_ICON,
+            "Closed discussion",
+        ),
         Some("CLOSED") if subject_type == Some("Issue") => {
             ("title-state-icon closed", ISSUE_CLOSED_ICON, "Closed issue")
         }
+        Some("OPEN") if subject_type == Some("Discussion") => (
+            "title-state-icon open",
+            DISCUSSION_OPEN_ICON,
+            "Open discussion",
+        ),
         Some("CLOSED") => ("title-state-icon closed", PR_CLOSED_ICON, "Closed"),
         Some("OPEN") if subject_type == Some("Issue") => {
             ("title-state-icon open", ISSUE_OPEN_ICON, "Open issue")
@@ -439,6 +457,11 @@ fn thread_state_data(
             "title-state-icon queued",
             PR_QUEUED_ICON,
             merge_queue_state_label(merge_queue_state.unwrap_or_default()),
+        ),
+        _ if subject_type == Some("Discussion") => (
+            "title-state-icon open",
+            DISCUSSION_OPEN_ICON,
+            "Open discussion",
         ),
         _ if is_draft => ("title-state-icon draft", PR_DRAFT_ICON, "Draft"),
         _ => ("title-state-icon open", PR_OPEN_ICON, "Open"),
@@ -497,6 +520,7 @@ mod tests {
             subject_title: "subject".to_string(),
             subject_url: None,
             issue_state: None,
+            discussion_answered: None,
             reason: None,
             pr_url: None,
             unread: false,
@@ -532,9 +556,60 @@ mod tests {
 
     #[test]
     fn thread_state_data_marks_open_prs_in_merge_queue_as_queued() {
-        let (_, _, label) =
-            thread_state_data(Some("PullRequest"), Some("OPEN"), Some("QUEUED"), false);
+        let (_, _, label) = thread_state_data(
+            Some("PullRequest"),
+            Some("OPEN"),
+            Some("QUEUED"),
+            false,
+            false,
+        );
 
         assert_eq!(label, "Queued");
+    }
+
+    #[test]
+    fn thread_state_data_marks_answered_discussions() {
+        let (_, _, label) = thread_state_data(Some("Discussion"), Some("OPEN"), None, false, true);
+
+        assert_eq!(label, "Answered discussion");
+    }
+
+    #[test]
+    fn render_fragment_hides_review_pill_for_discussions() {
+        let html = render_fragment(DashboardSnapshot {
+            filters: DashboardThreadFilters::default(),
+            threads: vec![DashboardThread {
+                thread_key: "notif:discussion-1".to_string(),
+                github_thread_id: Some("1".to_string()),
+                sources: vec!["notification".to_string()],
+                repository: "a/b".to_string(),
+                pr_owner: None,
+                pr_repo: None,
+                pr_number: None,
+                subject_type: Some("Discussion".to_string()),
+                subject_title: "Discussion".to_string(),
+                subject_url: Some("https://github.com/a/b/discussions/1".to_string()),
+                issue_state: Some("OPEN".to_string()),
+                discussion_answered: Some(false),
+                reason: Some("mention".to_string()),
+                pr_url: None,
+                unread: true,
+                done: false,
+                updated_at: "2026-01-02T00:00:00Z".to_string(),
+                latest_requires_code_changes: None,
+                pr_state: None,
+                pr_merge_queue_state: None,
+                latest_review_content_md: None,
+                latest_review_created_at: None,
+                latest_review_provider: None,
+                is_draft: false,
+                participants: Vec::new(),
+            }],
+            available_repositories: vec!["a/b".to_string()],
+            status_message: "ok".to_string(),
+        });
+
+        assert!(!html.contains("No review"));
+        assert!(html.contains("Open discussion"));
     }
 }

@@ -156,6 +156,13 @@ mod tests {
     }
 
     #[test]
+    fn converts_api_discussion_url() {
+        let discussion =
+            api_url_to_html_url("https://api.github.com/repos/o/r/discussions/123").unwrap();
+        assert_eq!(discussion, "https://github.com/o/r/discussions/123");
+    }
+
+    #[test]
     fn leaves_html_url_unchanged() {
         let issue = api_url_to_html_url("https://github.com/o/r/issues/123").unwrap();
         assert_eq!(issue, "https://github.com/o/r/issues/123");

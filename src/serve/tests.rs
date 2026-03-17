@@ -257,6 +257,7 @@ fn sync_authored_pr_threads_removes_stale_entries() {
         subject_title: "stale".to_string(),
         subject_url: Some(stale_pr_url.clone()),
         issue_state: None,
+        discussion_answered: None,
         reason: Some("authored".to_string()),
         pr_url: Some(stale_pr_url.clone()),
         unread: false,

@@ -94,6 +94,10 @@ pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Vec<Noti
                 Some("Issue") => raw_subject_url.clone(),
                 _ => None,
             };
+            let discussion_api_url = match subject_type.as_deref() {
+                Some("Discussion") => raw_subject_url.clone(),
+                _ => None,
+            };
             let subject_url = raw_subject_url
                 .as_deref()
                 .and_then(api_url_to_html_url)
@@ -110,7 +114,9 @@ pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Vec<Noti
                 subject_url,
                 pr_url,
                 issue_api_url,
+                discussion_api_url,
                 issue_state: None,
+                discussion_answered: None,
             });
         }
     }
@@ -240,7 +246,7 @@ pub async fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
         "https://github.com/{}/{}/pull/{}",
         parsed.owner, parsed.repo, parsed.number
     );
-    let batch = fetch_batch(std::slice::from_ref(&canonical_pr_url), &[]).await?;
+    let batch = fetch_batch(std::slice::from_ref(&canonical_pr_url), &[], &[]).await?;
     batch
         .pr_details
         .into_values()
@@ -256,6 +262,12 @@ struct IssueRef {
     number: u64,
 }
 
+struct DiscussionRef {
+    owner: String,
+    repo: String,
+    number: u64,
+}
+
 fn parse_issue_api_url(api_url: &str) -> Option<IssueRef> {
     let path = api_url
         .strip_prefix("https://api.github.com/repos/")
@@ -264,6 +276,22 @@ fn parse_issue_api_url(api_url: &str) -> Option<IssueRef> {
     if parts.len() >= 4 && parts[2] == "issues" {
         let number: u64 = parts[3].parse().ok()?;
         return Some(IssueRef {
+            owner: parts[0].to_string(),
+            repo: parts[1].to_string(),
+            number,
+        });
+    }
+    None
+}
+
+fn parse_discussion_api_url(api_url: &str) -> Option<DiscussionRef> {
+    let path = api_url
+        .strip_prefix("https://api.github.com/repos/")
+        .or_else(|| api_url.strip_prefix("repos/"))?;
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() >= 4 && parts[2] == "discussions" {
+        let number: u64 = parts[3].parse().ok()?;
+        return Some(DiscussionRef {
             owner: parts[0].to_string(),
             repo: parts[1].to_string(),
             number,
@@ -378,8 +406,9 @@ const GRAPHQL_BATCH_CHUNK_SIZE: usize = 25;
 pub async fn fetch_batch(
     pr_urls: &[String],
     issue_api_urls: &[String],
+    discussion_api_urls: &[String],
 ) -> anyhow::Result<BatchFetchResult> {
-    if pr_urls.is_empty() && issue_api_urls.is_empty() {
+    if pr_urls.is_empty() && issue_api_urls.is_empty() && discussion_api_urls.is_empty() {
         return Ok(BatchFetchResult::default());
     }
 
@@ -407,6 +436,20 @@ pub async fn fetch_batch(
         }
     }
 
+    let mut discussion_refs: Vec<(DiscussionRef, String)> = Vec::new();
+    let mut seen_discussions = std::collections::HashSet::new();
+    for url in discussion_api_urls {
+        if let Some(discussion) = parse_discussion_api_url(url) {
+            let key = format!(
+                "{}/{}/{}",
+                discussion.owner, discussion.repo, discussion.number
+            );
+            if seen_discussions.insert(key) {
+                discussion_refs.push((discussion, url.clone()));
+            }
+        }
+    }
+
     let mut result = BatchFetchResult::default();
 
     // Process in chunks to avoid GitHub GraphQL resource limits.
@@ -414,20 +457,32 @@ pub async fn fetch_batch(
         pr_refs.chunks(GRAPHQL_BATCH_CHUNK_SIZE).collect();
     let issue_chunks: Vec<&[(IssueRef, String)]> =
         issue_refs.chunks(GRAPHQL_BATCH_CHUNK_SIZE).collect();
-    let total_chunks = pr_chunks.len().max(issue_chunks.len());
+    let discussion_chunks: Vec<&[(DiscussionRef, String)]> =
+        discussion_refs.chunks(GRAPHQL_BATCH_CHUNK_SIZE).collect();
+    let total_chunks = pr_chunks
+        .len()
+        .max(issue_chunks.len())
+        .max(discussion_chunks.len());
 
     for chunk_idx in 0..total_chunks {
         let pr_chunk = pr_chunks.get(chunk_idx).copied().unwrap_or(&[]);
         let issue_chunk = issue_chunks.get(chunk_idx).copied().unwrap_or(&[]);
+        let discussion_chunk = discussion_chunks.get(chunk_idx).copied().unwrap_or(&[]);
 
-        if pr_chunk.is_empty() && issue_chunk.is_empty() {
+        if pr_chunk.is_empty() && issue_chunk.is_empty() && discussion_chunk.is_empty() {
             continue;
         }
 
-        let chunk_result = fetch_batch_chunk(pr_chunk, issue_chunk).await?;
+        let chunk_result = fetch_batch_chunk(pr_chunk, issue_chunk, discussion_chunk).await?;
 
         result.pr_details.extend(chunk_result.pr_details);
         result.issue_states.extend(chunk_result.issue_states);
+        result
+            .discussion_states
+            .extend(chunk_result.discussion_states);
+        result
+            .discussion_answers
+            .extend(chunk_result.discussion_answers);
         result.participants.extend(chunk_result.participants);
     }
 
@@ -438,6 +493,7 @@ pub async fn fetch_batch(
 async fn fetch_batch_chunk(
     pr_chunk: &[(String, String, u64, String)],
     issue_chunk: &[(IssueRef, String)],
+    discussion_chunk: &[(DiscussionRef, String)],
 ) -> anyhow::Result<BatchFetchResult> {
     let pr_fields = "number title state isDraft isInMergeQueue mergeQueueEntry { state } headRefName headRefOid baseRefName \
                      createdAt updatedAt author { login avatarUrl } \
@@ -481,6 +537,33 @@ async fn fetch_batch_chunk(
                 issue(number: {}) {{ {issue_fields} }} \
             }}",
             issue.owner, issue.repo, issue.number
+        )?;
+    }
+
+    let discussion_fields = "state \
+                             isAnswered \
+                             answerChosenAt \
+                             author { login avatarUrl } \
+                             comments(last: 30) { \
+                               nodes { \
+                                 createdAt \
+                                 author { login avatarUrl } \
+                                 replies(last: 10) { \
+                                   nodes { \
+                                     createdAt \
+                                     author { login avatarUrl } \
+                                   } \
+                                 } \
+                               } \
+                             }";
+
+    for (index, (discussion, _)) in discussion_chunk.iter().enumerate() {
+        write!(
+            query,
+            " discussion{index}: repository(owner: \"{}\", name: \"{}\") {{ \
+                discussion(number: {}) {{ {discussion_fields} }} \
+            }}",
+            discussion.owner, discussion.repo, discussion.number
         )?;
     }
 
@@ -705,6 +788,85 @@ async fn fetch_batch_chunk(
         }
     }
 
+    for (index, (discussion, api_url)) in discussion_chunk.iter().enumerate() {
+        let alias = format!("discussion{index}");
+        let Some(repo_val) = data.get(&alias) else {
+            continue;
+        };
+        let Some(discussion_val) = repo_val.get("discussion") else {
+            continue;
+        };
+        if discussion_val.is_null() {
+            continue;
+        }
+
+        if let Some(state) = discussion_val.get("state").and_then(Value::as_str) {
+            result
+                .discussion_states
+                .insert(api_url.clone(), state.to_ascii_uppercase());
+        }
+
+        if let Some(answered) = discussion_val.get("isAnswered").and_then(Value::as_bool) {
+            result.discussion_answers.insert(api_url.clone(), answered);
+        }
+
+        let html_url = format!(
+            "https://github.com/{}/{}/discussions/{}",
+            discussion.owner, discussion.repo, discussion.number
+        );
+
+        let mut participants = Vec::new();
+        let activity_map = extract_discussion_participant_activity(discussion_val);
+
+        for (login, (ts, avatar_url)) in &activity_map {
+            if let Some(avatar_url) = avatar_url {
+                participants.push(Participant {
+                    login: login.clone(),
+                    avatar_url: avatar_url.clone(),
+                    last_activity_at: Some(ts.clone()),
+                });
+            }
+        }
+
+        if let Some(author) = discussion_val.get("author")
+            && let (Some(login), Some(avatar_url)) = (
+                author.get("login").and_then(Value::as_str),
+                author.get("avatarUrl").and_then(Value::as_str),
+            )
+            && !participants
+                .iter()
+                .any(|participant| participant.login == login)
+        {
+            let last_activity_at =
+                activity_map
+                    .get(login)
+                    .map(|(ts, _)| ts.clone())
+                    .or_else(|| {
+                        discussion_val
+                            .get("answerChosenAt")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string)
+                    });
+            participants.push(Participant {
+                login: login.to_string(),
+                avatar_url: avatar_url.to_string(),
+                last_activity_at,
+            });
+        }
+
+        participants.sort_by(|left, right| {
+            right
+                .last_activity_at
+                .as_deref()
+                .cmp(&left.last_activity_at.as_deref())
+                .then_with(|| left.login.cmp(&right.login))
+        });
+
+        if !participants.is_empty() {
+            result.participants.insert(html_url, participants);
+        }
+    }
+
     Ok(result)
 }
 
@@ -769,6 +931,65 @@ fn extract_participant_activity(pr_val: &Value) -> HashMap<String, (String, Opti
     }
 
     activity
+}
+
+fn extract_discussion_participant_activity(
+    discussion_val: &Value,
+) -> HashMap<String, (String, Option<String>)> {
+    let mut activity: HashMap<String, (String, Option<String>)> = HashMap::new();
+
+    let Some(comments) = discussion_val
+        .get("comments")
+        .and_then(|value| value.get("nodes"))
+        .and_then(Value::as_array)
+    else {
+        return activity;
+    };
+
+    for comment in comments {
+        record_discussion_author_activity(&mut activity, comment);
+
+        let Some(replies) = comment
+            .get("replies")
+            .and_then(|value| value.get("nodes"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+
+        for reply in replies {
+            record_discussion_author_activity(&mut activity, reply);
+        }
+    }
+
+    activity
+}
+
+fn record_discussion_author_activity(
+    activity: &mut HashMap<String, (String, Option<String>)>,
+    comment: &Value,
+) {
+    let author = comment.get("author");
+    let login = author
+        .and_then(|value| value.get("login"))
+        .and_then(Value::as_str);
+    let timestamp = comment.get("createdAt").and_then(Value::as_str);
+    let avatar_url = author
+        .and_then(|value| value.get("avatarUrl"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+
+    if let (Some(login), Some(timestamp)) = (login, timestamp) {
+        let entry = activity
+            .entry(login.to_string())
+            .or_insert_with(|| (String::new(), avatar_url.clone()));
+        if entry.0.is_empty() || timestamp > entry.0.as_str() {
+            entry.0 = timestamp.to_string();
+        }
+        if entry.1.is_none() {
+            entry.1 = avatar_url;
+        }
+    }
 }
 
 pub async fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {
