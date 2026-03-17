@@ -6,7 +6,10 @@ mod time;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, atomic::AtomicBool},
+};
 
 use camino::Utf8PathBuf;
 use serde::Serialize;
@@ -21,6 +24,7 @@ pub struct AppState {
     pub config: AppConfig,
     pub work_dir: Utf8PathBuf,
     pub poll_lock: Arc<tokio::sync::Mutex<()>>,
+    pub dashboard_refresh_in_flight: Arc<AtomicBool>,
     pub dashboard_updates: tokio::sync::watch::Sender<DashboardUpdate>,
 }
 
