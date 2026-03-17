@@ -50,26 +50,47 @@ function setButtonPending(button, isPending) {
   }
 
   const isIcon = button.classList.contains("icon-btn");
+  const usesSpinner = isIcon || button.dataset.loadingMode === "spinner";
 
   if (!button.dataset.label) {
     button.dataset.label = button.textContent.trim();
   }
 
-  if (isIcon && !button.dataset.svgBackup) {
-    const svg = button.querySelector("svg");
-    if (svg) {
-      button.dataset.svgBackup = svg.outerHTML;
-    }
+  if (usesSpinner && !button.dataset.contentBackup) {
+    button.dataset.contentBackup = button.innerHTML;
+  }
+
+  if (!button.dataset.ariaLabelBackup) {
+    button.dataset.ariaLabelBackup = button.getAttribute("aria-label") ?? "__missing__";
+  }
+
+  if (!button.dataset.minWidthBackup) {
+    button.dataset.minWidthBackup = button.style.minWidth;
   }
 
   button.disabled = isPending;
   button.classList.toggle("loading", isPending);
 
-  if (isIcon) {
+  if (usesSpinner) {
     if (isPending) {
-      button.innerHTML = '<span class="spinner"></span>';
-    } else if (button.dataset.svgBackup) {
-      button.innerHTML = button.dataset.svgBackup;
+      button.style.minWidth = `${Math.ceil(button.getBoundingClientRect().width)}px`;
+      button.innerHTML = '<span class="spinner" aria-hidden="true"></span>';
+      button.setAttribute(
+        "aria-label",
+        button.dataset.loadingLabel || button.dataset.label || "Working..."
+      );
+    } else {
+      if (button.dataset.contentBackup) {
+        button.innerHTML = button.dataset.contentBackup;
+      }
+
+      button.style.minWidth = button.dataset.minWidthBackup;
+
+      if (button.dataset.ariaLabelBackup === "__missing__") {
+        button.removeAttribute("aria-label");
+      } else {
+        button.setAttribute("aria-label", button.dataset.ariaLabelBackup);
+      }
     }
   } else {
     button.textContent = isPending

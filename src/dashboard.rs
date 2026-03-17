@@ -308,7 +308,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                 {if can_review {
                     view! {
                         <form action=review_action method="post" data-async-form>
-                            <button class="btn" type="submit" data-loading-label="Reviewing...">"Review"</button>
+                            <button class="btn" type="submit" data-loading-label="Reviewing..." data-loading-mode="spinner">"Review"</button>
                         </form>
                     }.into_any()
                 } else {

@@ -79,6 +79,11 @@ body {
   position: relative;
 }
 
+.btn.loading.icon-btn,
+.btn.loading[data-loading-mode="spinner"] {
+  justify-content: center;
+}
+
 .status {
   font-size: 14px;
   color: var(--muted);
