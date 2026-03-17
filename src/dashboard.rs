@@ -32,6 +32,7 @@ pub fn render_page(snapshot: &DashboardSnapshot) -> String {
             </head>
             <body>
                 <DashboardRoot snapshot=snapshot.clone() />
+                <script src="/app.js"></script>
             </body>
         </html>
     }

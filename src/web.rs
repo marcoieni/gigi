@@ -1,13 +1,16 @@
+use std::convert::Infallible;
+
 use std::collections::HashMap;
 
 use axum::{
     Form, Router,
     extract::{Path as AxumPath, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Redirect, Response, Sse, sse::Event, sse::KeepAlive},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use tokio_stream::{StreamExt as _, wrappers::WatchStream};
 
 use crate::{
     config::AppConfig,
@@ -19,6 +22,7 @@ use crate::{
 pub async fn run_server(state: std::sync::Arc<AppState>, config: &AppConfig) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(dashboard_page))
+        .route("/dashboard/events", get(dashboard_events))
         .route("/dashboard/actions/filters", post(update_dashboard_filters))
         .route("/dashboard/actions/repo-filter", post(update_repo_filter))
         .route(
@@ -38,6 +42,7 @@ pub async fn run_server(state: std::sync::Arc<AppState>, config: &AppConfig) -> 
             post(run_fix),
         )
         .route("/styles.css", get(stylesheet))
+        .route("/app.js", get(script))
         .with_state(state);
 
     let listener =
@@ -61,6 +66,20 @@ async fn dashboard_page(
 ) -> Result<Html<String>, ApiErrorResponse> {
     let snapshot = load_snapshot(&state).map_err(|err| ApiErrorResponse::internal(&err))?;
     Ok(Html(dashboard::render_page(&snapshot)))
+}
+
+async fn dashboard_events(
+    State(state): State<std::sync::Arc<AppState>>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let stream = WatchStream::new(state.subscribe_dashboard_updates())
+        .skip(1)
+        .map(|update| {
+            Ok(Event::default()
+                .event("update")
+                .data(update.version.to_string()))
+        });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 async fn update_dashboard_filters(
@@ -219,6 +238,11 @@ async fn open_terminal(
 async fn stylesheet() -> impl IntoResponse {
     let headers = static_asset_headers("text/css; charset=utf-8");
     (headers, include_str!("../assets/dashboard/styles.css"))
+}
+
+async fn script() -> impl IntoResponse {
+    let headers = static_asset_headers("application/javascript; charset=utf-8");
+    (headers, include_str!("../assets/dashboard/app.js"))
 }
 
 fn static_asset_headers(content_type: &'static str) -> HeaderMap {
