@@ -14,23 +14,66 @@ use super::{
     time::{parse_github_timestamp_to_unix_seconds, unix_ts},
 };
 
+// Keep a small overlap between polls so late-arriving GitHub updates are re-fetched
+// instead of being skipped forever by a strict "since last seen timestamp" cursor.
+const FETCH_CURSOR_OVERLAP_SECS: i64 = 300;
+
 pub(super) async fn poll_once_async(
     db: &Db,
     config: &AppConfig,
     work_dir: &Utf8Path,
     mode: PollMode,
 ) -> anyhow::Result<PollStats> {
-    let since = db.get_kv("last_notifications_fetch")?;
-    let now = poll_cursor_now();
-    let mut notifications = github::fetch_notifications(since.as_deref()).await?;
-    db.set_kv("last_notifications_fetch", &now)?;
+    let notification_cursor = db.get_kv("last_notifications_fetch")?;
+    let notification_fetch_since = notification_cursor.as_deref();
+    let notification_now = poll_cursor_now();
+    println!(
+        "🔎 Notification fetch: mode={mode:?} stored_since={} request_since={}",
+        notification_cursor.as_deref().unwrap_or("<none>"),
+        notification_fetch_since.unwrap_or("<none>")
+    );
+    let mut notifications = github::fetch_notifications(notification_fetch_since).await?;
     print_fetched_notifications(&notifications);
+    let newest_notification_ts = newest_seen_timestamp(
+        notifications
+            .iter()
+            .map(|notification| notification.updated_at.as_str()),
+    );
+    let next_notification_cursor = next_incremental_cursor(
+        notification_cursor.as_deref(),
+        newest_notification_ts,
+        &notification_now,
+    );
+    println!(
+        "⏱️ Cursor advance [notifications]: previous={} newest_seen={} next={}",
+        notification_cursor.as_deref().unwrap_or("<none>"),
+        format_cursor_debug_value(newest_notification_ts),
+        next_notification_cursor
+    );
 
-    let authored_prs_since = db.get_kv("last_authored_prs_fetch")?;
-    let authored_prs_now = poll_cursor_now();
-    let authored_prs = github::fetch_authored_prs(authored_prs_since.as_deref()).await?;
-    db.set_kv("last_authored_prs_fetch", &authored_prs_now)?;
+    let authored_pr_cursor = db.get_kv("last_authored_prs_fetch")?;
+    let authored_pr_fetch_since = authored_pr_cursor.as_deref();
+    let authored_pr_now = poll_cursor_now();
+    println!(
+        "🔎 Authored PR fetch: mode={mode:?} stored_since={} request_since={}",
+        authored_pr_cursor.as_deref().unwrap_or("<none>"),
+        authored_pr_fetch_since.unwrap_or("<none>")
+    );
+    let authored_prs = github::fetch_authored_prs(authored_pr_fetch_since).await?;
     print_fetched_authored_prs(&authored_prs);
+    let newest_authored_pr_ts =
+        newest_seen_timestamp(authored_prs.iter().map(|pr| pr.updated_at.as_str()));
+    let next_authored_pr_cursor = next_incremental_cursor(
+        authored_pr_cursor.as_deref(),
+        newest_authored_pr_ts,
+        &authored_pr_now,
+    );
+    println!(
+        "⏱️ Cursor advance [authored_prs]: previous={} newest_seen={} next={}",
+        authored_pr_cursor.as_deref().unwrap_or("<none>"),
+        format_cursor_debug_value(newest_authored_pr_ts),
+        next_authored_pr_cursor
+    );
     sync_authored_pr_threads(db, &authored_prs)?;
 
     let mut pr_urls = HashSet::new();
@@ -151,6 +194,9 @@ pub(super) async fn poll_once_async(
         }
     }
 
+    db.set_kv("last_notifications_fetch", &next_notification_cursor)?;
+    db.set_kv("last_authored_prs_fetch", &next_authored_pr_cursor)?;
+
     Ok(PollStats {
         notifications_fetched: notifications.len(),
         authored_prs_fetched: authored_prs.len(),
@@ -162,6 +208,56 @@ pub(super) async fn poll_once_async(
 
 fn poll_cursor_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+fn newest_seen_timestamp<I, S>(fetched_updated_ats: I) -> Option<i64>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    fetched_updated_ats
+        .into_iter()
+        .filter_map(|updated_at| parse_github_timestamp_to_unix_seconds(updated_at.as_ref()))
+        .max()
+}
+
+/// Advances the incremental fetch cursor without trusting wall-clock `now`.
+///
+/// We base the next cursor on the newest `updated_at` returned by GitHub, then move it
+/// slightly backward by `FETCH_CURSOR_OVERLAP_SECS`. That overlap makes incremental
+/// polling resilient to delayed indexing or responses that arrive out of order while
+/// still preventing the cursor from moving backwards.
+pub(super) fn next_incremental_cursor(
+    previous_cursor: Option<&str>,
+    newest_seen_ts: Option<i64>,
+    fallback_now: &str,
+) -> String {
+    let previous_ts = previous_cursor.and_then(parse_github_timestamp_to_unix_seconds);
+    let fallback_now_ts = parse_github_timestamp_to_unix_seconds(fallback_now);
+
+    let next_ts = if let Some(newest_seen_ts) = newest_seen_ts {
+        let candidate = newest_seen_ts.saturating_sub(FETCH_CURSOR_OVERLAP_SECS);
+        previous_ts.map_or(candidate, |previous_ts| previous_ts.max(candidate))
+    } else if let Some(previous_ts) = previous_ts {
+        previous_ts
+    } else if let Some(fallback_now_ts) = fallback_now_ts {
+        fallback_now_ts.saturating_sub(FETCH_CURSOR_OVERLAP_SECS)
+    } else {
+        return fallback_now.to_string();
+    };
+
+    unix_seconds_to_github_timestamp(next_ts).unwrap_or_else(|| fallback_now.to_string())
+}
+
+fn unix_seconds_to_github_timestamp(unix_seconds: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp(unix_seconds, 0)
+        .map(|ts| ts.to_rfc3339_opts(SecondsFormat::Secs, true))
+}
+
+fn format_cursor_debug_value(unix_seconds: Option<i64>) -> String {
+    unix_seconds
+        .and_then(unix_seconds_to_github_timestamp)
+        .unwrap_or_else(|| "<none>".to_string())
 }
 
 /// Keeps the `threads` table in sync with the user's authored PRs.

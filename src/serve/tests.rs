@@ -1,6 +1,9 @@
 use super::{
     helpers::{dashboard_browser_url, parse_repository_name},
-    poll::{apply_startup_review_limits, should_review_pr, sync_authored_pr_threads},
+    poll::{
+        apply_startup_review_limits, next_incremental_cursor, should_review_pr,
+        sync_authored_pr_threads,
+    },
     time::parse_github_timestamp_to_unix_seconds,
     *,
 };
@@ -313,4 +316,40 @@ fn sync_authored_pr_threads_preserves_done_entries() {
 
     let threads = db.list_dashboard_threads().unwrap();
     assert!(threads.is_empty());
+}
+
+#[test]
+fn next_incremental_cursor_uses_overlap_from_newest_seen_timestamp() {
+    let next = next_incremental_cursor(
+        Some("2026-01-10T10:00:00Z"),
+        parse_github_timestamp_to_unix_seconds("2026-01-10T10:08:00Z"),
+        "2026-01-10T10:09:00Z",
+    );
+
+    assert_eq!(next, "2026-01-10T10:03:00Z");
+}
+
+#[test]
+fn next_incremental_cursor_does_not_move_backwards_when_results_are_stale() {
+    let next = next_incremental_cursor(
+        Some("2026-01-10T10:00:00Z"),
+        parse_github_timestamp_to_unix_seconds("2026-01-10T10:02:00Z"),
+        "2026-01-10T10:09:00Z",
+    );
+
+    assert_eq!(next, "2026-01-10T10:00:00Z");
+}
+
+#[test]
+fn next_incremental_cursor_keeps_previous_cursor_when_no_results_arrive() {
+    let next = next_incremental_cursor(Some("2026-01-10T10:00:00Z"), None, "2026-01-10T10:09:00Z");
+
+    assert_eq!(next, "2026-01-10T10:00:00Z");
+}
+
+#[test]
+fn next_incremental_cursor_bootstraps_from_now_when_cursor_is_missing() {
+    let next = next_incremental_cursor(None, None, "2026-01-10T10:09:00Z");
+
+    assert_eq!(next, "2026-01-10T10:04:00Z");
 }
