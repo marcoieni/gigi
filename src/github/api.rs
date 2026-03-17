@@ -540,7 +540,8 @@ async fn fetch_batch_chunk(
         )?;
     }
 
-    let discussion_fields = "state \
+    let discussion_fields = "closed \
+                             stateReason \
                              isAnswered \
                              answerChosenAt \
                              author { login avatarUrl } \
@@ -800,10 +801,12 @@ async fn fetch_batch_chunk(
             continue;
         }
 
-        if let Some(state) = discussion_val.get("state").and_then(Value::as_str) {
-            result
-                .discussion_states
-                .insert(api_url.clone(), state.to_ascii_uppercase());
+        let discussion_state = discussion_val
+            .get("closed")
+            .and_then(Value::as_bool)
+            .map(|closed| if closed { "CLOSED" } else { "OPEN" }.to_string());
+        if let Some(state) = discussion_state {
+            result.discussion_states.insert(api_url.clone(), state);
         }
 
         if let Some(answered) = discussion_val.get("isAnswered").and_then(Value::as_bool) {
