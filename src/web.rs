@@ -239,7 +239,7 @@ fn static_asset_headers(content_type: &'static str) -> HeaderMap {
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     headers.insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=300, must-revalidate"),
+        HeaderValue::from_static("no-store, no-cache, must-revalidate"),
     );
     headers
 }
@@ -344,7 +344,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn static_asset_headers_include_cache_control() {
+    fn static_asset_headers_disable_caching() {
         let headers = static_asset_headers("text/css; charset=utf-8");
 
         assert_eq!(
@@ -354,7 +354,7 @@ mod tests {
         assert_eq!(
             headers.get(header::CACHE_CONTROL),
             Some(&HeaderValue::from_static(
-                "public, max-age=300, must-revalidate"
+                "no-store, no-cache, must-revalidate"
             ))
         );
     }
