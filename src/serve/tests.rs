@@ -1,8 +1,8 @@
 use super::{
     helpers::{dashboard_browser_url, parse_repository_name},
     poll::{
-        apply_startup_review_limits, next_incremental_cursor, should_review_pr,
-        sync_authored_pr_threads,
+        apply_startup_review_limits, fetch_since_for_mode, next_incremental_cursor,
+        should_review_pr, sync_authored_pr_threads,
     },
     time::parse_github_timestamp_to_unix_seconds,
     *,
@@ -319,10 +319,22 @@ fn sync_authored_pr_threads_preserves_done_entries() {
 }
 
 #[test]
+fn dashboard_refresh_ignores_stored_fetch_cursor() {
+    assert_eq!(
+        fetch_since_for_mode(PollMode::DashboardRefresh, Some("2026-01-10T10:00:00Z")),
+        None
+    );
+    assert_eq!(
+        fetch_since_for_mode(PollMode::Regular, Some("2026-01-10T10:00:00Z")),
+        Some("2026-01-10T10:00:00Z")
+    );
+}
+
+#[test]
 fn next_incremental_cursor_uses_overlap_from_newest_seen_timestamp() {
     let next = next_incremental_cursor(
         Some("2026-01-10T10:00:00Z"),
-        ["2026-01-10T10:08:00Z", "2026-01-10T10:04:00Z"],
+        parse_github_timestamp_to_unix_seconds("2026-01-10T10:08:00Z"),
         "2026-01-10T10:09:00Z",
     );
 
@@ -333,7 +345,7 @@ fn next_incremental_cursor_uses_overlap_from_newest_seen_timestamp() {
 fn next_incremental_cursor_does_not_move_backwards_when_results_are_stale() {
     let next = next_incremental_cursor(
         Some("2026-01-10T10:00:00Z"),
-        ["2026-01-10T10:02:00Z"],
+        parse_github_timestamp_to_unix_seconds("2026-01-10T10:02:00Z"),
         "2026-01-10T10:09:00Z",
     );
 
@@ -342,18 +354,14 @@ fn next_incremental_cursor_does_not_move_backwards_when_results_are_stale() {
 
 #[test]
 fn next_incremental_cursor_keeps_previous_cursor_when_no_results_arrive() {
-    let next = next_incremental_cursor(
-        Some("2026-01-10T10:00:00Z"),
-        std::iter::empty::<&str>(),
-        "2026-01-10T10:09:00Z",
-    );
+    let next = next_incremental_cursor(Some("2026-01-10T10:00:00Z"), None, "2026-01-10T10:09:00Z");
 
     assert_eq!(next, "2026-01-10T10:00:00Z");
 }
 
 #[test]
 fn next_incremental_cursor_bootstraps_from_now_when_cursor_is_missing() {
-    let next = next_incremental_cursor(None, std::iter::empty::<&str>(), "2026-01-10T10:09:00Z");
+    let next = next_incremental_cursor(None, None, "2026-01-10T10:09:00Z");
 
     assert_eq!(next, "2026-01-10T10:04:00Z");
 }

@@ -34,20 +34,21 @@ pub(super) async fn poll_once_async(
     );
     let mut notifications = github::fetch_notifications(notification_fetch_since).await?;
     print_fetched_notifications(&notifications);
+    let newest_notification_ts = newest_seen_timestamp(
+        notifications
+            .iter()
+            .map(|notification| notification.updated_at.as_str()),
+    );
     let next_notification_cursor = next_incremental_cursor(
         notification_cursor.as_deref(),
-        notifications
-            .iter()
-            .map(|notification| notification.updated_at.as_str()),
+        newest_notification_ts,
         &notification_now,
     );
-    print_cursor_advance(
-        "notifications",
-        notification_cursor.as_deref(),
-        notifications
-            .iter()
-            .map(|notification| notification.updated_at.as_str()),
-        &next_notification_cursor,
+    println!(
+        "⏱️ Cursor advance [notifications]: previous={} newest_seen={} next={}",
+        notification_cursor.as_deref().unwrap_or("<none>"),
+        format_cursor_debug_value(newest_notification_ts),
+        next_notification_cursor
     );
 
     let authored_pr_cursor = db.get_kv("last_authored_prs_fetch")?;
@@ -60,16 +61,18 @@ pub(super) async fn poll_once_async(
     );
     let authored_prs = github::fetch_authored_prs(authored_pr_fetch_since).await?;
     print_fetched_authored_prs(&authored_prs);
+    let newest_authored_pr_ts =
+        newest_seen_timestamp(authored_prs.iter().map(|pr| pr.updated_at.as_str()));
     let next_authored_pr_cursor = next_incremental_cursor(
         authored_pr_cursor.as_deref(),
-        authored_prs.iter().map(|pr| pr.updated_at.as_str()),
+        newest_authored_pr_ts,
         &authored_pr_now,
     );
-    print_cursor_advance(
-        "authored_prs",
-        authored_pr_cursor.as_deref(),
-        authored_prs.iter().map(|pr| pr.updated_at.as_str()),
-        &next_authored_pr_cursor,
+    println!(
+        "⏱️ Cursor advance [authored_prs]: previous={} newest_seen={} next={}",
+        authored_pr_cursor.as_deref().unwrap_or("<none>"),
+        format_cursor_debug_value(newest_authored_pr_ts),
+        next_authored_pr_cursor
     );
     sync_authored_pr_threads(db, &authored_prs)?;
 
@@ -207,11 +210,22 @@ fn poll_cursor_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-fn fetch_since_for_mode(mode: PollMode, stored_cursor: Option<&str>) -> Option<&str> {
+pub(super) fn fetch_since_for_mode(mode: PollMode, stored_cursor: Option<&str>) -> Option<&str> {
     match mode {
         PollMode::DashboardRefresh => None,
         PollMode::Startup | PollMode::Regular => stored_cursor,
     }
+}
+
+fn newest_seen_timestamp<I, S>(fetched_updated_ats: I) -> Option<i64>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    fetched_updated_ats
+        .into_iter()
+        .filter_map(|updated_at| parse_github_timestamp_to_unix_seconds(updated_at.as_ref()))
+        .max()
 }
 
 /// Advances the incremental fetch cursor without trusting wall-clock `now`.
@@ -220,20 +234,12 @@ fn fetch_since_for_mode(mode: PollMode, stored_cursor: Option<&str>) -> Option<&
 /// slightly backward by `FETCH_CURSOR_OVERLAP_SECS`. That overlap makes incremental
 /// polling resilient to delayed indexing or responses that arrive out of order while
 /// still preventing the cursor from moving backwards.
-pub(super) fn next_incremental_cursor<I, S>(
+pub(super) fn next_incremental_cursor(
     previous_cursor: Option<&str>,
-    fetched_updated_ats: I,
+    newest_seen_ts: Option<i64>,
     fallback_now: &str,
-) -> String
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
+) -> String {
     let previous_ts = previous_cursor.and_then(parse_github_timestamp_to_unix_seconds);
-    let newest_seen_ts = fetched_updated_ats
-        .into_iter()
-        .filter_map(|updated_at| parse_github_timestamp_to_unix_seconds(updated_at.as_ref()))
-        .max();
     let fallback_now_ts = parse_github_timestamp_to_unix_seconds(fallback_now);
 
     let next_ts = if let Some(newest_seen_ts) = newest_seen_ts {
@@ -255,27 +261,10 @@ fn unix_seconds_to_github_timestamp(unix_seconds: i64) -> Option<String> {
         .map(|ts| ts.to_rfc3339_opts(SecondsFormat::Secs, true))
 }
 
-fn print_cursor_advance<I, S>(
-    label: &str,
-    previous_cursor: Option<&str>,
-    fetched_updated_ats: I,
-    next_cursor: &str,
-) where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    let newest_seen = fetched_updated_ats
-        .into_iter()
-        .filter_map(|updated_at| parse_github_timestamp_to_unix_seconds(updated_at.as_ref()))
-        .max()
+fn format_cursor_debug_value(unix_seconds: Option<i64>) -> String {
+    unix_seconds
         .and_then(unix_seconds_to_github_timestamp)
-        .unwrap_or_else(|| "<none>".to_string());
-    println!(
-        "⏱️ Cursor advance [{label}]: previous={} newest_seen={} next={}",
-        previous_cursor.unwrap_or("<none>"),
-        newest_seen,
-        next_cursor
-    );
+        .unwrap_or_else(|| "<none>".to_string())
 }
 
 /// Keeps the `threads` table in sync with the user's authored PRs.
