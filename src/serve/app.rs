@@ -92,10 +92,6 @@ impl AppState {
         self.dashboard_updates.borrow().message.clone()
     }
 
-    pub fn subscribe_dashboard_updates(&self) -> tokio::sync::watch::Receiver<DashboardUpdate> {
-        self.dashboard_updates.subscribe()
-    }
-
     pub fn notify_dashboard(&self, message: impl Into<String>) {
         let next = {
             let current = self.dashboard_updates.borrow().clone();

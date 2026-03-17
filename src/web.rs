@@ -1,14 +1,13 @@
-use std::{collections::HashMap, convert::Infallible};
+use std::collections::HashMap;
 
 use axum::{
     Form, Router,
     extract::{Path as AxumPath, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
-    response::{Html, IntoResponse, Response, Sse, sse::Event, sse::KeepAlive},
+    response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use tokio_stream::{StreamExt as _, wrappers::WatchStream};
 
 use crate::{
     config::AppConfig,
@@ -20,8 +19,6 @@ use crate::{
 pub async fn run_server(state: std::sync::Arc<AppState>, config: &AppConfig) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(dashboard_page))
-        .route("/dashboard/fragment", get(dashboard_fragment))
-        .route("/dashboard/events", get(dashboard_events))
         .route("/dashboard/actions/filters", post(update_dashboard_filters))
         .route("/dashboard/actions/repo-filter", post(update_repo_filter))
         .route(
@@ -41,7 +38,6 @@ pub async fn run_server(state: std::sync::Arc<AppState>, config: &AppConfig) -> 
             post(run_fix),
         )
         .route("/styles.css", get(stylesheet))
-        .route("/app.js", get(script))
         .with_state(state);
 
     let listener =
@@ -67,171 +63,162 @@ async fn dashboard_page(
     Ok(Html(dashboard::render_page(&snapshot)))
 }
 
-async fn dashboard_fragment(
-    State(state): State<std::sync::Arc<AppState>>,
-) -> Result<Html<String>, ApiErrorResponse> {
-    let snapshot = load_snapshot(&state).map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(Html(dashboard::render_fragment(snapshot)))
-}
-
-async fn dashboard_events(
-    State(state): State<std::sync::Arc<AppState>>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
-    let stream = WatchStream::new(state.subscribe_dashboard_updates())
-        .skip(1)
-        .map(|update| {
-            Ok(Event::default()
-                .event("update")
-                .data(update.version.to_string()))
-        });
-
-    Sse::new(stream).keep_alive(KeepAlive::default())
-}
-
 async fn update_dashboard_filters(
     State(state): State<std::sync::Arc<AppState>>,
     Form(form): Form<DashboardFiltersForm>,
-) -> Result<StatusCode, ApiErrorResponse> {
-    let filters = form.into_filters();
-    state
-        .db
-        .set_dashboard_thread_filters(&filters)
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    state.notify_dashboard("Filters updated");
-    Ok(StatusCode::OK)
+) -> Redirect {
+    match state.db.dashboard_thread_filters() {
+        Ok(existing) => {
+            let filters = form.into_filters(existing.hidden_repositories);
+            if let Err(err) = state.db.set_dashboard_thread_filters(&filters) {
+                state.notify_dashboard(format!("Failed to update filters: {err}"));
+            } else {
+                state.notify_dashboard("Filters updated");
+            }
+        }
+        Err(err) => state.notify_dashboard(format!("Failed to load filters: {err}")),
+    }
+
+    redirect_home()
 }
 
 async fn update_repo_filter(
     State(state): State<std::sync::Arc<AppState>>,
     Form(form): Form<RepoFilterForm>,
-) -> Result<StatusCode, ApiErrorResponse> {
-    let all_repos = state
-        .db
-        .list_all_repositories()
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    let to_store = form.hidden_repositories(&all_repos);
-    state
-        .db
-        .set_repository_filter(&to_store)
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    state.notify_dashboard("Repository filter updated");
-    Ok(StatusCode::OK)
+) -> Redirect {
+    match state.db.list_all_repositories() {
+        Ok(all_repos) => {
+            let hidden_repositories = form.hidden_repositories(&all_repos);
+            if let Err(err) = state.db.set_repository_filter(&hidden_repositories) {
+                state.notify_dashboard(format!("Failed to update repository filter: {err}"));
+            } else {
+                state.notify_dashboard("Repository filter updated");
+            }
+        }
+        Err(err) => state.notify_dashboard(format!("Failed to load repositories: {err}")),
+    }
+
+    redirect_home()
 }
 
 async fn hide_repository(
     State(state): State<std::sync::Arc<AppState>>,
     Form(form): Form<HideRepositoryForm>,
-) -> Result<StatusCode, ApiErrorResponse> {
-    let all_repos = state
-        .db
-        .list_all_repositories()
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    if !all_repos.iter().any(|repo| repo == &form.repository) {
-        return Err(ApiErrorResponse(
-            StatusCode::BAD_REQUEST,
-            format!("Unknown repository: {}", form.repository),
-        ));
+) -> Redirect {
+    match state.db.list_all_repositories() {
+        Ok(all_repos) => {
+            if !all_repos.iter().any(|repo| repo == &form.repository) {
+                state.notify_dashboard(format!("Unknown repository: {}", form.repository));
+                return redirect_home();
+            }
+
+            match state.db.dashboard_thread_filters() {
+                Ok(filters) => {
+                    let mut hidden_repositories = filters.hidden_repositories;
+                    if !hidden_repositories
+                        .iter()
+                        .any(|repo| repo == &form.repository)
+                    {
+                        hidden_repositories.push(form.repository);
+                        hidden_repositories.sort();
+                    }
+
+                    if let Err(err) = state.db.set_repository_filter(&hidden_repositories) {
+                        state.notify_dashboard(format!("Failed to hide repository: {err}"));
+                    } else {
+                        state.notify_dashboard("Repository hidden");
+                    }
+                }
+                Err(err) => {
+                    state.notify_dashboard(format!("Failed to load repository filter: {err}"));
+                }
+            }
+        }
+        Err(err) => state.notify_dashboard(format!("Failed to load repositories: {err}")),
     }
 
-    let mut hidden_repositories = state
-        .db
-        .dashboard_thread_filters()
-        .map_err(|err| ApiErrorResponse::internal(&err))?
-        .hidden_repositories;
-
-    if !hidden_repositories
-        .iter()
-        .any(|repo| repo == &form.repository)
-    {
-        hidden_repositories.push(form.repository);
-        hidden_repositories.sort();
-    }
-
-    state
-        .db
-        .set_repository_filter(&hidden_repositories)
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    state.notify_dashboard("Repository hidden");
-    Ok(StatusCode::OK)
+    redirect_home()
 }
 
 async fn mark_done(
     State(state): State<std::sync::Arc<AppState>>,
     Form(form): Form<MarkDoneForm>,
-) -> Result<StatusCode, ApiErrorResponse> {
-    state
+) -> Redirect {
+    if let Err(err) = state
         .mark_done(crate::serve::MarkDoneRequest {
             github_thread_id: form.github_thread_id,
             pr_url: form.pr_url,
             mark_authored_pr: form.mark_authored_pr,
         })
         .await
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(StatusCode::OK)
+    {
+        state.notify_dashboard(format!("Failed to mark item done: {err}"));
+    }
+
+    redirect_home()
 }
 
 async fn run_fix(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath((owner, repo, number)): AxumPath<(String, String, i64)>,
-) -> Result<StatusCode, ApiErrorResponse> {
-    state
-        .run_fix(owner, repo, number)
-        .await
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(StatusCode::OK)
+) -> Redirect {
+    if let Err(err) = state.run_fix(owner, repo, number).await {
+        state.notify_dashboard(format!("Failed to start fix: {err}"));
+    }
+
+    redirect_home()
 }
 
 async fn run_review(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath((owner, repo, number)): AxumPath<(String, String, i64)>,
-) -> Result<StatusCode, ApiErrorResponse> {
-    state
-        .run_review(owner, repo, number)
-        .await
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(StatusCode::OK)
+) -> Redirect {
+    if let Err(err) = state.run_review(owner, repo, number).await {
+        state.notify_dashboard(format!("Failed to start review: {err}"));
+    }
+
+    redirect_home()
 }
 
-async fn refresh(
-    State(state): State<std::sync::Arc<AppState>>,
-) -> Result<StatusCode, ApiErrorResponse> {
-    state
-        .poll_once_from_dashboard()
-        .await
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(StatusCode::OK)
+async fn refresh(State(state): State<std::sync::Arc<AppState>>) -> Redirect {
+    if let Err(err) = state.poll_once_from_dashboard().await {
+        state.notify_dashboard(format!("Failed to refresh dashboard: {err}"));
+    }
+
+    redirect_home()
 }
 
 async fn open_vscode(
     State(state): State<std::sync::Arc<AppState>>,
     Form(request): Form<OpenProjectRequest>,
-) -> Result<StatusCode, ApiErrorResponse> {
-    state
+) -> Redirect {
+    if let Err(err) = state
         .open_in_vscode(request.repository, request.pr_url)
         .await
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(StatusCode::OK)
+    {
+        state.notify_dashboard(format!("Failed to open VS Code: {err}"));
+    }
+
+    redirect_home()
 }
 
 async fn open_terminal(
     State(state): State<std::sync::Arc<AppState>>,
     Form(request): Form<OpenProjectRequest>,
-) -> Result<StatusCode, ApiErrorResponse> {
-    state
+) -> Redirect {
+    if let Err(err) = state
         .open_in_terminal(request.repository, request.pr_url)
         .await
-        .map_err(|err| ApiErrorResponse::internal(&err))?;
-    Ok(StatusCode::OK)
+    {
+        state.notify_dashboard(format!("Failed to open terminal: {err}"));
+    }
+
+    redirect_home()
 }
 
 async fn stylesheet() -> impl IntoResponse {
     let headers = static_asset_headers("text/css; charset=utf-8");
     (headers, include_str!("../assets/dashboard/styles.css"))
-}
-
-async fn script() -> impl IntoResponse {
-    let headers = static_asset_headers("application/javascript; charset=utf-8");
-    (headers, include_str!("../assets/dashboard/app.js"))
 }
 
 fn static_asset_headers(content_type: &'static str) -> HeaderMap {
@@ -262,6 +249,10 @@ fn load_snapshot(state: &AppState) -> anyhow::Result<DashboardSnapshot> {
     })
 }
 
+fn redirect_home() -> Redirect {
+    Redirect::to("/")
+}
+
 #[derive(Debug, Deserialize)]
 struct OpenProjectRequest {
     repository: String,
@@ -286,14 +277,14 @@ struct DashboardFiltersForm {
 }
 
 impl DashboardFiltersForm {
-    fn into_filters(self) -> DashboardThreadFilters {
+    fn into_filters(self, hidden_repositories: Vec<String>) -> DashboardThreadFilters {
         DashboardThreadFilters {
             show_notifications: self.show_notifications.is_some(),
             show_prs: self.show_prs.is_some(),
             show_done: self.show_done.is_some(),
             show_not_done: self.show_not_done.is_some(),
             group_by_repository: self.group_by_repository.is_some(),
-            hidden_repositories: Vec::new(),
+            hidden_repositories,
         }
     }
 }
@@ -308,7 +299,7 @@ impl RepoFilterForm {
     fn hidden_repositories(&self, all_repos: &[String]) -> Vec<String> {
         all_repos
             .iter()
-            .filter(|repo| !self.fields.contains_key(&format!("repo:{repo}")))
+            .filter(|repo| !self.fields.values().any(|value| value == *repo))
             .cloned()
             .collect()
     }
@@ -363,8 +354,8 @@ mod tests {
     fn repo_filter_form_returns_hidden_repositories() {
         let form = RepoFilterForm {
             fields: HashMap::from([
-                ("repo:a/b".to_string(), "on".to_string()),
-                ("repo:c/d".to_string(), "on".to_string()),
+                ("repo:0:a/b".to_string(), "a/b".to_string()),
+                ("repo:1:c/d".to_string(), "c/d".to_string()),
             ]),
         };
         let all_repos = vec!["a/b".to_string(), "c/d".to_string(), "e/f".to_string()];

@@ -29,24 +29,17 @@ pub fn render_page(snapshot: &DashboardSnapshot) -> String {
                 <title>"gigi dashboard"</title>
                 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎤</text></svg>" />
                 <link rel="stylesheet" href="/styles.css" />
-                <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" />
             </head>
             <body>
-                <div id="dashboard-root">{render_fragment_view(snapshot.clone())}</div>
-                <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
-                <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/markdown.min.js"></script>
-                <script src="/app.js"></script>
+                <DashboardRoot snapshot=snapshot.clone() />
             </body>
         </html>
     }
     .to_html()
 }
 
-pub fn render_fragment(snapshot: DashboardSnapshot) -> String {
-    render_fragment_view(snapshot).to_html()
-}
-
-fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
+#[component]
+fn DashboardRoot(snapshot: DashboardSnapshot) -> impl IntoView {
     let grouped = snapshot.filters.group_by_repository;
     let groups = grouped_threads(&snapshot.threads);
     let hidden_repos = snapshot.filters.hidden_repositories.clone();
@@ -57,9 +50,11 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
             <header class="header">
                 <h1>"gigi dashboard"</h1>
                 <div class="actions">
-                    <span id="status-text" class="status">{snapshot.status_message}</span>
-                    <form action="/dashboard/actions/refresh" method="post" data-async-form>
-                        <button class="btn icon-btn" type="submit" data-loading-label="Refreshing..." aria-label="Refresh" title="Refresh">{svg_icon(REFRESH_ICON)}</button>
+                    <span class="status">{snapshot.status_message}</span>
+                    <form action="/dashboard/actions/refresh" method="post">
+                        <button class="btn icon-btn" type="submit" aria-label="Refresh" title="Refresh">
+                            {svg_icon(REFRESH_ICON)}
+                        </button>
                     </form>
                     <a
                         class="btn icon-btn header-link"
@@ -74,22 +69,44 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                 </div>
             </header>
 
-            <div class="filters">
-                <form aria-label="Dashboard filters" action="/dashboard/actions/filters" method="post" data-async-form data-auto-submit-form class="filter-row">
-                    <fieldset class="filter-group">
-                        <legend>"Show"</legend>
-                        <FilterCheckbox name="show_notifications" label="Notifications" checked=snapshot.filters.show_notifications />
-                        <FilterCheckbox name="show_prs" label="PRs" checked=snapshot.filters.show_prs />
-                    </fieldset>
-                    <fieldset class="filter-group">
-                        <legend>"Status"</legend>
-                        <FilterCheckbox name="show_not_done" label="Not done" checked=snapshot.filters.show_not_done />
-                        <FilterCheckbox name="show_done" label="Done" checked=snapshot.filters.show_done />
-                    </fieldset>
-                    <fieldset class="filter-group">
-                        <legend>"Display"</legend>
-                        <FilterCheckbox name="group_by_repository" label="Group by repository" checked=snapshot.filters.group_by_repository />
-                    </fieldset>
+            <section class="filters">
+                <form action="/dashboard/actions/filters" method="post" onchange="this.requestSubmit()">
+                    <div class="filter-row">
+                        <fieldset class="filter-group">
+                            <legend>"Show"</legend>
+                            <FilterCheckbox
+                                name="show_notifications"
+                                label="Notifications"
+                                checked=snapshot.filters.show_notifications
+                            />
+                            <FilterCheckbox
+                                name="show_prs"
+                                label="PRs"
+                                checked=snapshot.filters.show_prs
+                            />
+                        </fieldset>
+                        <fieldset class="filter-group">
+                            <legend>"Status"</legend>
+                            <FilterCheckbox
+                                name="show_not_done"
+                                label="Not done"
+                                checked=snapshot.filters.show_not_done
+                            />
+                            <FilterCheckbox
+                                name="show_done"
+                                label="Done"
+                                checked=snapshot.filters.show_done
+                            />
+                        </fieldset>
+                        <fieldset class="filter-group">
+                            <legend>"Display"</legend>
+                            <FilterCheckbox
+                                name="group_by_repository"
+                                label="Group by repository"
+                                checked=snapshot.filters.group_by_repository
+                            />
+                        </fieldset>
+                    </div>
                 </form>
 
                 {if available_repos.is_empty() {
@@ -104,6 +121,7 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                     } else {
                         format!("{active_count}/{total_count}")
                     };
+
                     view! {
                         <details class="repo-dropdown">
                             <summary class="btn repo-dropdown-toggle">
@@ -111,60 +129,74 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                                 <span class="repo-badge">{badge_label}</span>
                             </summary>
                             <div class="repo-dropdown-panel">
-                                <form action="/dashboard/actions/repo-filter" method="post" data-async-form id="repo-filter-form">
-                                    {repos.into_iter().map(|repo| {
-                                        let checked = !hidden.contains(&repo);
-                                        let name = format!("repo:{repo}");
-                                        view! {
-                                            <label class="repo-dropdown-option">
-                                                <input type="checkbox" name=name checked=checked />
-                                                <span>{repo}</span>
-                                            </label>
-                                        }
-                                    }).collect::<Vec<_>>()}
+                                <form
+                                    action="/dashboard/actions/repo-filter"
+                                    method="post"
+                                    onchange="this.requestSubmit()"
+                                >
+                                    <div class="repo-filter-form">
+                                        {repos
+                                            .into_iter()
+                                            .enumerate()
+                                            .map(|(index, repo)| {
+                                                let checked = !hidden.contains(&repo);
+                                                let value = repo.clone();
+                                                let name = format!("repo:{index}:{repo}");
+                                                view! {
+                                                    <label class="repo-dropdown-option">
+                                                        <input type="checkbox" name=name value=value checked=checked />
+                                                        <span>{repo}</span>
+                                                    </label>
+                                                }
+                                            })
+                                            .collect::<Vec<_>>()}
+                                    </div>
                                 </form>
                             </div>
                         </details>
-                    }.into_any()
+                    }
+                        .into_any()
                 }}
-            </div>
+            </section>
 
             <section>
                 {if snapshot.threads.is_empty() {
-                    view! { <div class="threads"><article class="thread"><h3>"Nothing to review"</h3><p class="meta">"No cards match the current filters."</p></article></div> }.into_any()
+                    view! {
+                        <div class="threads">
+                            <article class="thread">
+                                <h3>"Nothing to review"</h3>
+                                <p class="meta">"No cards match the current filters."</p>
+                            </article>
+                        </div>
+                    }
+                        .into_any()
                 } else if grouped {
                     let available_repositories = snapshot.available_repositories.clone();
                     view! {
                         <div class="threads grouped">
-                            {groups.into_iter().map(|(repository, threads)| {
-                                let can_hide = available_repositories.len() > 1;
-                                view! { <RepositorySection repository threads can_hide /> }
-                            }).collect::<Vec<_>>()}
+                            {groups
+                                .into_iter()
+                                .map(|(repository, threads)| {
+                                    let can_hide = available_repositories.len() > 1;
+                                    view! { <RepositorySection repository threads can_hide /> }
+                                })
+                                .collect::<Vec<_>>()}
                         </div>
-                    }.into_any()
+                    }
+                        .into_any()
                 } else {
                     view! {
                         <div class="threads">
-                            {snapshot.threads.into_iter().map(|thread| view! { <ThreadCard thread /> }).collect::<Vec<_>>()}
+                            {snapshot
+                                .threads
+                                .into_iter()
+                                .map(|thread| view! { <ThreadCard thread /> })
+                                .collect::<Vec<_>>()}
                         </div>
-                    }.into_any()
+                    }
+                        .into_any()
                 }}
             </section>
-
-            <dialog id="review-modal">
-                <article>
-                    <header class="modal-head">
-                        <h2>"Review"</h2>
-                        <div class="modal-actions">
-                            <form id="fix-form" action="" method="post" data-async-form style="display:none">
-                                <button class="btn" type="submit" data-loading-label="Fixing...">"Fix"</button>
-                            </form>
-                            <button id="close-modal" class="btn" type="button">"Close"</button>
-                        </div>
-                    </header>
-                    <pre id="review-content"></pre>
-                </article>
-            </dialog>
         </main>
     }
 }
@@ -192,13 +224,15 @@ fn RepositorySection(
         <section class="repo-group">
             <header class="repo-group-header">
                 <h2 class="repo-group-title">
-                    <a class="thread-link repo-link" href=repo_link target="_blank" rel="noreferrer">{repository}</a>
+                    <a class="thread-link repo-link" href=repo_link target="_blank" rel="noreferrer">
+                        {repository}
+                    </a>
                 </h2>
                 {if can_hide {
                     view! {
-                        <form action="/dashboard/actions/repositories/hide" method="post" data-async-form>
+                        <form action="/dashboard/actions/repositories/hide" method="post">
                             <input type="hidden" name="repository" value=hide_repository />
-                            <button class="btn btn-subtle" type="submit" data-loading-label="Hiding...">"Hide"</button>
+                            <button class="btn btn-subtle" type="submit">"Hide"</button>
                         </form>
                     }
                         .into_any()
@@ -207,7 +241,10 @@ fn RepositorySection(
                 }}
             </header>
             <div class="threads">
-                {threads.into_iter().map(|thread| view! { <ThreadCard thread /> }).collect::<Vec<_>>()}
+                {threads
+                    .into_iter()
+                    .map(|thread| view! { <ThreadCard thread /> })
+                    .collect::<Vec<_>>()}
             </div>
         </section>
     }
@@ -215,11 +252,20 @@ fn RepositorySection(
 
 #[component]
 fn ThreadCard(thread: DashboardThread) -> impl IntoView {
+    let repository = thread.repository.clone();
+    let pr_url = thread.pr_url.clone();
+    let github_thread_id = thread.github_thread_id.clone();
+    let vscode_repository = repository.clone();
+    let terminal_repository = repository.clone();
+    let repo_link = format!("https://github.com/{repository}");
+    let vscode_pr_url = pr_url.clone();
+    let terminal_pr_url = pr_url.clone();
+    let done_pr_url = pr_url.clone();
     let destination = thread
         .subject_url
         .clone()
-        .or_else(|| thread.pr_url.clone())
-        .unwrap_or_else(|| format!("https://github.com/{}", thread.repository));
+        .or_else(|| pr_url.clone())
+        .unwrap_or_else(|| format!("https://github.com/{repository}"));
     let review_content = thread.latest_review_content_md.clone();
     let review_tone = match thread.latest_requires_code_changes {
         Some(true) => "unsafe",
@@ -231,12 +277,11 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
         Some(false) => "Safe",
         None => "No review",
     };
-    let can_review =
-        thread.pr_owner.is_some() && thread.pr_repo.is_some() && thread.pr_number.is_some();
-    let can_fix = can_review && thread.latest_requires_code_changes == Some(true);
-    let fix_action_for_modal = can_fix.then(|| fix_action_path(&thread));
-    let mark_authored_pr = thread.sources.iter().any(|source| source == "my_pr");
+    let review_target = review_target(&thread);
     let review_action = review_action_path(&thread);
+    let fix_action = fix_action_path(&thread);
+    let can_fix = review_target.is_some() && thread.latest_requires_code_changes == Some(true);
+    let mark_authored_pr = thread.sources.iter().any(|source| source == "my_pr");
     let (state_icon_class, state_icon_paths, state_icon_label) = thread_state_data(
         thread.subject_type.as_deref(),
         thread.pr_state.as_deref().or(thread.issue_state.as_deref()),
@@ -247,14 +292,29 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
     view! {
         <article class="thread">
             <h3>
-                <span class=state_icon_class aria-label=state_icon_label title=state_icon_label>{svg_icon(state_icon_paths)}</span>
-                <a class="thread-link" href=destination target="_blank" rel="noreferrer">{thread.subject_title.clone()}</a>
+                <span class=state_icon_class aria-label=state_icon_label title=state_icon_label>
+                    {svg_icon(state_icon_paths)}
+                </span>
+                <a class="thread-link" href=destination target="_blank" rel="noreferrer">
+                    {thread.subject_title.clone()}
+                </a>
             </h3>
 
             <div class="meta">
-                <a class="thread-link repo-link" href=format!("https://github.com/{}", thread.repository) target="_blank" rel="noreferrer">{thread.repository.clone()}</a>
+                <a
+                    class="thread-link repo-link"
+                    href=repo_link
+                    target="_blank"
+                    rel="noreferrer"
+                >
+                    {repository.clone()}
+                </a>
                 <span class="meta-separator">"•"</span>
-                {thread.sources.iter().map(|source| view! { <SourceBadge source=source.clone() /> }).collect::<Vec<_>>()}
+                {thread
+                    .sources
+                    .iter()
+                    .map(|source| view! { <SourceBadge source=source.clone() /> })
+                    .collect::<Vec<_>>()}
                 <span class="meta-separator">"•"</span>
                 {
                     let (relative, absolute) = format_timestamp(&thread.updated_at);
@@ -266,78 +326,172 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                     ().into_any()
                 }}
                 {
-                    let non_bot_participants: Vec<_> = thread.participants.iter().filter(|p| !p.login.ends_with("[bot]")).collect();
+                    let non_bot_participants: Vec<_> = thread
+                        .participants
+                        .iter()
+                        .filter(|participant| !participant.login.ends_with("[bot]"))
+                        .collect();
                     if non_bot_participants.is_empty() {
-                    ().into_any()
-                } else {
-                    let avatars = non_bot_participants.into_iter().take(5).map(|p| {
-                        let alt = p.login.clone();
-                        let src = if p.avatar_url.contains('?') {
-                            format!("{}&s=40", p.avatar_url)
-                        } else {
-                            format!("{}?s=40", p.avatar_url)
-                        };
-                        let profile = format!("https://github.com/{}", p.login);
-                        view! { <a class="avatar-link" href=profile target="_blank" rel="noreferrer" title=alt.clone()><img class="avatar" src=src alt=alt.clone() loading="lazy" /></a> }
-                    }).collect::<Vec<_>>();
-                    view! { <span class="meta-separator">"•"</span><span class="avatar-stack">{avatars}</span> }.into_any()
-                }
+                        ().into_any()
+                    } else {
+                        let avatars = non_bot_participants
+                            .into_iter()
+                            .take(5)
+                            .map(|participant| {
+                                let alt = participant.login.clone();
+                                let src = if participant.avatar_url.contains('?') {
+                                    format!("{}&s=40", participant.avatar_url)
+                                } else {
+                                    format!("{}?s=40", participant.avatar_url)
+                                };
+                                let profile = format!("https://github.com/{}", participant.login);
+                                view! {
+                                    <a class="avatar-link" href=profile target="_blank" rel="noreferrer" title=alt.clone()>
+                                        <img class="avatar" src=src alt=alt.clone() loading="lazy" />
+                                    </a>
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        view! {
+                            <span class="meta-separator">"•"</span>
+                            <span class="avatar-stack">{avatars}</span>
+                        }
+                            .into_any()
+                    }
                 }
             </div>
 
+            {render_review_section(
+                review_content,
+                review_tone,
+                review_label,
+                review_target.is_some(),
+                can_fix,
+            )}
+
             <div class="row">
-                {if thread.subject_type.as_deref() == Some("Issue") {
-                    ().into_any()
-                } else if let Some(review) = review_content {
-                    let fix_attr = fix_action_for_modal.clone();
+                {if let Some((owner, repo, number)) = review_target.clone() {
                     view! {
-                        <button
-                            class=format!("pill {review_tone} review-open")
-                            type="button"
-                            data-review-content=review
-                            data-fix-action=fix_attr
-                        >
-                            {review_label}
-                        </button>
-                    }.into_any()
-                } else {
-                    view! { <button class=format!("pill {review_tone}") type="button" disabled>{review_label}</button> }.into_any()
-                }}
-                {if can_review {
-                    view! {
-                        <form action=review_action method="post" data-async-form>
-                            <button class="btn" type="submit" data-loading-label="Reviewing...">"Review"</button>
+                        <form action=review_action method="post">
+                            <input type="hidden" name="owner" value=owner />
+                            <input type="hidden" name="repo" value=repo />
+                            <input type="hidden" name="number" value=number.to_string() />
+                            <button class="btn" type="submit">"Review"</button>
                         </form>
-                    }.into_any()
+                    }
+                        .into_any()
                 } else {
                     ().into_any()
                 }}
                 <div class="icon-actions">
-                    <form action="/dashboard/actions/open/vscode" method="post" data-async-form>
-                        <input type="hidden" name="repository" value=thread.repository.clone() />
-                        {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
-                        <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in VS Code" title="Open in VS Code">{svg_icon(VSCODE_ICON)}</button>
+                    <form action="/dashboard/actions/open/vscode" method="post">
+                        <input type="hidden" name="repository" value=vscode_repository />
+                        {vscode_pr_url
+                            .clone()
+                            .map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
+                        <button class="btn icon-btn" type="submit" aria-label="Open in VS Code" title="Open in VS Code">
+                            {svg_icon(VSCODE_ICON)}
+                        </button>
                     </form>
-                    <form action="/dashboard/actions/open/terminal" method="post" data-async-form>
-                        <input type="hidden" name="repository" value=thread.repository.clone() />
-                        {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
-                        <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in Terminal" title="Open in Terminal">{svg_icon(TERMINAL_ICON)}</button>
+                    <form action="/dashboard/actions/open/terminal" method="post">
+                        <input type="hidden" name="repository" value=terminal_repository />
+                        {terminal_pr_url
+                            .clone()
+                            .map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
+                        <button class="btn icon-btn" type="submit" aria-label="Open in Terminal" title="Open in Terminal">
+                            {svg_icon(TERMINAL_ICON)}
+                        </button>
                     </form>
                 </div>
-                {if thread.github_thread_id.is_some() || mark_authored_pr {
+                {if github_thread_id.is_some() || mark_authored_pr {
                     view! {
-                        <form action="/dashboard/actions/done" method="post" data-async-form>
-                            {thread.github_thread_id.clone().map(|thread_id| view! { <input type="hidden" name="github_thread_id" value=thread_id /> })}
-                            {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
-                            <input type="hidden" name="mark_authored_pr" value=mark_authored_pr.to_string() />
-                            <button class="btn icon-btn" type="submit" data-loading-label="Saving..." aria-label="Mark done" title="Mark done">{svg_icon(CHECKMARK_ICON)}</button>
+                        <form action="/dashboard/actions/done" method="post">
+                            {github_thread_id
+                                .clone()
+                                .map(|thread_id| view! { <input type="hidden" name="github_thread_id" value=thread_id /> })}
+                            {done_pr_url
+                                .clone()
+                                .map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
+                            {mark_authored_pr
+                                .then(|| view! { <input type="hidden" name="mark_authored_pr" value="true" /> })}
+                            <button class="btn icon-btn" type="submit" aria-label="Mark done" title="Mark done">
+                                {svg_icon(CHECKMARK_ICON)}
+                            </button>
                         </form>
-                    }.into_any()
+                    }
+                        .into_any()
                 } else {
                     ().into_any()
                 }}
             </div>
+
+            {if can_fix {
+                if let Some((owner, repo, number)) = review_target {
+                    view! {
+                        <div class="review-actions">
+                            <form action=fix_action method="post">
+                                <input type="hidden" name="owner" value=owner />
+                                <input type="hidden" name="repo" value=repo />
+                                <input type="hidden" name="number" value=number.to_string() />
+                                <button class="btn" type="submit">"Fix"</button>
+                            </form>
+                        </div>
+                    }
+                        .into_any()
+                } else {
+                    ().into_any()
+                }
+            } else {
+                ().into_any()
+            }}
         </article>
+    }
+}
+
+fn render_review_section(
+    review_content: Option<String>,
+    review_tone: &'static str,
+    review_label: &'static str,
+    can_review: bool,
+    can_fix: bool,
+) -> impl IntoView {
+    if !can_review {
+        return ().into_any();
+    }
+
+    match review_content {
+        Some(review) => {
+            let cleaned_review = clean_review_text(&review);
+            view! {
+                <details class="review-details">
+                    <summary class="review-summary">
+                        <span class=format!("pill {review_tone}")>{review_label}</span>
+                    </summary>
+                    <div class="review-body">
+                        <pre>{cleaned_review}</pre>
+                        {if can_fix {
+                            view! {
+                                <p class="review-note">
+                                    "Run "
+                                    <code>"Fix"</code>
+                                    " below to ask gigi to address the current review."
+                                </p>
+                            }
+                                .into_any()
+                        } else {
+                            ().into_any()
+                        }}
+                    </div>
+                </details>
+            }
+            .into_any()
+        }
+        None => view! {
+            <div class="review-strip">
+                <span class=format!("pill {review_tone}")>{review_label}</span>
+            </div>
+        }
+        .into_any(),
     }
 }
 
@@ -349,6 +503,36 @@ fn SourceBadge(source: String) -> impl IntoView {
     view! {
         <span class="source-badge" title=label aria-label=label>{svg_icon(icon)}</span>
     }
+}
+
+fn review_target(thread: &DashboardThread) -> Option<(String, String, i64)> {
+    match (
+        thread.pr_owner.clone(),
+        thread.pr_repo.clone(),
+        thread.pr_number,
+    ) {
+        (Some(owner), Some(repo), Some(number)) => Some((owner, repo, number)),
+        _ => None,
+    }
+}
+
+fn clean_review_text(raw: &str) -> String {
+    let mut cleaned = raw
+        .lines()
+        .filter(|line| {
+            !matches!(
+                line.trim(),
+                "REQUIRES_CODE_CHANGES: YES" | "REQUIRES_CODE_CHANGES: NO"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    while cleaned.contains("\n\n\n") {
+        cleaned = cleaned.replace("\n\n\n", "\n\n");
+    }
+
+    cleaned.trim().to_string()
 }
 
 fn grouped_threads(threads: &[DashboardThread]) -> Vec<(String, Vec<DashboardThread>)> {
@@ -376,8 +560,10 @@ fn grouped_threads(threads: &[DashboardThread]) -> Vec<(String, Vec<DashboardThr
     });
     grouped
 }
+
 fn format_timestamp(raw: &str) -> (String, String) {
     use chrono::{NaiveDateTime, Utc};
+
     let Ok(dt) = raw.parse::<chrono::DateTime<Utc>>().or_else(|_| {
         NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S").map(|naive| naive.and_utc())
     }) else {
@@ -390,8 +576,8 @@ fn format_timestamp(raw: &str) -> (String, String) {
     let relative = if duration.num_minutes() < 1 {
         "just now".to_string()
     } else if duration.num_hours() < 1 {
-        let mins = duration.num_minutes();
-        format!("{mins}m ago")
+        let minutes = duration.num_minutes();
+        format!("{minutes}m ago")
     } else if duration.num_hours() < 24 {
         let hours = duration.num_hours();
         format!("{hours}h ago")
@@ -536,5 +722,25 @@ mod tests {
             thread_state_data(Some("PullRequest"), Some("OPEN"), Some("QUEUED"), false);
 
         assert_eq!(label, "Queued");
+    }
+
+    #[test]
+    fn clean_review_text_strips_requires_code_changes_marker() {
+        let raw = "Summary\n\nREQUIRES_CODE_CHANGES: YES\n\nMore detail";
+
+        assert_eq!(clean_review_text(raw), "Summary\n\nMore detail");
+    }
+
+    #[test]
+    fn render_page_smoke_test() {
+        let html = render_page(&DashboardSnapshot {
+            filters: DashboardThreadFilters::default(),
+            threads: Vec::new(),
+            available_repositories: Vec::new(),
+            status_message: "Ready".to_string(),
+        });
+
+        assert!(html.contains("gigi dashboard"));
+        assert!(html.contains("/dashboard/actions/refresh"));
     }
 }
