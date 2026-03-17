@@ -82,6 +82,32 @@ function encodeForm(form) {
   return new URLSearchParams(new FormData(form));
 }
 
+async function submitAsyncForm(form, submitter) {
+  setButtonPending(submitter, true);
+
+  try {
+    setStatus("Working...");
+    const response = await fetch(form.action, {
+      method: (form.method || "post").toUpperCase(),
+      body: encodeForm(form),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+
+    await refreshDashboard();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setStatus(message);
+  } finally {
+    setButtonPending(submitter, false);
+  }
+}
+
 async function readError(response) {
   const contentType = response.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
@@ -106,35 +132,12 @@ document.addEventListener("submit", async (event) => {
   }
 
   event.preventDefault();
-  const submitter = event.submitter;
-  setButtonPending(submitter, true);
-
-  try {
-    setStatus("Working...");
-    const response = await fetch(form.action, {
-      method: (form.method || "post").toUpperCase(),
-      body: encodeForm(form),
-      headers: {
-        "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(await readError(response));
-    }
-
-    await refreshDashboard();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    setStatus(message);
-  } finally {
-    setButtonPending(submitter, false);
-  }
+  await submitAsyncForm(form, event.submitter);
 });
 
 let repoFilterTimer = null;
 
-document.addEventListener("change", (event) => {
+document.addEventListener("change", async (event) => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement)) {
     return;
@@ -145,23 +148,7 @@ document.addEventListener("change", (event) => {
   if (repoForm instanceof HTMLFormElement) {
     clearTimeout(repoFilterTimer);
     repoFilterTimer = setTimeout(async () => {
-      try {
-        setStatus("Working...");
-        const response = await fetch(repoForm.action, {
-          method: "POST",
-          body: encodeForm(repoForm),
-          headers: {
-            "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
-          },
-        });
-        if (!response.ok) {
-          throw new Error(await readError(response));
-        }
-        await refreshDashboard();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        setStatus(message);
-      }
+      await submitAsyncForm(repoForm);
     }, 600);
     return;
   }
@@ -171,11 +158,7 @@ document.addEventListener("change", (event) => {
     return;
   }
 
-  if (form.requestSubmit) {
-    form.requestSubmit();
-  } else {
-    form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
-  }
+  await submitAsyncForm(form);
 });
 
 document.addEventListener("click", (event) => {
