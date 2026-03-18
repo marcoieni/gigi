@@ -63,14 +63,18 @@ pub async fn run_server(state: std::sync::Arc<AppState>, config: &AppConfig) -> 
 async fn dashboard_page(
     State(state): State<std::sync::Arc<AppState>>,
 ) -> Result<Html<String>, ApiErrorResponse> {
-    let snapshot = load_snapshot(&state).map_err(|err| ApiErrorResponse::internal(&err))?;
+    let snapshot = load_snapshot(&state)
+        .await
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
     Ok(Html(dashboard::render_page(&snapshot)))
 }
 
 async fn dashboard_fragment(
     State(state): State<std::sync::Arc<AppState>>,
 ) -> Result<Html<String>, ApiErrorResponse> {
-    let snapshot = load_snapshot(&state).map_err(|err| ApiErrorResponse::internal(&err))?;
+    let snapshot = load_snapshot(&state)
+        .await
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
     Ok(Html(dashboard::render_fragment(snapshot)))
 }
 
@@ -241,15 +245,20 @@ fn static_asset_headers(content_type: &'static str) -> HeaderMap {
     headers
 }
 
-fn load_snapshot(state: &AppState) -> anyhow::Result<DashboardSnapshot> {
+async fn load_snapshot(state: &AppState) -> anyhow::Result<DashboardSnapshot> {
     let filters = state.db.dashboard_thread_filters()?;
     let available_repositories = state.db.list_all_repositories()?;
     let mut threads = state.db.list_dashboard_threads_with_filters(&filters)?;
+    let pending_review_pr_urls = state.queued_review_pr_urls().await;
     for thread in &mut threads {
         let participant_key = thread.pr_url.as_deref().or(thread.subject_url.as_deref());
         if let Some(key) = participant_key {
             thread.participants = state.db.get_pr_participants(key).unwrap_or_default();
         }
+        thread.review_pending = thread
+            .pr_url
+            .as_ref()
+            .is_some_and(|pr_url| pending_review_pr_urls.contains(pr_url));
     }
     Ok(DashboardSnapshot {
         filters,

@@ -308,7 +308,24 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                 {if can_review {
                     view! {
                         <form action=review_action method="post" data-async-form>
-                            <button class="btn" type="submit" data-loading-label="Reviewing..." data-loading-mode="spinner">"Review"</button>
+                            {if thread.review_pending {
+                                view! {
+                                    <button
+                                        class="btn loading"
+                                        type="submit"
+                                        disabled
+                                        data-loading-label="Reviewing..."
+                                        data-loading-mode="spinner"
+                                        aria-label="Reviewing..."
+                                    >
+                                        <span class="spinner" aria-hidden="true"></span>
+                                    </button>
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <button class="btn" type="submit" data-loading-label="Reviewing..." data-loading-mode="spinner">"Review"</button>
+                                }.into_any()
+                            }}
                         </form>
                     }.into_any()
                 } else {
@@ -567,6 +584,7 @@ mod tests {
             latest_review_provider: None,
             is_draft: false,
             participants: Vec::new(),
+            review_pending: false,
         }
     }
 
@@ -653,6 +671,7 @@ mod tests {
                 latest_review_provider: None,
                 is_draft: false,
                 participants: Vec::new(),
+                review_pending: false,
             }],
             available_repositories: vec!["a/b".to_string()],
             status_message: "ok".to_string(),
@@ -660,5 +679,46 @@ mod tests {
 
         assert!(!html.contains("No review"));
         assert!(html.contains("Open discussion"));
+    }
+
+    #[test]
+    fn render_fragment_shows_spinner_for_pending_review() {
+        let html = render_fragment(DashboardSnapshot {
+            filters: DashboardThreadFilters::default(),
+            threads: vec![DashboardThread {
+                thread_key: "notif:pr-1".to_string(),
+                github_thread_id: Some("1".to_string()),
+                sources: vec!["notification".to_string()],
+                repository: "a/b".to_string(),
+                pr_owner: Some("a".to_string()),
+                pr_repo: Some("b".to_string()),
+                pr_number: Some(1),
+                subject_type: Some("PullRequest".to_string()),
+                subject_title: "PR".to_string(),
+                subject_url: Some("https://github.com/a/b/pull/1".to_string()),
+                issue_state: None,
+                discussion_answered: None,
+                reason: Some("mention".to_string()),
+                pr_url: Some("https://github.com/a/b/pull/1".to_string()),
+                unread: true,
+                done: false,
+                updated_at: "2026-01-02T00:00:00Z".to_string(),
+                latest_requires_code_changes: None,
+                pr_state: Some("OPEN".to_string()),
+                pr_merge_queue_state: None,
+                latest_review_content_md: None,
+                latest_review_created_at: None,
+                latest_review_provider: None,
+                is_draft: false,
+                participants: Vec::new(),
+                review_pending: true,
+            }],
+            available_repositories: vec!["a/b".to_string()],
+            status_message: "ok".to_string(),
+        });
+
+        assert!(html.contains("class=\"btn loading\""));
+        assert!(html.contains("aria-label=\"Reviewing...\""));
+        assert!(html.contains("<span class=\"spinner\" aria-hidden=\"true\"></span>"));
     }
 }

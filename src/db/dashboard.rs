@@ -301,6 +301,7 @@ impl DashboardThreadRow {
             latest_review_provider: self.latest_review_provider,
             is_draft: self.is_draft,
             participants: Vec::new(),
+            review_pending: false,
         }
     }
 }
@@ -384,6 +385,7 @@ fn merge_dashboard_thread(existing: &mut DashboardThread, incoming: DashboardThr
     if existing.participants.is_empty() {
         existing.participants = incoming.participants;
     }
+    existing.review_pending = existing_snapshot.review_pending || incoming.review_pending;
 }
 
 fn dashboard_thread_priority(thread: &DashboardThread) -> usize {

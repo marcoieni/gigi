@@ -111,6 +111,9 @@ pub struct DashboardThread {
     /// Participants who interacted with this PR (not persisted, populated at runtime).
     #[serde(skip_serializing)]
     pub participants: Vec<Participant>,
+    /// Whether a review job for this PR is queued or currently running.
+    #[serde(skip_serializing)]
+    pub review_pending: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

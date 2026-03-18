@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -111,6 +112,15 @@ impl AppState {
 
     pub fn subscribe_dashboard_updates(&self) -> tokio::sync::watch::Receiver<DashboardUpdate> {
         self.dashboard_updates.subscribe()
+    }
+
+    pub async fn queued_review_pr_urls(&self) -> HashSet<String> {
+        self.queued_review_keys
+            .lock()
+            .await
+            .iter()
+            .map(|key| key.pr_url.clone())
+            .collect()
     }
 
     pub fn notify_dashboard(&self, message: impl Into<String>) {
