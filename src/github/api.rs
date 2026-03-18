@@ -268,6 +268,36 @@ struct DiscussionRef {
     number: u64,
 }
 
+#[derive(Debug, Default)]
+struct GraphqlBatchRequest {
+    query: String,
+    string_variables: Vec<(String, String)>,
+    int_variables: Vec<(String, u64)>,
+}
+
+impl GraphqlBatchRequest {
+    fn into_gh_args(self) -> Vec<String> {
+        let mut args = vec![
+            "api".to_string(),
+            "graphql".to_string(),
+            "-f".to_string(),
+            format!("query={}", self.query),
+        ];
+
+        for (name, value) in self.string_variables {
+            args.push("-f".to_string());
+            args.push(format!("{name}={value}"));
+        }
+
+        for (name, value) in self.int_variables {
+            args.push("-F".to_string());
+            args.push(format!("{name}={value}"));
+        }
+
+        args
+    }
+}
+
 fn parse_issue_api_url(api_url: &str) -> Option<IssueRef> {
     let path = api_url
         .strip_prefix("https://api.github.com/repos/")
@@ -495,84 +525,8 @@ async fn fetch_batch_chunk(
     issue_chunk: &[(IssueRef, String)],
     discussion_chunk: &[(DiscussionRef, String)],
 ) -> anyhow::Result<BatchFetchResult> {
-    let pr_fields = "number title state isDraft isInMergeQueue mergeQueueEntry { state } headRefName headRefOid baseRefName \
-                     createdAt updatedAt author { login avatarUrl } \
-                     headRepository { name } headRepositoryOwner { login } \
-                     isCrossRepository \
-                     participants(first: 10) { nodes { login avatarUrl } } \
-                     timelineItems(last: 30, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, PULL_REQUEST_REVIEW_THREAD]) { \
-                       nodes { \
-                         __typename \
-                         ... on IssueComment { createdAt author { login avatarUrl } } \
-                         ... on PullRequestReview { createdAt author { login avatarUrl } } \
-                         ... on PullRequestCommit { commit { authoredDate author { user { login avatarUrl } } } } \
-                       } \
-                     }";
-
-    let mut query = String::from("query {");
-
-    for (index, (owner, repo, number, _)) in pr_chunk.iter().enumerate() {
-        write!(
-            query,
-            " pr{index}: repository(owner: \"{owner}\", name: \"{repo}\") {{ \
-                isArchived pullRequest(number: {number}) {{ {pr_fields} }} \
-            }}"
-        )?;
-    }
-
-    let issue_fields = "state \
-                       author { login avatarUrl } \
-                       participants(first: 10) { nodes { login avatarUrl } } \
-                       timelineItems(last: 30, itemTypes: [ISSUE_COMMENT]) { \
-                         nodes { \
-                           __typename \
-                           ... on IssueComment { createdAt author { login avatarUrl } } \
-                         } \
-                       }";
-
-    for (index, (issue, _)) in issue_chunk.iter().enumerate() {
-        write!(
-            query,
-            " issue{index}: repository(owner: \"{}\", name: \"{}\") {{ \
-                issue(number: {}) {{ {issue_fields} }} \
-            }}",
-            issue.owner, issue.repo, issue.number
-        )?;
-    }
-
-    let discussion_fields = "closed \
-                             stateReason \
-                             isAnswered \
-                             answerChosenAt \
-                             author { login avatarUrl } \
-                             comments(last: 30) { \
-                               nodes { \
-                                 createdAt \
-                                 author { login avatarUrl } \
-                                 replies(last: 10) { \
-                                   nodes { \
-                                     createdAt \
-                                     author { login avatarUrl } \
-                                   } \
-                                 } \
-                               } \
-                             }";
-
-    for (index, (discussion, _)) in discussion_chunk.iter().enumerate() {
-        write!(
-            query,
-            " discussion{index}: repository(owner: \"{}\", name: \"{}\") {{ \
-                discussion(number: {}) {{ {discussion_fields} }} \
-            }}",
-            discussion.owner, discussion.repo, discussion.number
-        )?;
-    }
-
-    query.push('}');
-
-    let output = Cmd::new("gh", ["api", "graphql", "-f", &format!("query={query}")])
-        .run()
-        .await?;
+    let request = build_graphql_batch_request(pr_chunk, issue_chunk, discussion_chunk)?;
+    let output = Cmd::new("gh", request.into_gh_args()).run().await?;
     output.ensure_success("❌ Failed to run batch GraphQL query")?;
 
     let response: Value =
@@ -882,6 +836,144 @@ async fn fetch_batch_chunk(
     Ok(result)
 }
 
+fn build_graphql_batch_request(
+    pr_chunk: &[(String, String, u64, String)],
+    issue_chunk: &[(IssueRef, String)],
+    discussion_chunk: &[(DiscussionRef, String)],
+) -> anyhow::Result<GraphqlBatchRequest> {
+    const PR_FIELDS: &str = "number title state isDraft isInMergeQueue mergeQueueEntry { state } headRefName headRefOid baseRefName \
+                             createdAt updatedAt author { login avatarUrl } \
+                             headRepository { name } headRepositoryOwner { login } \
+                             isCrossRepository \
+                             participants(first: 10) { nodes { login avatarUrl } } \
+                             timelineItems(last: 30, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, PULL_REQUEST_REVIEW_THREAD]) { \
+                               nodes { \
+                                 __typename \
+                                 ... on IssueComment { createdAt author { login avatarUrl } } \
+                                 ... on PullRequestReview { createdAt author { login avatarUrl } } \
+                                 ... on PullRequestCommit { commit { authoredDate author { user { login avatarUrl } } } } \
+                               } \
+                             }";
+    const ISSUE_FIELDS: &str = "state \
+                                author { login avatarUrl } \
+                                participants(first: 10) { nodes { login avatarUrl } } \
+                                timelineItems(last: 30, itemTypes: [ISSUE_COMMENT]) { \
+                                  nodes { \
+                                    __typename \
+                                    ... on IssueComment { createdAt author { login avatarUrl } } \
+                                  } \
+                                }";
+    const DISCUSSION_FIELDS: &str = "closed \
+                                     stateReason \
+                                     isAnswered \
+                                     answerChosenAt \
+                                     author { login avatarUrl } \
+                                     comments(last: 30) { \
+                                       nodes { \
+                                         createdAt \
+                                         author { login avatarUrl } \
+                                         replies(last: 10) { \
+                                           nodes { \
+                                             createdAt \
+                                             author { login avatarUrl } \
+                                           } \
+                                         } \
+                                       } \
+                                     }";
+
+    let mut request = GraphqlBatchRequest::default();
+    let mut variable_definitions = Vec::new();
+    let mut query_body = String::new();
+
+    for (index, (owner, repo, number, _)) in pr_chunk.iter().enumerate() {
+        let owner_var = format!("prOwner{index}");
+        let repo_var = format!("prRepo{index}");
+        let number_var = format!("prNumber{index}");
+
+        variable_definitions.push(format!("${owner_var}: String!"));
+        variable_definitions.push(format!("${repo_var}: String!"));
+        variable_definitions.push(format!("${number_var}: Int!"));
+        request
+            .string_variables
+            .push((owner_var.clone(), owner.clone()));
+        request
+            .string_variables
+            .push((repo_var.clone(), repo.clone()));
+        request.int_variables.push((number_var.clone(), *number));
+
+        write!(
+            query_body,
+            " pr{index}: repository(owner: ${owner_var}, name: ${repo_var}) {{ \
+                isArchived pullRequest(number: ${number_var}) {{ {PR_FIELDS} }} \
+            }}"
+        )?;
+    }
+
+    for (index, (issue, _)) in issue_chunk.iter().enumerate() {
+        let owner_var = format!("issueOwner{index}");
+        let repo_var = format!("issueRepo{index}");
+        let number_var = format!("issueNumber{index}");
+
+        variable_definitions.push(format!("${owner_var}: String!"));
+        variable_definitions.push(format!("${repo_var}: String!"));
+        variable_definitions.push(format!("${number_var}: Int!"));
+        request
+            .string_variables
+            .push((owner_var.clone(), issue.owner.clone()));
+        request
+            .string_variables
+            .push((repo_var.clone(), issue.repo.clone()));
+        request
+            .int_variables
+            .push((number_var.clone(), issue.number));
+
+        write!(
+            query_body,
+            " issue{index}: repository(owner: ${owner_var}, name: ${repo_var}) {{ \
+                issue(number: ${number_var}) {{ {ISSUE_FIELDS} }} \
+            }}"
+        )?;
+    }
+
+    for (index, (discussion, _)) in discussion_chunk.iter().enumerate() {
+        let owner_var = format!("discussionOwner{index}");
+        let repo_var = format!("discussionRepo{index}");
+        let number_var = format!("discussionNumber{index}");
+
+        variable_definitions.push(format!("${owner_var}: String!"));
+        variable_definitions.push(format!("${repo_var}: String!"));
+        variable_definitions.push(format!("${number_var}: Int!"));
+        request
+            .string_variables
+            .push((owner_var.clone(), discussion.owner.clone()));
+        request
+            .string_variables
+            .push((repo_var.clone(), discussion.repo.clone()));
+        request
+            .int_variables
+            .push((number_var.clone(), discussion.number));
+
+        write!(
+            query_body,
+            " discussion{index}: repository(owner: ${owner_var}, name: ${repo_var}) {{ \
+                discussion(number: ${number_var}) {{ {DISCUSSION_FIELDS} }} \
+            }}"
+        )?;
+    }
+
+    anyhow::ensure!(
+        !variable_definitions.is_empty(),
+        "cannot build an empty GraphQL batch request"
+    );
+
+    request.query = format!(
+        "query({}) {{{query_body} }}",
+        variable_definitions.join(", ")
+    );
+
+    Ok(request)
+}
+
 /// Extracts a map of `login -> latest_timestamp` from the PR's `timelineItems`.
 ///
 /// Walks through comments, reviews, and commits to find the most recent
@@ -1024,5 +1116,33 @@ mod tests {
             endpoint,
             "/notifications?since=2026-03-13T09%3A00%3A00%2B00%3A00"
         );
+    }
+
+    #[test]
+    fn graphql_batch_request_keeps_untrusted_values_out_of_query_text() {
+        let malicious_owner = "attacker\") { viewer { login } } hacked: viewer { login } #";
+        let malicious_repo = "repo\") { rateLimit { cost } } #";
+        let pr_chunk = [(
+            malicious_owner.to_string(),
+            malicious_repo.to_string(),
+            42,
+            "https://github.com/example/repo/pull/42".to_string(),
+        )];
+
+        let request = build_graphql_batch_request(&pr_chunk, &[], &[]).unwrap();
+
+        assert!(request.query.contains("$prOwner0"));
+        assert!(request.query.contains("$prRepo0"));
+        assert!(request.query.contains("$prNumber0"));
+        assert!(!request.query.contains(malicious_owner));
+        assert!(!request.query.contains(malicious_repo));
+        assert_eq!(
+            request.string_variables,
+            vec![
+                ("prOwner0".to_string(), malicious_owner.to_string()),
+                ("prRepo0".to_string(), malicious_repo.to_string()),
+            ]
+        );
+        assert_eq!(request.int_variables, vec![("prNumber0".to_string(), 42)]);
     }
 }
