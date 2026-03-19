@@ -250,6 +250,19 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
         <article class="thread">
             <h3>
                 <span class=state_icon_class aria-label=state_icon_label title=state_icon_label>{svg_icon(state_icon_paths)}</span>
+                {if thread.unread {
+                    view! {
+                        <span
+                            class="unread-dot"
+                            role="img"
+                            aria-label="Unread notification"
+                            title="Unread notification"
+                        ></span>
+                    }
+                        .into_any()
+                } else {
+                    ().into_any()
+                }}
                 <a class="thread-link" href=destination target="_blank" rel="noreferrer">{thread.subject_title.clone()}</a>
             </h3>
 
@@ -660,5 +673,82 @@ mod tests {
 
         assert!(!html.contains("No review"));
         assert!(html.contains("Open discussion"));
+    }
+
+    #[test]
+    fn render_fragment_shows_unread_dot_for_unread_threads() {
+        let html = render_fragment(DashboardSnapshot {
+            filters: DashboardThreadFilters::default(),
+            threads: vec![DashboardThread {
+                thread_key: "notif:1".to_string(),
+                github_thread_id: Some("1".to_string()),
+                sources: vec!["notification".to_string()],
+                repository: "a/b".to_string(),
+                pr_owner: None,
+                pr_repo: None,
+                pr_number: None,
+                subject_type: Some("Issue".to_string()),
+                subject_title: "Unread thread".to_string(),
+                subject_url: Some("https://github.com/a/b/issues/1".to_string()),
+                issue_state: Some("OPEN".to_string()),
+                discussion_answered: None,
+                reason: Some("assign".to_string()),
+                pr_url: None,
+                unread: true,
+                done: false,
+                updated_at: "2026-01-02T00:00:00Z".to_string(),
+                latest_requires_code_changes: None,
+                pr_state: None,
+                pr_merge_queue_state: None,
+                latest_review_content_md: None,
+                latest_review_created_at: None,
+                latest_review_provider: None,
+                is_draft: false,
+                participants: Vec::new(),
+            }],
+            available_repositories: vec!["a/b".to_string()],
+            status_message: "ok".to_string(),
+        });
+
+        assert!(html.contains("class=\"unread-dot\""));
+        assert!(html.contains("Unread notification"));
+    }
+
+    #[test]
+    fn render_fragment_omits_unread_dot_for_read_threads() {
+        let html = render_fragment(DashboardSnapshot {
+            filters: DashboardThreadFilters::default(),
+            threads: vec![DashboardThread {
+                thread_key: "notif:1".to_string(),
+                github_thread_id: Some("1".to_string()),
+                sources: vec!["notification".to_string()],
+                repository: "a/b".to_string(),
+                pr_owner: None,
+                pr_repo: None,
+                pr_number: None,
+                subject_type: Some("Issue".to_string()),
+                subject_title: "Read thread".to_string(),
+                subject_url: Some("https://github.com/a/b/issues/1".to_string()),
+                issue_state: Some("OPEN".to_string()),
+                discussion_answered: None,
+                reason: Some("assign".to_string()),
+                pr_url: None,
+                unread: false,
+                done: false,
+                updated_at: "2026-01-02T00:00:00Z".to_string(),
+                latest_requires_code_changes: None,
+                pr_state: None,
+                pr_merge_queue_state: None,
+                latest_review_content_md: None,
+                latest_review_created_at: None,
+                latest_review_provider: None,
+                is_draft: false,
+                participants: Vec::new(),
+            }],
+            available_repositories: vec!["a/b".to_string()],
+            status_message: "ok".to_string(),
+        });
+
+        assert!(!html.contains("class=\"unread-dot\""));
     }
 }
