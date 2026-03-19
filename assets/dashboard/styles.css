@@ -427,10 +427,14 @@ body {
 }
 
 .unread-dot {
+  display: inline-flex;
   width: 10px;
   height: 10px;
+  flex: 0 0 auto;
   border-radius: 999px;
   background: #1f6feb;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--card) 88%, transparent);
+  margin-top: 8px;
 }
 
 @keyframes spin {
