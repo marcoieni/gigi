@@ -238,6 +238,10 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
     let fix_action_for_modal = can_fix.then(|| fix_action_path(&thread));
     let mark_authored_pr = thread.sources.iter().any(|source| source == "my_pr");
     let review_action = review_action_path(&thread);
+    let mark_read_thread_id = thread
+        .unread
+        .then(|| thread.github_thread_id.clone())
+        .flatten();
     let (state_icon_class, state_icon_paths, state_icon_label) = thread_state_data(
         thread.subject_type.as_deref(),
         thread.pr_state.as_deref().or(thread.issue_state.as_deref()),
@@ -263,7 +267,15 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                 } else {
                     ().into_any()
                 }}
-                <a class="thread-link" href=destination target="_blank" rel="noreferrer">{thread.subject_title.clone()}</a>
+                <a
+                    class="thread-link thread-open-link"
+                    href=destination
+                    target="_blank"
+                    rel="noreferrer"
+                    data-mark-read-thread-id=mark_read_thread_id
+                >
+                    {thread.subject_title.clone()}
+                </a>
             </h3>
 
             <div class="meta">
@@ -750,5 +762,81 @@ mod tests {
         });
 
         assert!(!html.contains("class=\"unread-dot\""));
+    }
+
+    #[test]
+    fn render_fragment_marks_unread_notification_links_as_read_on_open() {
+        let html = render_fragment(DashboardSnapshot {
+            filters: DashboardThreadFilters::default(),
+            threads: vec![DashboardThread {
+                thread_key: "notif:1".to_string(),
+                github_thread_id: Some("123".to_string()),
+                sources: vec!["notification".to_string()],
+                repository: "a/b".to_string(),
+                pr_owner: None,
+                pr_repo: None,
+                pr_number: None,
+                subject_type: Some("Issue".to_string()),
+                subject_title: "Unread thread".to_string(),
+                subject_url: Some("https://github.com/a/b/issues/1".to_string()),
+                issue_state: Some("OPEN".to_string()),
+                discussion_answered: None,
+                reason: Some("assign".to_string()),
+                pr_url: None,
+                unread: true,
+                done: false,
+                updated_at: "2026-01-02T00:00:00Z".to_string(),
+                latest_requires_code_changes: None,
+                pr_state: None,
+                pr_merge_queue_state: None,
+                latest_review_content_md: None,
+                latest_review_created_at: None,
+                latest_review_provider: None,
+                is_draft: false,
+                participants: Vec::new(),
+            }],
+            available_repositories: vec!["a/b".to_string()],
+            status_message: "ok".to_string(),
+        });
+
+        assert!(html.contains("data-mark-read-thread-id=\"123\""));
+    }
+
+    #[test]
+    fn render_fragment_does_not_mark_read_links_for_read_threads() {
+        let html = render_fragment(DashboardSnapshot {
+            filters: DashboardThreadFilters::default(),
+            threads: vec![DashboardThread {
+                thread_key: "notif:1".to_string(),
+                github_thread_id: Some("123".to_string()),
+                sources: vec!["notification".to_string()],
+                repository: "a/b".to_string(),
+                pr_owner: None,
+                pr_repo: None,
+                pr_number: None,
+                subject_type: Some("Issue".to_string()),
+                subject_title: "Read thread".to_string(),
+                subject_url: Some("https://github.com/a/b/issues/1".to_string()),
+                issue_state: Some("OPEN".to_string()),
+                discussion_answered: None,
+                reason: Some("assign".to_string()),
+                pr_url: None,
+                unread: false,
+                done: false,
+                updated_at: "2026-01-02T00:00:00Z".to_string(),
+                latest_requires_code_changes: None,
+                pr_state: None,
+                pr_merge_queue_state: None,
+                latest_review_content_md: None,
+                latest_review_created_at: None,
+                latest_review_provider: None,
+                is_draft: false,
+                participants: Vec::new(),
+            }],
+            available_repositories: vec!["a/b".to_string()],
+            status_message: "ok".to_string(),
+        });
+
+        assert!(!html.contains("data-mark-read-thread-id="));
     }
 }

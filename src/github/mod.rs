@@ -5,6 +5,7 @@ mod types;
 
 pub use api::{
     fetch_authored_prs, fetch_batch, fetch_notifications, fetch_pr_details, mark_notification_done,
+    mark_notification_read,
 };
 pub use local_repo::{
     checkout_branch, checkout_pr, checkout_pr_for_open_with_details, current_branch,
