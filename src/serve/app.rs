@@ -230,6 +230,13 @@ impl AppState {
         Ok(())
     }
 
+    pub async fn mark_notification_read(&self, thread_id: &str) -> anyhow::Result<()> {
+        github::mark_notification_read(thread_id).await?;
+        self.db.mark_thread_read_local(thread_id)?;
+        self.notify_dashboard("Marked notification read");
+        Ok(())
+    }
+
     pub async fn run_fix(
         &self,
         owner: String,

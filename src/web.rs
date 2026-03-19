@@ -29,6 +29,7 @@ pub async fn run_server(state: std::sync::Arc<AppState>, config: &AppConfig) -> 
             post(hide_repository),
         )
         .route("/dashboard/actions/done", post(mark_done))
+        .route("/dashboard/actions/read", post(mark_read))
         .route("/dashboard/actions/open/vscode", post(open_vscode))
         .route("/dashboard/actions/open/terminal", post(open_terminal))
         .route("/dashboard/actions/refresh", post(refresh))
@@ -170,6 +171,17 @@ async fn mark_done(
     Ok(StatusCode::OK)
 }
 
+async fn mark_read(
+    State(state): State<std::sync::Arc<AppState>>,
+    Form(form): Form<MarkReadForm>,
+) -> Result<StatusCode, ApiErrorResponse> {
+    state
+        .mark_notification_read(&form.github_thread_id)
+        .await
+        .map_err(|err| ApiErrorResponse::internal(&err))?;
+    Ok(StatusCode::OK)
+}
+
 async fn run_fix(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath((owner, repo, number)): AxumPath<(String, String, i64)>,
@@ -271,6 +283,11 @@ struct MarkDoneForm {
     pr_url: Option<String>,
     #[serde(default)]
     mark_authored_pr: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct MarkReadForm {
+    github_thread_id: String,
 }
 
 #[derive(Debug, Deserialize)]

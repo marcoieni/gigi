@@ -129,6 +129,46 @@ async function submitAsyncForm(form, submitter) {
   }
 }
 
+async function markNotificationRead(threadId, link) {
+  if (!threadId || link?.dataset.markReadPending === "true") {
+    return;
+  }
+
+  if (link) {
+    link.dataset.markReadPending = "true";
+  }
+
+  try {
+    const response = await fetch("/dashboard/actions/read", {
+      method: "POST",
+      body: new URLSearchParams({ github_thread_id: threadId }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+      },
+      keepalive: true,
+    });
+
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+
+    const card = link?.closest(".thread");
+    const unreadDot = card?.querySelector(".unread-dot");
+    unreadDot?.remove();
+    if (link) {
+      delete link.dataset.markReadThreadId;
+    }
+    await refreshDashboard();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setStatus(message);
+  } finally {
+    if (link) {
+      delete link.dataset.markReadPending;
+    }
+  }
+}
+
 async function readError(response) {
   const contentType = response.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {
@@ -187,6 +227,11 @@ document.addEventListener("click", (event) => {
   const openDropdown = document.querySelector("details.repo-dropdown[open]");
   if (openDropdown && !openDropdown.contains(event.target)) {
     openDropdown.removeAttribute("open");
+  }
+
+  const threadLink = event.target.closest(".thread-open-link");
+  if (threadLink instanceof HTMLAnchorElement && threadLink.dataset.markReadThreadId) {
+    void markNotificationRead(threadLink.dataset.markReadThreadId, threadLink);
   }
 
   const closeButton = event.target.closest("#close-modal");

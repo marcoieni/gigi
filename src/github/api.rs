@@ -126,8 +126,11 @@ pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Vec<Noti
 
 fn notifications_endpoint(since: Option<&str>) -> String {
     match since {
-        Some(since) => format!("/notifications?since={}", encode_query_component(since)),
-        None => "/notifications".to_string(),
+        Some(since) => format!(
+            "/notifications?all=true&since={}",
+            encode_query_component(since)
+        ),
+        None => "/notifications?all=true".to_string(),
     }
 }
 
@@ -1096,6 +1099,15 @@ fn record_discussion_author_activity(
     }
 }
 
+pub async fn mark_notification_read(thread_id: &str) -> anyhow::Result<()> {
+    let endpoint = format!("/notifications/threads/{thread_id}");
+    let output = Cmd::new("gh", ["api", "-X", "PATCH", &endpoint])
+        .run()
+        .await?;
+    output.ensure_success("❌ Failed to mark notification thread as read")?;
+    Ok(())
+}
+
 pub async fn mark_notification_done(thread_id: &str) -> anyhow::Result<()> {
     let endpoint = format!("/notifications/threads/{thread_id}");
     let output = Cmd::new("gh", ["api", "-X", "DELETE", &endpoint])
@@ -1114,8 +1126,13 @@ mod tests {
         let endpoint = notifications_endpoint(Some("2026-03-13T09:00:00+00:00"));
         assert_eq!(
             endpoint,
-            "/notifications?since=2026-03-13T09%3A00%3A00%2B00%3A00"
+            "/notifications?all=true&since=2026-03-13T09%3A00%3A00%2B00%3A00"
         );
+    }
+
+    #[test]
+    fn notifications_endpoint_includes_read_notifications_without_cursor() {
+        assert_eq!(notifications_endpoint(None), "/notifications?all=true");
     }
 
     #[test]

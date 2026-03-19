@@ -310,6 +310,36 @@ fn done_threads_are_hidden_from_dashboard() {
 }
 
 #[test]
+fn read_threads_remain_visible_on_dashboard() {
+    let db = test_db();
+    let row = NewThread {
+        is_draft: false,
+        thread_key: "thread-1".to_string(),
+        github_thread_id: Some("1".to_string()),
+        source: "notification".to_string(),
+        repository: "a/b".to_string(),
+        subject_type: Some("PullRequest".to_string()),
+        subject_title: "t".to_string(),
+        subject_url: Some("u".to_string()),
+        issue_state: None,
+        discussion_answered: None,
+        reason: Some("review_requested".to_string()),
+        pr_url: Some("https://github.com/a/b/pull/1".to_string()),
+        unread: true,
+        done: false,
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+
+    db.upsert_thread(&row).unwrap();
+    db.mark_thread_read_local("1").unwrap();
+
+    let threads = db.list_dashboard_threads().unwrap();
+    assert_eq!(threads.len(), 1);
+    assert!(!threads[0].unread);
+    assert!(!threads[0].done);
+}
+
+#[test]
 fn done_threads_stay_done_after_upsert() {
     let db = test_db();
     let row = NewThread {

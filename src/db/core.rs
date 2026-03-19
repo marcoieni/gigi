@@ -280,6 +280,16 @@ impl Db {
         })
     }
 
+    pub fn mark_thread_read_local(&self, github_thread_id: &str) -> anyhow::Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE threads SET unread = 0 WHERE github_thread_id = ?1",
+                [github_thread_id],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn mark_authored_pr_done_local(&self, pr_url: &str) -> anyhow::Result<()> {
         self.with_conn(|conn| {
             conn.execute(
