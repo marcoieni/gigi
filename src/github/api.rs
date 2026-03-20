@@ -7,7 +7,10 @@ use crate::{checkout::parse_github_pr_url, cmd::Cmd};
 
 use super::{
     parsing::{api_url_to_html_url, api_url_to_pr_url, parse_repo_from_pr_url},
-    types::{AuthoredPrSummary, BatchFetchResult, NotificationThread, Participant, PrDetails},
+    types::{
+        AssignedIssueSummary, AuthoredPrSummary, BatchFetchResult, NotificationThread, Participant,
+        PrDetails,
+    },
 };
 
 pub async fn fetch_notifications(since: Option<&str>) -> anyhow::Result<Vec<NotificationThread>> {
@@ -237,6 +240,92 @@ pub async fn fetch_authored_prs(since: Option<&str>) -> anyhow::Result<Vec<Autho
             updated_at,
             is_open,
             is_draft,
+        });
+    }
+
+    Ok(results)
+}
+
+pub async fn fetch_assigned_issues() -> anyhow::Result<Vec<AssignedIssueSummary>> {
+    let output = Cmd::new(
+        "gh",
+        [
+            "search",
+            "issues",
+            "--assignee",
+            "@me",
+            "--state",
+            "open",
+            "--limit",
+            "200",
+            "--json",
+            "url,title,updatedAt,repository,state",
+        ],
+    )
+    .run()
+    .await?;
+
+    output.ensure_success("❌ Failed to fetch assigned issues")?;
+    if output.stdout().trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let value: Value =
+        serde_json::from_str(output.stdout()).context("Invalid assigned issues JSON")?;
+    let mut results = Vec::new();
+
+    let Value::Array(items) = value else {
+        return Ok(results);
+    };
+
+    for item in items {
+        let issue_url = item
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if issue_url.is_empty() {
+            continue;
+        }
+
+        let title = item
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("(untitled)")
+            .to_string();
+        let updated_at = item
+            .get("updatedAt")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let state = item
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("OPEN")
+            .to_ascii_uppercase();
+        let repository = item
+            .get("repository")
+            .and_then(|value| value.get("nameWithOwner"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .or_else(|| {
+                item.get("repository")
+                    .and_then(|value| value.get("fullName"))
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_default();
+
+        if repository.is_empty() {
+            continue;
+        }
+
+        results.push(AssignedIssueSummary {
+            issue_url,
+            repository,
+            title,
+            updated_at,
+            state,
         });
     }
 

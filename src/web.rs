@@ -164,7 +164,9 @@ async fn mark_done(
         .mark_done(crate::serve::MarkDoneRequest {
             github_thread_id: form.github_thread_id,
             pr_url: form.pr_url,
+            subject_url: form.subject_url,
             mark_authored_pr: form.mark_authored_pr,
+            mark_assigned_issue: form.mark_assigned_issue,
         })
         .await
         .map_err(|err| ApiErrorResponse::internal(&err))?;
@@ -281,8 +283,11 @@ struct OpenProjectRequest {
 struct MarkDoneForm {
     github_thread_id: Option<String>,
     pr_url: Option<String>,
+    subject_url: Option<String>,
     #[serde(default)]
     mark_authored_pr: bool,
+    #[serde(default)]
+    mark_assigned_issue: bool,
 }
 
 #[derive(Debug, Deserialize)]
