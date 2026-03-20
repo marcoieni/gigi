@@ -107,6 +107,37 @@ impl Db {
         })
     }
 
+    pub fn delete_threads_by_source_except_subject_urls(
+        &self,
+        source: &str,
+        subject_urls: &[String],
+    ) -> anyhow::Result<()> {
+        self.with_conn(|conn| {
+            if subject_urls.is_empty() {
+                conn.execute("DELETE FROM threads WHERE source = ?1", [source])?;
+                return Ok(());
+            }
+
+            let mut sql =
+                String::from("DELETE FROM threads WHERE source = ?1 AND (subject_url IS NULL OR subject_url NOT IN (");
+            for idx in 0..subject_urls.len() {
+                if idx > 0 {
+                    sql.push_str(", ");
+                }
+                sql.push('?');
+                sql.push_str(&(idx + 2).to_string());
+            }
+            sql.push_str("))");
+
+            let mut stmt = conn.prepare(&sql)?;
+            let params = std::iter::once(source.to_string())
+                .chain(subject_urls.iter().cloned())
+                .collect::<Vec<_>>();
+            stmt.execute(rusqlite::params_from_iter(params))?;
+            Ok(())
+        })
+    }
+
     pub fn upsert_pr(&self, row: &NewPr) -> anyhow::Result<()> {
         let now = unix_ts();
         self.with_conn(|conn| {
@@ -295,6 +326,16 @@ impl Db {
             conn.execute(
                 "UPDATE threads SET done = 1, unread = 0 WHERE source = 'my_pr' AND pr_url = ?1",
                 [pr_url],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn mark_assigned_issue_done_local(&self, subject_url: &str) -> anyhow::Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE threads SET done = 1, unread = 0 WHERE source = 'my_issue' AND subject_url = ?1",
+                [subject_url],
             )?;
             Ok(())
         })

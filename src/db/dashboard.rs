@@ -225,23 +225,27 @@ impl Db {
 
 fn deduplicate_dashboard_threads(threads: Vec<DashboardThread>) -> Vec<DashboardThread> {
     let mut deduped = Vec::new();
-    let mut pr_indexes = HashMap::new();
+    let mut thread_indexes = HashMap::new();
 
     for thread in threads {
-        let Some(pr_url) = thread.pr_url.clone() else {
+        let Some(thread_key) = dashboard_thread_identity(&thread) else {
             deduped.push(thread);
             continue;
         };
 
-        if let Some(index) = pr_indexes.get(&pr_url).copied() {
+        if let Some(index) = thread_indexes.get(&thread_key).copied() {
             merge_dashboard_thread(&mut deduped[index], thread);
         } else {
-            pr_indexes.insert(pr_url, deduped.len());
+            thread_indexes.insert(thread_key, deduped.len());
             deduped.push(thread);
         }
     }
 
     deduped
+}
+
+fn dashboard_thread_identity(thread: &DashboardThread) -> Option<String> {
+    thread.pr_url.clone().or_else(|| thread.subject_url.clone())
 }
 
 #[derive(Debug, Clone)]
@@ -309,7 +313,7 @@ impl DashboardThreadFilters {
     fn include_sources(&self, sources: &[String]) -> bool {
         sources.iter().all(|source| match source.as_str() {
             "notification" => self.show_notifications,
-            "my_pr" => self.show_prs,
+            "my_pr" | "my_issue" => self.show_prs,
             _ => false,
         })
     }
@@ -389,7 +393,13 @@ fn merge_dashboard_thread(existing: &mut DashboardThread, incoming: DashboardThr
 fn dashboard_thread_priority(thread: &DashboardThread) -> usize {
     match (thread.github_thread_id.is_some(), thread.sources.as_slice()) {
         (true, _) => 2,
-        (false, sources) if sources.iter().any(|source| source == "my_pr") => 1,
+        (false, sources)
+            if sources
+                .iter()
+                .any(|source| source == "my_pr" || source == "my_issue") =>
+        {
+            1
+        }
         _ => 0,
     }
 }
@@ -404,7 +414,8 @@ fn merge_sources(left: &[String], right: &[String]) -> Vec<String> {
     sources.sort_by_key(|source| match source.as_str() {
         "notification" => 0,
         "my_pr" => 1,
-        _ => 2,
+        "my_issue" => 2,
+        _ => 3,
     });
     sources
 }

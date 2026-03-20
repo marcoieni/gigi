@@ -491,6 +491,7 @@ fn dashboard_filters_by_source_type() {
     let db = test_db();
     let notification_pr_url = "https://github.com/a/b/pull/1".to_string();
     let authored_pr_url = "https://github.com/a/b/pull/2".to_string();
+    let assigned_issue_url = "https://github.com/a/b/issues/3".to_string();
 
     db.upsert_thread(&NewThread {
         is_draft: false,
@@ -530,6 +531,25 @@ fn dashboard_filters_by_source_type() {
     })
     .unwrap();
 
+    db.upsert_thread(&NewThread {
+        is_draft: false,
+        thread_key: format!("myissue:{assigned_issue_url}"),
+        github_thread_id: None,
+        source: "my_issue".to_string(),
+        repository: "a/b".to_string(),
+        subject_type: Some("Issue".to_string()),
+        subject_title: "assigned".to_string(),
+        subject_url: Some(assigned_issue_url),
+        issue_state: Some("OPEN".to_string()),
+        discussion_answered: None,
+        reason: Some("assigned".to_string()),
+        pr_url: None,
+        unread: false,
+        done: false,
+        updated_at: "2026-01-03T00:00:00Z".to_string(),
+    })
+    .unwrap();
+
     let threads = db
         .list_dashboard_threads_with_filters(&DashboardThreadFilters {
             show_notifications: false,
@@ -541,9 +561,11 @@ fn dashboard_filters_by_source_type() {
         })
         .unwrap();
 
-    assert_eq!(threads.len(), 1);
-    assert_eq!(threads[0].sources, vec!["my_pr"]);
-    assert_eq!(threads[0].subject_title, "authored");
+    assert_eq!(threads.len(), 2);
+    assert_eq!(threads[0].sources, vec!["my_issue"]);
+    assert_eq!(threads[0].subject_title, "assigned");
+    assert_eq!(threads[1].sources, vec!["my_pr"]);
+    assert_eq!(threads[1].subject_title, "authored");
 }
 
 #[test]
@@ -809,4 +831,57 @@ fn dashboard_threads_expose_issue_state() {
     let threads = db.list_dashboard_threads().unwrap();
     assert_eq!(threads.len(), 1);
     assert_eq!(threads[0].issue_state.as_deref(), Some("CLOSED"));
+}
+
+#[test]
+fn dashboard_threads_deduplicate_notification_and_my_issue() {
+    let db = test_db();
+    let issue_url = "https://github.com/a/b/issues/1".to_string();
+
+    db.upsert_thread(&NewThread {
+        is_draft: false,
+        thread_key: format!("myissue:{issue_url}"),
+        github_thread_id: None,
+        source: "my_issue".to_string(),
+        repository: "a/b".to_string(),
+        subject_type: Some("Issue".to_string()),
+        subject_title: "Assigned title".to_string(),
+        subject_url: Some(issue_url.clone()),
+        issue_state: Some("OPEN".to_string()),
+        discussion_answered: None,
+        reason: Some("assigned".to_string()),
+        pr_url: None,
+        unread: false,
+        done: false,
+        updated_at: "2026-01-02T00:00:00Z".to_string(),
+    })
+    .unwrap();
+
+    db.upsert_thread(&NewThread {
+        is_draft: false,
+        thread_key: "notif:123".to_string(),
+        github_thread_id: Some("123".to_string()),
+        source: "notification".to_string(),
+        repository: "a/b".to_string(),
+        subject_type: Some("Issue".to_string()),
+        subject_title: "Notification title".to_string(),
+        subject_url: Some(issue_url),
+        issue_state: Some("OPEN".to_string()),
+        discussion_answered: None,
+        reason: Some("mention".to_string()),
+        pr_url: None,
+        unread: true,
+        done: false,
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    })
+    .unwrap();
+
+    let threads = db.list_dashboard_threads().unwrap();
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].github_thread_id.as_deref(), Some("123"));
+    assert_eq!(threads[0].thread_key, "notif:123");
+    assert_eq!(threads[0].sources, vec!["notification", "my_issue"]);
+    assert_eq!(threads[0].subject_title, "Notification title");
+    assert_eq!(threads[0].updated_at, "2026-01-02T00:00:00Z");
+    assert!(threads[0].unread);
 }
