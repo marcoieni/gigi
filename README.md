@@ -51,6 +51,7 @@ Examples:
 
 - `gigi squash`
 - `gigi squash --dry-run`
+- `gigi squash --add-co-author`
 
 #### Diagram
 

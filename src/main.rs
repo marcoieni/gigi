@@ -53,11 +53,14 @@ async fn main() -> anyhow::Result<()> {
 
         args::Command::Serve => serve::run_serve().await,
 
-        args::Command::Squash { dry_run } => {
+        args::Command::Squash {
+            dry_run,
+            add_co_author,
+        } => {
             let repo_root = ensure_default_repo_and_root().await?;
             let repo = Repo::new(repo_root.clone())
                 .context("❌ Failed to open git repository for squash")?;
-            squash(&repo_root, &repo, dry_run).await
+            squash(&repo_root, &repo, dry_run, add_co_author).await
         }
 
         args::Command::Sync => {

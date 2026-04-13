@@ -59,6 +59,9 @@ pub enum Command {
         /// Show what would be squashed without actually performing the operation
         #[arg(long)]
         dry_run: bool,
+        /// Prompt to add extra co-authors in addition to the detected ones
+        #[arg(long)]
+        add_co_author: bool,
     },
     /// Sync a fork with the upstream repository and update local default branch
     Sync,
