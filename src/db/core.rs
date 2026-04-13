@@ -107,6 +107,51 @@ impl Db {
         })
     }
 
+    pub fn delete_threads_by_source_except_subject_urls(
+        &self,
+        source: &str,
+        subject_urls: &[String],
+    ) -> anyhow::Result<()> {
+        self.with_conn(|conn| {
+            if subject_urls.is_empty() {
+                conn.execute("DELETE FROM threads WHERE source = ?1", [source])?;
+                return Ok(());
+            }
+
+            conn.execute_batch(
+                r#"
+                CREATE TEMP TABLE IF NOT EXISTS keep_subject_urls (
+                    url TEXT PRIMARY KEY
+                );
+                DELETE FROM keep_subject_urls;
+                "#,
+            )?;
+
+            let mut insert_stmt =
+                conn.prepare("INSERT OR IGNORE INTO keep_subject_urls (url) VALUES (?1)")?;
+            for subject_url in subject_urls {
+                insert_stmt.execute([subject_url])?;
+            }
+
+            conn.execute(
+                r#"
+                DELETE FROM threads
+                WHERE source = ?1
+                  AND (
+                      subject_url IS NULL
+                      OR NOT EXISTS (
+                          SELECT 1
+                          FROM keep_subject_urls
+                          WHERE keep_subject_urls.url = threads.subject_url
+                      )
+                  )
+                "#,
+                [source],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn upsert_pr(&self, row: &NewPr) -> anyhow::Result<()> {
         let now = unix_ts();
         self.with_conn(|conn| {
@@ -297,6 +342,16 @@ impl Db {
                 [pr_url],
             )?;
             Ok(())
+        })
+    }
+
+    pub fn mark_assigned_issue_done_local(&self, subject_url: &str) -> anyhow::Result<bool> {
+        self.with_conn(|conn| {
+            let changed = conn.execute(
+                "UPDATE threads SET done = 1, unread = 0 WHERE source = 'my_issue' AND subject_url = ?1",
+                [subject_url],
+            )?;
+            Ok(changed > 0)
         })
     }
 

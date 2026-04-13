@@ -58,6 +58,21 @@ pub struct AuthoredPrSummary {
 }
 
 #[derive(Debug, Clone)]
+pub struct AssignedIssueSummary {
+    pub issue_url: String,
+    pub repository: String,
+    pub title: String,
+    pub updated_at: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssignedIssuesSearchResult {
+    pub issues: Vec<AssignedIssueSummary>,
+    pub is_complete: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct PrDetails {
     pub pr_url: String,
     pub owner: String,

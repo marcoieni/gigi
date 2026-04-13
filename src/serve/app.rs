@@ -146,9 +146,10 @@ impl AppState {
             Ok(stats) => {
                 print_poll_stats("✅ Dashboard refresh complete:", stats);
                 self.notify_dashboard(format!(
-                    "Refresh complete: notifications={}, my_prs={}, prs={}, reviews={}",
+                    "Refresh complete: notifications={}, my_prs={}, assigned_issues={}, prs={}, reviews={}",
                     stats.notifications_fetched,
                     stats.authored_prs_fetched,
+                    stats.assigned_issues_fetched,
                     stats.prs_seen,
                     stats.reviews_run
                 ));
@@ -165,9 +166,10 @@ impl AppState {
         let result = self.poll_once_with_mode(PollMode::Startup).await;
         match &result {
             Ok(stats) => self.notify_dashboard(format!(
-                "Initial poll complete: notifications={}, my_prs={}, prs={}, reviews={}",
+                "Initial poll complete: notifications={}, my_prs={}, assigned_issues={}, prs={}, reviews={}",
                 stats.notifications_fetched,
                 stats.authored_prs_fetched,
+                stats.assigned_issues_fetched,
                 stats.prs_seen,
                 stats.reviews_run
             )),
@@ -180,9 +182,10 @@ impl AppState {
         let result = self.poll_once_with_mode(PollMode::Regular).await;
         match &result {
             Ok(stats) => self.notify_dashboard(format!(
-                "Background poll complete: notifications={}, my_prs={}, prs={}, reviews={}",
+                "Background poll complete: notifications={}, my_prs={}, assigned_issues={}, prs={}, reviews={}",
                 stats.notifications_fetched,
                 stats.authored_prs_fetched,
+                stats.assigned_issues_fetched,
                 stats.prs_seen,
                 stats.reviews_run
             )),
@@ -223,6 +226,15 @@ impl AppState {
                 .ok_or_else(|| anyhow::anyhow!("Missing PR URL for authored PR done action"))?;
             self.db.mark_authored_pr_done_local(pr_url)?;
             marked_any = true;
+        }
+
+        if request.mark_assigned_issue {
+            let subject_url = request.subject_url.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("Missing issue URL for assigned issue done action")
+            })?;
+            if self.db.mark_assigned_issue_done_local(subject_url)? {
+                marked_any = true;
+            }
         }
 
         anyhow::ensure!(marked_any, "No done action requested");

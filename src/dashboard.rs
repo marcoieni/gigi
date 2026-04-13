@@ -79,7 +79,8 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                     <fieldset class="filter-group">
                         <legend>"Show"</legend>
                         <FilterCheckbox name="show_notifications" label="Notifications" checked=snapshot.filters.show_notifications />
-                        <FilterCheckbox name="show_prs" label="PRs" checked=snapshot.filters.show_prs />
+                        <FilterCheckbox name="show_my_prs" label="My PRs" checked=snapshot.filters.show_my_prs />
+                        <FilterCheckbox name="show_assigned_issues" label="Assigned issues" checked=snapshot.filters.show_assigned_issues />
                     </fieldset>
                     <fieldset class="filter-group">
                         <legend>"Status"</legend>
@@ -237,6 +238,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
     let shows_review_pill = thread_supports_review_pill(thread.subject_type.as_deref());
     let fix_action_for_modal = can_fix.then(|| fix_action_path(&thread));
     let mark_authored_pr = thread.sources.iter().any(|source| source == "my_pr");
+    let mark_assigned_issue = thread.sources.iter().any(|source| source == "my_issue");
     let review_action = review_action_path(&thread);
     let mark_read_thread_id = thread
         .unread
@@ -351,12 +353,14 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                         <button class="btn icon-btn" type="submit" data-loading-label="Opening..." aria-label="Open in Terminal" title="Open in Terminal">{svg_icon(TERMINAL_ICON)}</button>
                     </form>
                 </div>
-                {if thread.github_thread_id.is_some() || mark_authored_pr {
+                {if thread.github_thread_id.is_some() || mark_authored_pr || mark_assigned_issue {
                     view! {
                         <form action="/dashboard/actions/done" method="post" data-async-form>
                             {thread.github_thread_id.clone().map(|thread_id| view! { <input type="hidden" name="github_thread_id" value=thread_id /> })}
                             {thread.pr_url.clone().map(|pr_url| view! { <input type="hidden" name="pr_url" value=pr_url /> })}
+                            {thread.subject_url.clone().map(|subject_url| view! { <input type="hidden" name="subject_url" value=subject_url /> })}
                             <input type="hidden" name="mark_authored_pr" value=mark_authored_pr.to_string() />
+                            <input type="hidden" name="mark_assigned_issue" value=mark_assigned_issue.to_string() />
                             <button class="btn icon-btn" type="submit" data-loading-label="Saving..." aria-label="Mark done" title="Mark done">{svg_icon(CHECKMARK_ICON)}</button>
                         </form>
                     }.into_any()
@@ -436,6 +440,7 @@ fn source_label(source: &str) -> &'static str {
     match source {
         "notification" => "Notification",
         "my_pr" => "My PR",
+        "my_issue" => "Assigned issue",
         _ => "Other",
     }
 }
@@ -443,6 +448,7 @@ fn source_label(source: &str) -> &'static str {
 fn source_icon(source: &str) -> &'static str {
     match source {
         "my_pr" => MY_PR_ICON,
+        "my_issue" => ISSUE_OPEN_ICON,
         _ => NOTIFICATION_ICON,
     }
 }

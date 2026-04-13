@@ -164,7 +164,9 @@ async fn mark_done(
         .mark_done(crate::serve::MarkDoneRequest {
             github_thread_id: form.github_thread_id,
             pr_url: form.pr_url,
+            subject_url: form.subject_url,
             mark_authored_pr: form.mark_authored_pr,
+            mark_assigned_issue: form.mark_assigned_issue,
         })
         .await
         .map_err(|err| ApiErrorResponse::internal(&err))?;
@@ -281,8 +283,11 @@ struct OpenProjectRequest {
 struct MarkDoneForm {
     github_thread_id: Option<String>,
     pr_url: Option<String>,
+    subject_url: Option<String>,
     #[serde(default)]
     mark_authored_pr: bool,
+    #[serde(default)]
+    mark_assigned_issue: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -293,7 +298,8 @@ struct MarkReadForm {
 #[derive(Debug, Deserialize)]
 struct DashboardFiltersForm {
     show_notifications: Option<String>,
-    show_prs: Option<String>,
+    show_my_prs: Option<String>,
+    show_assigned_issues: Option<String>,
     show_done: Option<String>,
     show_not_done: Option<String>,
     group_by_repository: Option<String>,
@@ -303,7 +309,8 @@ impl DashboardFiltersForm {
     fn into_filters(self) -> DashboardThreadFilters {
         DashboardThreadFilters {
             show_notifications: self.show_notifications.is_some(),
-            show_prs: self.show_prs.is_some(),
+            show_my_prs: self.show_my_prs.is_some(),
+            show_assigned_issues: self.show_assigned_issues.is_some(),
             show_done: self.show_done.is_some(),
             show_not_done: self.show_not_done.is_some(),
             group_by_repository: self.group_by_repository.is_some(),

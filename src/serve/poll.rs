@@ -76,6 +76,11 @@ pub(super) async fn poll_once_async(
     );
     sync_authored_pr_threads(db, &authored_prs)?;
 
+    println!("🔎 Assigned issue fetch: mode={mode:?}");
+    let assigned_issues = github::fetch_assigned_issues().await?;
+    print_fetched_assigned_issues(&assigned_issues);
+    sync_assigned_issue_threads(db, &assigned_issues)?;
+
     let mut pr_urls = HashSet::new();
     for notification in &notifications {
         if let Some(pr_url) = &notification.pr_url {
@@ -200,6 +205,7 @@ pub(super) async fn poll_once_async(
     Ok(PollStats {
         notifications_fetched: notifications.len(),
         authored_prs_fetched: authored_prs.len(),
+        assigned_issues_fetched: assigned_issues.issues.len(),
         prs_seen: pr_urls.len(),
         reviews_run,
         participants: batch.participants,
@@ -314,6 +320,60 @@ pub(crate) fn sync_authored_pr_threads(
     Ok(())
 }
 
+pub(crate) fn sync_assigned_issue_threads(
+    db: &Db,
+    assigned_issues: &github::AssignedIssuesSearchResult,
+) -> anyhow::Result<()> {
+    let open_issue_urls: Vec<_> = assigned_issues
+        .issues
+        .iter()
+        .filter(|issue| issue.state == "OPEN")
+        .map(|issue| issue.issue_url.clone())
+        .collect();
+
+    if assigned_issues.is_complete {
+        println!(
+            "🗄️ DB delete threads: source=my_issue keep_open_issue_urls={}",
+            open_issue_urls.len()
+        );
+        db.delete_threads_by_source_except_subject_urls("my_issue", &open_issue_urls)?;
+    } else {
+        println!(
+            "🗄️ DB skip delete threads: source=my_issue reason=incomplete_search_results keep_open_issue_urls={}",
+            open_issue_urls.len()
+        );
+    }
+
+    for issue in assigned_issues
+        .issues
+        .iter()
+        .filter(|issue| issue.state == "OPEN")
+    {
+        let thread_key = format!("myissue:{}", issue.issue_url);
+        let row = db::NewThread {
+            thread_key,
+            github_thread_id: None,
+            source: "my_issue".to_string(),
+            repository: issue.repository.clone(),
+            subject_type: Some("Issue".to_string()),
+            subject_title: issue.title.clone(),
+            subject_url: Some(issue.issue_url.clone()),
+            issue_state: Some(issue.state.clone()),
+            discussion_answered: None,
+            reason: Some("assigned".to_string()),
+            pr_url: None,
+            unread: false,
+            done: false,
+            updated_at: issue.updated_at.clone(),
+            is_draft: false,
+        };
+        db.upsert_thread(&row)?;
+        print_thread_db_write(&row);
+    }
+
+    Ok(())
+}
+
 pub(super) fn upsert_pr_from_details(db: &Db, details: &github::PrDetails) -> anyhow::Result<()> {
     let row = db::NewPr {
         pr_url: details.pr_url.clone(),
@@ -360,6 +420,20 @@ fn print_fetched_authored_prs(authored_prs: &[github::AuthoredPrSummary]) {
             authored.updated_at,
             authored.is_draft,
             authored.title
+        );
+    }
+}
+
+fn print_fetched_assigned_issues(assigned_issues: &github::AssignedIssuesSearchResult) {
+    println!(
+        "📥 Assigned issues fetched: {} complete={}",
+        assigned_issues.issues.len(),
+        assigned_issues.is_complete
+    );
+    for issue in &assigned_issues.issues {
+        println!(
+            "  • issue_url={} repo={} state={} updated_at={} title={}",
+            issue.issue_url, issue.repository, issue.state, issue.updated_at, issue.title
         );
     }
 }
@@ -540,7 +614,11 @@ async fn handle_closed_pr_branch_sync(db: &Db, details: &github::PrDetails) -> a
 
 pub(super) fn print_poll_stats(prefix: &str, stats: &PollStats) {
     println!(
-        "{prefix} notifications={}, my_prs={}, prs={}, reviews={}",
-        stats.notifications_fetched, stats.authored_prs_fetched, stats.prs_seen, stats.reviews_run
+        "{prefix} notifications={}, my_prs={}, assigned_issues={}, prs={}, reviews={}",
+        stats.notifications_fetched,
+        stats.authored_prs_fetched,
+        stats.assigned_issues_fetched,
+        stats.prs_seen,
+        stats.reviews_run
     );
 }
