@@ -378,12 +378,45 @@ fn sync_assigned_issue_threads_preserves_done_entries() {
     };
 
     sync_assigned_issue_threads(&db, &current_issue).unwrap();
-    db.mark_assigned_issue_done_local(&current_issue.issues[0].issue_url)
-        .unwrap();
+    assert!(
+        db.mark_assigned_issue_done_local(&current_issue.issues[0].issue_url)
+            .unwrap()
+    );
     sync_assigned_issue_threads(&db, &current_issue).unwrap();
 
     let threads = db.list_dashboard_threads().unwrap();
     assert!(threads.is_empty());
+}
+
+#[test]
+fn mark_done_rejects_missing_assigned_issue_row() {
+    let db = test_db();
+    let work_dir = camino::Utf8PathBuf::from_path_buf(std::env::temp_dir()).unwrap();
+    let (dashboard_updates, _) = tokio::sync::watch::channel(DashboardUpdate {
+        version: 0,
+        message: String::new(),
+    });
+    let state = AppState {
+        db,
+        config: config::AppConfig::default(),
+        work_dir,
+        poll_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        dashboard_refresh_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        dashboard_updates,
+    };
+
+    let err = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(state.mark_done(MarkDoneRequest {
+            github_thread_id: None,
+            pr_url: None,
+            subject_url: Some("https://github.com/o/r/issues/404".to_string()),
+            mark_authored_pr: false,
+            mark_assigned_issue: true,
+        }))
+        .unwrap_err();
+
+    assert_eq!(err.to_string(), "No done action requested");
 }
 
 #[test]

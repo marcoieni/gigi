@@ -59,6 +59,44 @@ fn upsert_thread_is_idempotent() {
 }
 
 #[test]
+fn delete_threads_by_source_except_subject_urls_handles_large_keep_sets() {
+    let db = test_db();
+    let kept_url = "https://github.com/o/r/issues/1099".to_string();
+    let stale_url = "https://github.com/o/r/issues/stale".to_string();
+
+    for subject_url in [&kept_url, &stale_url] {
+        db.upsert_thread(&NewThread {
+            is_draft: false,
+            thread_key: format!("myissue:{subject_url}"),
+            github_thread_id: None,
+            source: "my_issue".to_string(),
+            repository: "o/r".to_string(),
+            subject_type: Some("Issue".to_string()),
+            subject_title: subject_url.clone(),
+            subject_url: Some(subject_url.clone()),
+            issue_state: Some("OPEN".to_string()),
+            discussion_answered: None,
+            reason: Some("assigned".to_string()),
+            pr_url: None,
+            unread: false,
+            done: false,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        })
+        .unwrap();
+    }
+
+    let keep_urls: Vec<String> = (0..1100)
+        .map(|idx| format!("https://github.com/o/r/issues/{idx}"))
+        .collect();
+    db.delete_threads_by_source_except_subject_urls("my_issue", &keep_urls)
+        .unwrap();
+
+    let threads = db.list_dashboard_threads().unwrap();
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].subject_url.as_deref(), Some(kept_url.as_str()));
+}
+
+#[test]
 fn latest_review_roundtrip() {
     let db = test_db();
 
@@ -887,6 +925,63 @@ fn dashboard_threads_deduplicate_notification_and_my_issue() {
     assert_eq!(threads[0].subject_title, "Notification title");
     assert_eq!(threads[0].updated_at, "2026-01-02T00:00:00Z");
     assert!(threads[0].unread);
+}
+
+#[test]
+fn pr_and_non_pr_threads_with_matching_urls_do_not_merge() {
+    let db = test_db();
+    let shared_url = "https://github.com/a/b/pull/1".to_string();
+
+    db.upsert_thread(&NewThread {
+        is_draft: false,
+        thread_key: format!("mypr:{shared_url}"),
+        github_thread_id: None,
+        source: "my_pr".to_string(),
+        repository: "a/b".to_string(),
+        subject_type: Some("PullRequest".to_string()),
+        subject_title: "PR title".to_string(),
+        subject_url: Some(shared_url.clone()),
+        issue_state: None,
+        discussion_answered: None,
+        reason: Some("authored".to_string()),
+        pr_url: Some(shared_url.clone()),
+        unread: false,
+        done: false,
+        updated_at: "2026-01-02T00:00:00Z".to_string(),
+    })
+    .unwrap();
+
+    db.upsert_thread(&NewThread {
+        is_draft: false,
+        thread_key: "notif:123".to_string(),
+        github_thread_id: Some("123".to_string()),
+        source: "notification".to_string(),
+        repository: "a/b".to_string(),
+        subject_type: Some("Issue".to_string()),
+        subject_title: "Issue title".to_string(),
+        subject_url: Some(shared_url),
+        issue_state: Some("OPEN".to_string()),
+        discussion_answered: None,
+        reason: Some("mention".to_string()),
+        pr_url: None,
+        unread: true,
+        done: false,
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    })
+    .unwrap();
+
+    let threads = db.list_dashboard_threads().unwrap();
+    assert_eq!(threads.len(), 2);
+    assert!(
+        threads
+            .iter()
+            .any(|thread| thread.subject_title == "PR title")
+    );
+    assert!(
+        threads
+            .iter()
+            .any(|thread| thread.subject_title == "Issue title")
+    );
 }
 
 #[test]

@@ -118,22 +118,36 @@ impl Db {
                 return Ok(());
             }
 
-            let mut sql =
-                String::from("DELETE FROM threads WHERE source = ?1 AND (subject_url IS NULL OR subject_url NOT IN (");
-            for idx in 0..subject_urls.len() {
-                if idx > 0 {
-                    sql.push_str(", ");
-                }
-                sql.push('?');
-                sql.push_str(&(idx + 2).to_string());
-            }
-            sql.push_str("))");
+            conn.execute_batch(
+                r#"
+                CREATE TEMP TABLE IF NOT EXISTS keep_subject_urls (
+                    url TEXT PRIMARY KEY
+                );
+                DELETE FROM keep_subject_urls;
+                "#,
+            )?;
 
-            let mut stmt = conn.prepare(&sql)?;
-            let params = std::iter::once(source.to_string())
-                .chain(subject_urls.iter().cloned())
-                .collect::<Vec<_>>();
-            stmt.execute(rusqlite::params_from_iter(params))?;
+            let mut insert_stmt =
+                conn.prepare("INSERT OR IGNORE INTO keep_subject_urls (url) VALUES (?1)")?;
+            for subject_url in subject_urls {
+                insert_stmt.execute([subject_url])?;
+            }
+
+            conn.execute(
+                r#"
+                DELETE FROM threads
+                WHERE source = ?1
+                  AND (
+                      subject_url IS NULL
+                      OR NOT EXISTS (
+                          SELECT 1
+                          FROM keep_subject_urls
+                          WHERE keep_subject_urls.url = threads.subject_url
+                      )
+                  )
+                "#,
+                [source],
+            )?;
             Ok(())
         })
     }
@@ -331,13 +345,13 @@ impl Db {
         })
     }
 
-    pub fn mark_assigned_issue_done_local(&self, subject_url: &str) -> anyhow::Result<()> {
+    pub fn mark_assigned_issue_done_local(&self, subject_url: &str) -> anyhow::Result<bool> {
         self.with_conn(|conn| {
-            conn.execute(
+            let changed = conn.execute(
                 "UPDATE threads SET done = 1, unread = 0 WHERE source = 'my_issue' AND subject_url = ?1",
                 [subject_url],
             )?;
-            Ok(())
+            Ok(changed > 0)
         })
     }
 

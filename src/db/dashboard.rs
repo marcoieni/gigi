@@ -172,17 +172,15 @@ impl Db {
                 INSERT INTO dashboard_preferences (
                     id,
                     show_notifications,
-                    show_prs,
                     show_my_prs,
                     show_assigned_issues,
                     show_done,
                     show_not_done,
                     group_by_repository,
                     updated_at
-                ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 ON CONFLICT(id) DO UPDATE SET
                     show_notifications = excluded.show_notifications,
-                    show_prs = excluded.show_prs,
                     show_my_prs = excluded.show_my_prs,
                     show_assigned_issues = excluded.show_assigned_issues,
                     show_done = excluded.show_done,
@@ -192,7 +190,6 @@ impl Db {
                 "#,
                 params![
                     bool_to_int(filters.show_notifications),
-                    bool_to_int(filters.show_my_prs || filters.show_assigned_issues),
                     bool_to_int(filters.show_my_prs),
                     bool_to_int(filters.show_assigned_issues),
                     bool_to_int(filters.show_done),
@@ -253,7 +250,14 @@ fn deduplicate_dashboard_threads(threads: Vec<DashboardThread>) -> Vec<Dashboard
 }
 
 fn dashboard_thread_identity(thread: &DashboardThread) -> Option<String> {
-    thread.pr_url.clone().or_else(|| thread.subject_url.clone())
+    if let Some(pr_url) = &thread.pr_url {
+        return Some(format!("pr:{pr_url}"));
+    }
+
+    thread.subject_url.as_ref().map(|subject_url| {
+        let subject_type = thread.subject_type.as_deref().unwrap_or("unknown");
+        format!("subject:{subject_type}:{subject_url}")
+    })
 }
 
 #[derive(Debug, Clone)]

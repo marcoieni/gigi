@@ -232,8 +232,9 @@ impl AppState {
             let subject_url = request.subject_url.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("Missing issue URL for assigned issue done action")
             })?;
-            self.db.mark_assigned_issue_done_local(subject_url)?;
-            marked_any = true;
+            if self.db.mark_assigned_issue_done_local(subject_url)? {
+                marked_any = true;
+            }
         }
 
         anyhow::ensure!(marked_any, "No done action requested");

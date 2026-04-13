@@ -28,6 +28,7 @@ pub(super) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
             WHERE github_thread_id IS NOT NULL;
 
         CREATE INDEX IF NOT EXISTS idx_threads_pr_url ON threads(pr_url);
+        CREATE INDEX IF NOT EXISTS idx_threads_source_subject_url ON threads(source, subject_url);
 
         CREATE TABLE IF NOT EXISTS prs (
             pr_url TEXT PRIMARY KEY,
@@ -82,7 +83,6 @@ pub(super) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         CREATE TABLE IF NOT EXISTS dashboard_preferences (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             show_notifications INTEGER NOT NULL,
-            show_prs INTEGER NOT NULL,
             show_my_prs INTEGER NOT NULL DEFAULT 1,
             show_assigned_issues INTEGER NOT NULL DEFAULT 1,
             show_done INTEGER NOT NULL,
@@ -119,30 +119,19 @@ pub(super) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         "group_by_repository",
         "INTEGER NOT NULL DEFAULT 1",
     )?;
-    let added_show_my_prs = add_column_if_missing(
+    add_column_if_missing(
         conn,
         "dashboard_preferences",
         "show_my_prs",
         "INTEGER NOT NULL DEFAULT 1",
     )?;
-    let added_show_assigned_issues = add_column_if_missing(
+    add_column_if_missing(
         conn,
         "dashboard_preferences",
         "show_assigned_issues",
         "INTEGER NOT NULL DEFAULT 1",
     )?;
     add_column_if_missing(conn, "pr_participants", "last_activity_at", "TEXT")?;
-
-    if added_show_my_prs || added_show_assigned_issues {
-        conn.execute_batch(
-            r#"
-            UPDATE dashboard_preferences
-            SET
-                show_my_prs = show_prs,
-                show_assigned_issues = show_prs
-            "#,
-        )?;
-    }
 
     conn.execute_batch(
         r#"
