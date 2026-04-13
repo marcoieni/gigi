@@ -260,11 +260,14 @@ pub async fn fetch_assigned_issues() -> anyhow::Result<Vec<AssignedIssueSummary>
 
     let value: Value =
         serde_json::from_str(output.stdout()).context("Invalid assigned issues JSON")?;
-    let mut results = Vec::new();
+    Ok(parse_assigned_issues_search_results(&value))
+}
 
+fn parse_assigned_issues_search_results(value: &Value) -> Vec<AssignedIssueSummary> {
+    let mut results = Vec::new();
     let pages: Vec<Value> = match value {
-        Value::Array(items) if items.iter().all(Value::is_object) => items,
-        Value::Object(_) => vec![value],
+        Value::Array(items) if items.iter().all(Value::is_object) => items.clone(),
+        Value::Object(_) => vec![value.clone()],
         _ => vec![],
     };
 
@@ -304,6 +307,16 @@ pub async fn fetch_assigned_issues() -> anyhow::Result<Vec<AssignedIssueSummary>
                 .and_then(|value| value.get("full_name"))
                 .and_then(Value::as_str)
                 .map(ToString::to_string)
+                .or_else(|| {
+                    item.get("repository_url")
+                        .and_then(Value::as_str)
+                        .and_then(parse_repo_api_url)
+                })
+                .or_else(|| {
+                    item.get("html_url")
+                        .and_then(Value::as_str)
+                        .and_then(parse_repo_from_issue_html_url)
+                })
                 .unwrap_or_default();
 
             if repository.is_empty() {
@@ -320,7 +333,32 @@ pub async fn fetch_assigned_issues() -> anyhow::Result<Vec<AssignedIssueSummary>
         }
     }
 
-    Ok(results)
+    results
+}
+
+fn parse_repo_api_url(api_url: &str) -> Option<String> {
+    let path = api_url
+        .trim()
+        .strip_prefix("https://api.github.com/repos/")
+        .or_else(|| api_url.trim().strip_prefix("repos/"))?;
+    let mut parts = path.split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some(format!("{owner}/{repo}"))
+}
+
+fn parse_repo_from_issue_html_url(html_url: &str) -> Option<String> {
+    let path = html_url.trim().strip_prefix("https://github.com/")?;
+    let mut parts = path.split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some(format!("{owner}/{repo}"))
 }
 
 pub async fn fetch_pr_details(pr_url: &str) -> anyhow::Result<PrDetails> {
@@ -1213,6 +1251,34 @@ mod tests {
     #[test]
     fn notifications_endpoint_includes_read_notifications_without_cursor() {
         assert_eq!(notifications_endpoint(None), "/notifications?all=true");
+    }
+
+    #[test]
+    fn parses_assigned_issue_search_results_with_repository_url() {
+        let value = serde_json::json!([
+            {
+                "items": [
+                    {
+                        "html_url": "https://github.com/rust-lang/crates.io/issues/13193",
+                        "repository_url": "https://api.github.com/repos/rust-lang/crates.io",
+                        "title": "503 from `cargo publish`",
+                        "updated_at": "2026-04-13T10:00:00Z",
+                        "state": "open"
+                    }
+                ]
+            }
+        ]);
+
+        let issues = parse_assigned_issues_search_results(&value);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(
+            issues[0].issue_url,
+            "https://github.com/rust-lang/crates.io/issues/13193"
+        );
+        assert_eq!(issues[0].repository, "rust-lang/crates.io");
+        assert_eq!(issues[0].title, "503 from `cargo publish`");
+        assert_eq!(issues[0].updated_at, "2026-04-13T10:00:00Z");
+        assert_eq!(issues[0].state, "OPEN");
     }
 
     #[test]
