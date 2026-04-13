@@ -83,6 +83,8 @@ pub(super) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
             id INTEGER PRIMARY KEY CHECK (id = 1),
             show_notifications INTEGER NOT NULL,
             show_prs INTEGER NOT NULL,
+            show_my_prs INTEGER NOT NULL DEFAULT 1,
+            show_assigned_issues INTEGER NOT NULL DEFAULT 1,
             show_done INTEGER NOT NULL,
             show_not_done INTEGER NOT NULL,
             group_by_repository INTEGER NOT NULL DEFAULT 1,
@@ -117,7 +119,30 @@ pub(super) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         "group_by_repository",
         "INTEGER NOT NULL DEFAULT 1",
     )?;
+    let added_show_my_prs = add_column_if_missing(
+        conn,
+        "dashboard_preferences",
+        "show_my_prs",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
+    let added_show_assigned_issues = add_column_if_missing(
+        conn,
+        "dashboard_preferences",
+        "show_assigned_issues",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
     add_column_if_missing(conn, "pr_participants", "last_activity_at", "TEXT")?;
+
+    if added_show_my_prs || added_show_assigned_issues {
+        conn.execute_batch(
+            r#"
+            UPDATE dashboard_preferences
+            SET
+                show_my_prs = show_prs,
+                show_assigned_issues = show_prs
+            "#,
+        )?;
+    }
 
     conn.execute_batch(
         r#"
@@ -135,17 +160,17 @@ fn add_column_if_missing(
     table: &str,
     column: &str,
     definition: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let pragma = format!("PRAGMA table_info({table})");
     let mut stmt = conn.prepare(&pragma)?;
     let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
     for existing in columns {
         if existing? == column {
-            return Ok(());
+            return Ok(false);
         }
     }
 
     let alter = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
     conn.execute(&alter, [])?;
-    Ok(())
+    Ok(true)
 }

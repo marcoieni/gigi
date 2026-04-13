@@ -474,7 +474,8 @@ fn dashboard_can_show_done_items_when_requested() {
     let threads = db
         .list_dashboard_threads_with_filters(&DashboardThreadFilters {
             show_notifications: true,
-            show_prs: true,
+            show_my_prs: true,
+            show_assigned_issues: true,
             show_done: true,
             show_not_done: false,
             group_by_repository: true,
@@ -553,7 +554,8 @@ fn dashboard_filters_by_source_type() {
     let threads = db
         .list_dashboard_threads_with_filters(&DashboardThreadFilters {
             show_notifications: false,
-            show_prs: true,
+            show_my_prs: true,
+            show_assigned_issues: true,
             show_done: false,
             show_not_done: true,
             group_by_repository: true,
@@ -583,7 +585,8 @@ fn dashboard_filter_preferences_roundtrip() {
     let db = test_db();
     let filters = DashboardThreadFilters {
         show_notifications: false,
-        show_prs: true,
+        show_my_prs: true,
+        show_assigned_issues: false,
         show_done: true,
         show_not_done: false,
         group_by_repository: false,
@@ -884,4 +887,64 @@ fn dashboard_threads_deduplicate_notification_and_my_issue() {
     assert_eq!(threads[0].subject_title, "Notification title");
     assert_eq!(threads[0].updated_at, "2026-01-02T00:00:00Z");
     assert!(threads[0].unread);
+}
+
+#[test]
+fn assigned_issue_cards_remain_visible_when_notifications_are_hidden() {
+    let db = test_db();
+    let issue_url = "https://github.com/a/b/issues/1".to_string();
+
+    db.upsert_thread(&NewThread {
+        is_draft: false,
+        thread_key: format!("myissue:{issue_url}"),
+        github_thread_id: None,
+        source: "my_issue".to_string(),
+        repository: "a/b".to_string(),
+        subject_type: Some("Issue".to_string()),
+        subject_title: "Assigned title".to_string(),
+        subject_url: Some(issue_url.clone()),
+        issue_state: Some("OPEN".to_string()),
+        discussion_answered: None,
+        reason: Some("assigned".to_string()),
+        pr_url: None,
+        unread: false,
+        done: false,
+        updated_at: "2026-01-02T00:00:00Z".to_string(),
+    })
+    .unwrap();
+
+    db.upsert_thread(&NewThread {
+        is_draft: false,
+        thread_key: "notif:123".to_string(),
+        github_thread_id: Some("123".to_string()),
+        source: "notification".to_string(),
+        repository: "a/b".to_string(),
+        subject_type: Some("Issue".to_string()),
+        subject_title: "Notification title".to_string(),
+        subject_url: Some(issue_url),
+        issue_state: Some("OPEN".to_string()),
+        discussion_answered: None,
+        reason: Some("mention".to_string()),
+        pr_url: None,
+        unread: true,
+        done: false,
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    })
+    .unwrap();
+
+    let threads = db
+        .list_dashboard_threads_with_filters(&DashboardThreadFilters {
+            show_notifications: false,
+            show_my_prs: false,
+            show_assigned_issues: true,
+            show_done: false,
+            show_not_done: true,
+            group_by_repository: true,
+            hidden_repositories: Vec::new(),
+        })
+        .unwrap();
+
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].sources, vec!["my_issue"]);
+    assert_eq!(threads[0].subject_title, "Assigned title");
 }

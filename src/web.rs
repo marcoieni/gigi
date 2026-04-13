@@ -298,7 +298,8 @@ struct MarkReadForm {
 #[derive(Debug, Deserialize)]
 struct DashboardFiltersForm {
     show_notifications: Option<String>,
-    show_prs: Option<String>,
+    show_my_prs: Option<String>,
+    show_assigned_issues: Option<String>,
     show_done: Option<String>,
     show_not_done: Option<String>,
     group_by_repository: Option<String>,
@@ -308,7 +309,8 @@ impl DashboardFiltersForm {
     fn into_filters(self) -> DashboardThreadFilters {
         DashboardThreadFilters {
             show_notifications: self.show_notifications.is_some(),
-            show_prs: self.show_prs.is_some(),
+            show_my_prs: self.show_my_prs.is_some(),
+            show_assigned_issues: self.show_assigned_issues.is_some(),
             show_done: self.show_done.is_some(),
             show_not_done: self.show_not_done.is_some(),
             group_by_repository: self.group_by_repository.is_some(),

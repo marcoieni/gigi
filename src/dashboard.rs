@@ -79,7 +79,8 @@ fn render_fragment_view(snapshot: DashboardSnapshot) -> impl IntoView {
                     <fieldset class="filter-group">
                         <legend>"Show"</legend>
                         <FilterCheckbox name="show_notifications" label="Notifications" checked=snapshot.filters.show_notifications />
-                        <FilterCheckbox name="show_prs" label="My items" checked=snapshot.filters.show_prs />
+                        <FilterCheckbox name="show_my_prs" label="My PRs" checked=snapshot.filters.show_my_prs />
+                        <FilterCheckbox name="show_assigned_issues" label="Assigned issues" checked=snapshot.filters.show_assigned_issues />
                     </fieldset>
                     <fieldset class="filter-group">
                         <legend>"Status"</legend>

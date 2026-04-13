@@ -116,7 +116,8 @@ pub struct DashboardThread {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DashboardThreadFilters {
     pub show_notifications: bool,
-    pub show_prs: bool,
+    pub show_my_prs: bool,
+    pub show_assigned_issues: bool,
     pub show_done: bool,
     pub show_not_done: bool,
     pub group_by_repository: bool,
@@ -127,7 +128,8 @@ impl Default for DashboardThreadFilters {
     fn default() -> Self {
         Self {
             show_notifications: true,
-            show_prs: true,
+            show_my_prs: true,
+            show_assigned_issues: true,
             show_done: false,
             show_not_done: true,
             group_by_repository: true,

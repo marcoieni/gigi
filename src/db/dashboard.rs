@@ -126,7 +126,8 @@ impl Db {
                     r#"
                 SELECT
                     show_notifications,
-                    show_prs,
+                    show_my_prs,
+                    show_assigned_issues,
                     show_done,
                     show_not_done,
                     group_by_repository
@@ -137,10 +138,11 @@ impl Db {
                     |row| {
                         Ok(DashboardThreadFilters {
                             show_notifications: row.get::<_, i64>(0)? != 0,
-                            show_prs: row.get::<_, i64>(1)? != 0,
-                            show_done: row.get::<_, i64>(2)? != 0,
-                            show_not_done: row.get::<_, i64>(3)? != 0,
-                            group_by_repository: row.get::<_, i64>(4)? != 0,
+                            show_my_prs: row.get::<_, i64>(1)? != 0,
+                            show_assigned_issues: row.get::<_, i64>(2)? != 0,
+                            show_done: row.get::<_, i64>(3)? != 0,
+                            show_not_done: row.get::<_, i64>(4)? != 0,
+                            group_by_repository: row.get::<_, i64>(5)? != 0,
                             hidden_repositories: Vec::new(),
                         })
                     },
@@ -171,14 +173,18 @@ impl Db {
                     id,
                     show_notifications,
                     show_prs,
+                    show_my_prs,
+                    show_assigned_issues,
                     show_done,
                     show_not_done,
                     group_by_repository,
                     updated_at
-                ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+                ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                 ON CONFLICT(id) DO UPDATE SET
                     show_notifications = excluded.show_notifications,
                     show_prs = excluded.show_prs,
+                    show_my_prs = excluded.show_my_prs,
+                    show_assigned_issues = excluded.show_assigned_issues,
                     show_done = excluded.show_done,
                     show_not_done = excluded.show_not_done,
                     group_by_repository = excluded.group_by_repository,
@@ -186,7 +192,9 @@ impl Db {
                 "#,
                 params![
                     bool_to_int(filters.show_notifications),
-                    bool_to_int(filters.show_prs),
+                    bool_to_int(filters.show_my_prs || filters.show_assigned_issues),
+                    bool_to_int(filters.show_my_prs),
+                    bool_to_int(filters.show_assigned_issues),
                     bool_to_int(filters.show_done),
                     bool_to_int(filters.show_not_done),
                     bool_to_int(filters.group_by_repository),
@@ -311,9 +319,10 @@ impl DashboardThreadRow {
 
 impl DashboardThreadFilters {
     fn include_sources(&self, sources: &[String]) -> bool {
-        sources.iter().all(|source| match source.as_str() {
+        sources.iter().any(|source| match source.as_str() {
             "notification" => self.show_notifications,
-            "my_pr" | "my_issue" => self.show_prs,
+            "my_pr" => self.show_my_prs,
+            "my_issue" => self.show_assigned_issues,
             _ => false,
         })
     }
