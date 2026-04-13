@@ -66,7 +66,8 @@ async fn print_dry_run_summary(
     repo_root: &Utf8Path,
     merge_base: &str,
     pr_title: &str,
-    co_authors: &[String],
+    detected_co_authors: &[String],
+    additional_co_authors: &[String],
     co_authors_text: &str,
 ) -> anyhow::Result<()> {
     println!("\n🔍 DRY RUN: The following commits would be squashed:");
@@ -93,8 +94,15 @@ async fn print_dry_run_summary(
     println!("{commit_message}");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    if !co_authors.is_empty() {
-        println!("\n👥 Co-authors detected: {}", co_authors.len());
+    if !detected_co_authors.is_empty() {
+        println!("\n👥 Co-authors detected: {}", detected_co_authors.len());
+    }
+
+    if !additional_co_authors.is_empty() {
+        println!(
+            "➕ Additional co-authors selected: {}",
+            additional_co_authors.len()
+        );
     }
 
     println!("\n💡 To perform the actual squash, run without --dry-run");
@@ -130,7 +138,12 @@ async fn perform_squash_and_push(
     Ok(())
 }
 
-pub async fn squash(repo_root: &Utf8Path, repo: &Repo, dry_run: bool) -> anyhow::Result<()> {
+pub async fn squash(
+    repo_root: &Utf8Path,
+    repo: &Repo,
+    dry_run: bool,
+    add_co_author: bool,
+) -> anyhow::Result<()> {
     anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
     let feature_branch = repo.original_branch();
     let default_branch = default_branch(repo_root).await?;
@@ -143,7 +156,21 @@ pub async fn squash(repo_root: &Utf8Path, repo: &Repo, dry_run: bool) -> anyhow:
     sync_feature_branch_with_default(repo_root, &default_branch).await?;
     let merge_base = compute_merge_base(repo_root, &default_branch).await?;
 
-    let co_authors = authors::get_co_authors(repo_root, &merge_base).await?;
+    let detected_co_authors = authors::get_co_authors(repo_root, &merge_base).await?;
+    let additional_co_authors = if add_co_author {
+        let selectable_co_authors =
+            authors::get_selectable_co_authors(repo_root, &detected_co_authors).await?;
+        if selectable_co_authors.is_empty() {
+            println!("ℹ️ No additional co-authors available to select.");
+            Vec::new()
+        } else {
+            authors::prompt_for_additional_co_authors(&selectable_co_authors)?
+        }
+    } else {
+        Vec::new()
+    };
+    let mut co_authors = detected_co_authors.clone();
+    co_authors.extend(additional_co_authors.iter().cloned());
     let co_authors_text = authors::format_co_authors(&co_authors);
 
     if dry_run {
@@ -151,7 +178,8 @@ pub async fn squash(repo_root: &Utf8Path, repo: &Repo, dry_run: bool) -> anyhow:
             repo_root,
             &merge_base,
             &pr_title,
-            &co_authors,
+            &detected_co_authors,
+            &additional_co_authors,
             &co_authors_text,
         )
         .await;

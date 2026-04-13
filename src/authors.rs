@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use camino::Utf8Path;
+use inquire::MultiSelect;
 
 use crate::cmd::Cmd;
 
@@ -55,7 +56,7 @@ fn collect_authors_from_log(authors_output: &str, current_user_email: &str) -> H
         let author = line.trim();
         if !author.is_empty()
             && let Some(email) = extract_email(author)
-            && email.to_lowercase() != current_user_email.to_lowercase()
+            && !email.eq_ignore_ascii_case(current_user_email)
         {
             authors.insert(author.to_string());
         }
@@ -74,11 +75,15 @@ fn parse_co_authors_from_messages(
             && let Some(co_author) = line.strip_prefix("Co-authored-by:").map(|s| s.trim())
             && !co_author.is_empty()
             && let Some(email) = extract_email(co_author)
-            && email.to_lowercase() != current_user_email.to_lowercase()
+            && !email.eq_ignore_ascii_case(current_user_email)
         {
             authors.insert(co_author.to_string());
         }
     }
+}
+
+fn sort_authors(authors: &mut [String]) {
+    authors.sort_unstable_by_key(|author| author.to_ascii_lowercase());
 }
 
 pub async fn get_co_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<Vec<String>> {
@@ -89,7 +94,80 @@ pub async fn get_co_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::R
     let mut authors = collect_authors_from_log(&authors_output, &current_user_email);
     parse_co_authors_from_messages(&commit_messages, &current_user_email, &mut authors);
 
-    Ok(authors.into_iter().collect())
+    let mut authors: Vec<_> = authors.into_iter().collect();
+    sort_authors(&mut authors);
+    Ok(authors)
+}
+
+fn collect_excluded_emails(
+    existing_authors: &[String],
+    current_user_email: &str,
+) -> HashSet<String> {
+    let mut excluded_emails = HashSet::from([current_user_email.to_ascii_lowercase()]);
+    for author in existing_authors {
+        if let Some(email) = extract_email(author) {
+            excluded_emails.insert(email.to_ascii_lowercase());
+        }
+    }
+    excluded_emails
+}
+
+fn parse_shortlog_author_line(line: &str, excluded_emails: &HashSet<String>) -> Option<String> {
+    let trimmed = line.trim();
+    let (_, author) = trimmed.split_once(char::is_whitespace)?;
+    let author = author.trim();
+    let email = extract_email(author)?;
+    if excluded_emails.contains(&email.to_ascii_lowercase()) {
+        None
+    } else {
+        Some(author.to_string())
+    }
+}
+
+fn collect_selectable_co_authors(
+    shortlog_output: &str,
+    current_user_email: &str,
+    existing_authors: &[String],
+) -> Vec<String> {
+    let excluded_emails = collect_excluded_emails(existing_authors, current_user_email);
+    let mut seen = HashSet::new();
+    let mut authors = Vec::new();
+
+    for line in shortlog_output.lines() {
+        if let Some(author) = parse_shortlog_author_line(line, &excluded_emails)
+            && seen.insert(author.clone())
+        {
+            authors.push(author);
+        }
+    }
+
+    authors
+}
+
+pub async fn get_selectable_co_authors(
+    repo_root: &Utf8Path,
+    existing_authors: &[String],
+) -> anyhow::Result<Vec<String>> {
+    let current_user_email = get_current_user_email(repo_root).await?;
+    let output = Cmd::new("git", ["shortlog", "-sne", "--all"])
+        .with_current_dir(repo_root)
+        .run()
+        .await?;
+    output.ensure_success("Failed to get repository authors")?;
+
+    Ok(collect_selectable_co_authors(
+        output.stdout(),
+        &current_user_email,
+        existing_authors,
+    ))
+}
+
+pub fn prompt_for_additional_co_authors(candidates: &[String]) -> anyhow::Result<Vec<String>> {
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    Ok(MultiSelect::new("Select additional co-authors:", candidates.to_vec()).prompt()?)
 }
 
 pub fn format_co_authors(co_authors: &[String]) -> String {
@@ -258,5 +336,41 @@ mod tests {
         ]);
         assert!(result.contains("Co-authored-by: Alice <alice@example.com>"));
         assert!(result.contains("Co-authored-by: Bob <bob@example.com>"));
+    }
+
+    #[test]
+    fn test_collect_selectable_co_authors_filters_current_and_existing() {
+        let shortlog = "\
+            12\tAlice <alice@example.com>\n\
+             8\tBob <bob@example.com>\n\
+             5\tCarol <carol@example.com>\n";
+
+        let authors = collect_selectable_co_authors(
+            shortlog,
+            "alice@example.com",
+            &["Bob <bob@example.com>".to_string()],
+        );
+
+        assert_eq!(authors, vec!["Carol <carol@example.com>".to_string()]);
+    }
+
+    #[test]
+    fn test_collect_selectable_co_authors_deduplicates_preserving_order() {
+        let shortlog = "\
+            12\tAlice <alice@example.com>\n\
+             8\tBob <bob@example.com>\n\
+             5\tBob <bob@example.com>\n\
+             2\tCarol <carol@example.com>\n";
+
+        let authors = collect_selectable_co_authors(shortlog, "me@example.com", &[]);
+
+        assert_eq!(
+            authors,
+            vec![
+                "Alice <alice@example.com>".to_string(),
+                "Bob <bob@example.com>".to_string(),
+                "Carol <carol@example.com>".to_string()
+            ]
+        );
     }
 }
