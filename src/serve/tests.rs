@@ -341,21 +341,24 @@ fn sync_assigned_issue_threads_removes_stale_entries() {
     })
     .unwrap();
 
-    let current_issue = github::AssignedIssueSummary {
-        issue_url: "https://github.com/o/r/issues/2".to_string(),
-        repository: "o/r".to_string(),
-        title: "current".to_string(),
-        updated_at: "2026-01-02T00:00:00Z".to_string(),
-        state: "OPEN".to_string(),
+    let current_issue = github::AssignedIssuesSearchResult {
+        issues: vec![github::AssignedIssueSummary {
+            issue_url: "https://github.com/o/r/issues/2".to_string(),
+            repository: "o/r".to_string(),
+            title: "current".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+            state: "OPEN".to_string(),
+        }],
+        is_complete: true,
     };
 
-    sync_assigned_issue_threads(&db, std::slice::from_ref(&current_issue)).unwrap();
+    sync_assigned_issue_threads(&db, &current_issue).unwrap();
 
     let threads = db.list_dashboard_threads().unwrap();
     assert_eq!(threads.len(), 1);
     assert_eq!(
         threads[0].subject_url.as_deref(),
-        Some(current_issue.issue_url.as_str())
+        Some(current_issue.issues[0].issue_url.as_str())
     );
     assert_eq!(threads[0].subject_title, "current");
 }
@@ -363,21 +366,70 @@ fn sync_assigned_issue_threads_removes_stale_entries() {
 #[test]
 fn sync_assigned_issue_threads_preserves_done_entries() {
     let db = test_db();
-    let current_issue = github::AssignedIssueSummary {
-        issue_url: "https://github.com/o/r/issues/2".to_string(),
-        repository: "o/r".to_string(),
-        title: "current".to_string(),
-        updated_at: "2026-01-02T00:00:00Z".to_string(),
-        state: "OPEN".to_string(),
+    let current_issue = github::AssignedIssuesSearchResult {
+        issues: vec![github::AssignedIssueSummary {
+            issue_url: "https://github.com/o/r/issues/2".to_string(),
+            repository: "o/r".to_string(),
+            title: "current".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+            state: "OPEN".to_string(),
+        }],
+        is_complete: true,
     };
 
-    sync_assigned_issue_threads(&db, std::slice::from_ref(&current_issue)).unwrap();
-    db.mark_assigned_issue_done_local(&current_issue.issue_url)
+    sync_assigned_issue_threads(&db, &current_issue).unwrap();
+    db.mark_assigned_issue_done_local(&current_issue.issues[0].issue_url)
         .unwrap();
-    sync_assigned_issue_threads(&db, std::slice::from_ref(&current_issue)).unwrap();
+    sync_assigned_issue_threads(&db, &current_issue).unwrap();
 
     let threads = db.list_dashboard_threads().unwrap();
     assert!(threads.is_empty());
+}
+
+#[test]
+fn sync_assigned_issue_threads_skips_stale_deletes_for_incomplete_results() {
+    let db = test_db();
+    let stale_issue_url = "https://github.com/o/r/issues/1".to_string();
+    db.upsert_thread(&db::NewThread {
+        thread_key: format!("myissue:{stale_issue_url}"),
+        github_thread_id: None,
+        source: "my_issue".to_string(),
+        repository: "o/r".to_string(),
+        subject_type: Some("Issue".to_string()),
+        subject_title: "stale".to_string(),
+        subject_url: Some(stale_issue_url.clone()),
+        issue_state: Some("OPEN".to_string()),
+        discussion_answered: None,
+        reason: Some("assigned".to_string()),
+        pr_url: None,
+        unread: false,
+        done: false,
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+        is_draft: false,
+    })
+    .unwrap();
+
+    let current_issue = github::AssignedIssuesSearchResult {
+        issues: vec![github::AssignedIssueSummary {
+            issue_url: "https://github.com/o/r/issues/2".to_string(),
+            repository: "o/r".to_string(),
+            title: "current".to_string(),
+            updated_at: "2026-01-02T00:00:00Z".to_string(),
+            state: "OPEN".to_string(),
+        }],
+        is_complete: false,
+    };
+
+    sync_assigned_issue_threads(&db, &current_issue).unwrap();
+
+    let threads = db.list_dashboard_threads().unwrap();
+    assert_eq!(threads.len(), 2);
+    assert!(threads.iter().any(|thread| thread.subject_title == "stale"));
+    assert!(
+        threads
+            .iter()
+            .any(|thread| thread.subject_title == "current")
+    );
 }
 
 #[test]

@@ -205,7 +205,7 @@ pub(super) async fn poll_once_async(
     Ok(PollStats {
         notifications_fetched: notifications.len(),
         authored_prs_fetched: authored_prs.len(),
-        assigned_issues_fetched: assigned_issues.len(),
+        assigned_issues_fetched: assigned_issues.issues.len(),
         prs_seen: pr_urls.len(),
         reviews_run,
         participants: batch.participants,
@@ -322,21 +322,33 @@ pub(crate) fn sync_authored_pr_threads(
 
 pub(crate) fn sync_assigned_issue_threads(
     db: &Db,
-    assigned_issues: &[github::AssignedIssueSummary],
+    assigned_issues: &github::AssignedIssuesSearchResult,
 ) -> anyhow::Result<()> {
     let open_issue_urls: Vec<_> = assigned_issues
+        .issues
         .iter()
         .filter(|issue| issue.state == "OPEN")
         .map(|issue| issue.issue_url.clone())
         .collect();
 
-    println!(
-        "🗄️ DB delete threads: source=my_issue keep_open_issue_urls={}",
-        open_issue_urls.len()
-    );
-    db.delete_threads_by_source_except_subject_urls("my_issue", &open_issue_urls)?;
+    if assigned_issues.is_complete {
+        println!(
+            "🗄️ DB delete threads: source=my_issue keep_open_issue_urls={}",
+            open_issue_urls.len()
+        );
+        db.delete_threads_by_source_except_subject_urls("my_issue", &open_issue_urls)?;
+    } else {
+        println!(
+            "🗄️ DB skip delete threads: source=my_issue reason=incomplete_search_results keep_open_issue_urls={}",
+            open_issue_urls.len()
+        );
+    }
 
-    for issue in assigned_issues.iter().filter(|issue| issue.state == "OPEN") {
+    for issue in assigned_issues
+        .issues
+        .iter()
+        .filter(|issue| issue.state == "OPEN")
+    {
         let thread_key = format!("myissue:{}", issue.issue_url);
         let row = db::NewThread {
             thread_key,
@@ -412,9 +424,13 @@ fn print_fetched_authored_prs(authored_prs: &[github::AuthoredPrSummary]) {
     }
 }
 
-fn print_fetched_assigned_issues(assigned_issues: &[github::AssignedIssueSummary]) {
-    println!("📥 Assigned issues fetched: {}", assigned_issues.len());
-    for issue in assigned_issues {
+fn print_fetched_assigned_issues(assigned_issues: &github::AssignedIssuesSearchResult) {
+    println!(
+        "📥 Assigned issues fetched: {} complete={}",
+        assigned_issues.issues.len(),
+        assigned_issues.is_complete
+    );
+    for issue in &assigned_issues.issues {
         println!(
             "  • issue_url={} repo={} state={} updated_at={} title={}",
             issue.issue_url, issue.repository, issue.state, issue.updated_at, issue.title

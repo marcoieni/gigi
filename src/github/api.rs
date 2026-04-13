@@ -8,8 +8,8 @@ use crate::{checkout::parse_github_pr_url, cmd::Cmd};
 use super::{
     parsing::{api_url_to_html_url, api_url_to_pr_url, parse_repo_from_pr_url},
     types::{
-        AssignedIssueSummary, AuthoredPrSummary, BatchFetchResult, NotificationThread, Participant,
-        PrDetails,
+        AssignedIssueSummary, AssignedIssuesSearchResult, AuthoredPrSummary, BatchFetchResult,
+        NotificationThread, Participant, PrDetails,
     },
 };
 
@@ -246,7 +246,7 @@ pub async fn fetch_authored_prs(since: Option<&str>) -> anyhow::Result<Vec<Autho
     Ok(results)
 }
 
-pub async fn fetch_assigned_issues() -> anyhow::Result<Vec<AssignedIssueSummary>> {
+pub async fn fetch_assigned_issues() -> anyhow::Result<AssignedIssuesSearchResult> {
     let search_query = encode_query_component("assignee:@me state:open is:issue");
     let endpoint = format!("search/issues?q={search_query}&per_page=100");
     let output = Cmd::new("gh", ["api", &endpoint, "--paginate", "--slurp"])
@@ -255,7 +255,10 @@ pub async fn fetch_assigned_issues() -> anyhow::Result<Vec<AssignedIssueSummary>
 
     output.ensure_success("❌ Failed to fetch assigned issues")?;
     if output.stdout().trim().is_empty() {
-        return Ok(Vec::new());
+        return Ok(AssignedIssuesSearchResult {
+            issues: Vec::new(),
+            is_complete: true,
+        });
     }
 
     let value: Value =
@@ -263,15 +266,22 @@ pub async fn fetch_assigned_issues() -> anyhow::Result<Vec<AssignedIssueSummary>
     Ok(parse_assigned_issues_search_results(&value))
 }
 
-fn parse_assigned_issues_search_results(value: &Value) -> Vec<AssignedIssueSummary> {
+fn parse_assigned_issues_search_results(value: &Value) -> AssignedIssuesSearchResult {
     let mut results = Vec::new();
     let pages: Vec<Value> = match value {
         Value::Array(items) if items.iter().all(Value::is_object) => items.clone(),
         Value::Object(_) => vec![value.clone()],
         _ => vec![],
     };
+    let is_complete = !pages.is_empty()
+        && pages.iter().all(|page| {
+            !page
+                .get("incomplete_results")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        });
 
-    for page in pages {
+    for page in &pages {
         let Some(items) = page.get("items").and_then(Value::as_array) else {
             continue;
         };
@@ -333,7 +343,10 @@ fn parse_assigned_issues_search_results(value: &Value) -> Vec<AssignedIssueSumma
         }
     }
 
-    results
+    AssignedIssuesSearchResult {
+        issues: results,
+        is_complete,
+    }
 }
 
 fn parse_repo_api_url(api_url: &str) -> Option<String> {
@@ -1257,6 +1270,7 @@ mod tests {
     fn parses_assigned_issue_search_results_with_repository_url() {
         let value = serde_json::json!([
             {
+                "incomplete_results": false,
                 "items": [
                     {
                         "html_url": "https://github.com/rust-lang/crates.io/issues/13193",
@@ -1269,16 +1283,34 @@ mod tests {
             }
         ]);
 
-        let issues = parse_assigned_issues_search_results(&value);
-        assert_eq!(issues.len(), 1);
+        let result = parse_assigned_issues_search_results(&value);
+        assert!(result.is_complete);
+        assert_eq!(result.issues.len(), 1);
         assert_eq!(
-            issues[0].issue_url,
+            result.issues[0].issue_url,
             "https://github.com/rust-lang/crates.io/issues/13193"
         );
-        assert_eq!(issues[0].repository, "rust-lang/crates.io");
-        assert_eq!(issues[0].title, "503 from `cargo publish`");
-        assert_eq!(issues[0].updated_at, "2026-04-13T10:00:00Z");
-        assert_eq!(issues[0].state, "OPEN");
+        assert_eq!(result.issues[0].repository, "rust-lang/crates.io");
+        assert_eq!(result.issues[0].title, "503 from `cargo publish`");
+        assert_eq!(result.issues[0].updated_at, "2026-04-13T10:00:00Z");
+        assert_eq!(result.issues[0].state, "OPEN");
+    }
+
+    #[test]
+    fn marks_assigned_issue_search_results_incomplete_when_any_page_is_partial() {
+        let value = serde_json::json!([
+            {
+                "incomplete_results": false,
+                "items": []
+            },
+            {
+                "incomplete_results": true,
+                "items": []
+            }
+        ]);
+
+        let result = parse_assigned_issues_search_results(&value);
+        assert!(!result.is_complete);
     }
 
     #[test]

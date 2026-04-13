@@ -67,6 +67,12 @@ pub struct AssignedIssueSummary {
 }
 
 #[derive(Debug, Clone)]
+pub struct AssignedIssuesSearchResult {
+    pub issues: Vec<AssignedIssueSummary>,
+    pub is_complete: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct PrDetails {
     pub pr_url: String,
     pub owner: String,

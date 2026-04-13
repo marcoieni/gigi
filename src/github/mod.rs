@@ -13,6 +13,8 @@ pub use local_repo::{
     prepare_repo_for_pr_checkout, pull_ff_only,
 };
 pub use parsing::parse_github_name_with_owner;
+#[cfg(test)]
+pub use types::AssignedIssueSummary;
 pub use types::{
-    AssignedIssueSummary, AuthoredPrSummary, NotificationThread, Participant, PrDetails,
+    AssignedIssuesSearchResult, AuthoredPrSummary, NotificationThread, Participant, PrDetails,
 };
