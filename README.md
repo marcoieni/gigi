@@ -126,8 +126,8 @@ port = 8787
 
 ### Serve
 
-Run a local server that periodically watches GitHub notifications and your open PRs,
-stores data and reviews in SQLite, and exposes a dashboard.
+Run a local server that periodically watches GitHub notifications, your open PRs,
+and PRs/issues assigned to you, stores data and reviews in SQLite, and exposes a dashboard.
 
 Defaults:
 

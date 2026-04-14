@@ -76,6 +76,11 @@ pub(super) async fn poll_once_async(
     );
     sync_authored_pr_threads(db, &authored_prs)?;
 
+    println!("🔎 Assigned PR fetch: mode={mode:?}");
+    let assigned_prs = github::fetch_assigned_prs().await?;
+    print_fetched_assigned_prs(&assigned_prs);
+    sync_assigned_pr_threads(db, &assigned_prs)?;
+
     println!("🔎 Assigned issue fetch: mode={mode:?}");
     let assigned_issues = github::fetch_assigned_issues().await?;
     print_fetched_assigned_issues(&assigned_issues);
@@ -89,6 +94,9 @@ pub(super) async fn poll_once_async(
     }
     for authored in &authored_prs {
         pr_urls.insert(authored.pr_url.clone());
+    }
+    for assigned in &assigned_prs {
+        pr_urls.insert(assigned.pr_url.clone());
     }
 
     let issue_api_urls: Vec<String> = notifications
@@ -205,6 +213,7 @@ pub(super) async fn poll_once_async(
     Ok(PollStats {
         notifications_fetched: notifications.len(),
         authored_prs_fetched: authored_prs.len(),
+        assigned_prs_fetched: assigned_prs.len(),
         assigned_issues_fetched: assigned_issues.issues.len(),
         prs_seen: pr_urls.len(),
         reviews_run,
@@ -374,6 +383,44 @@ pub(crate) fn sync_assigned_issue_threads(
     Ok(())
 }
 
+pub(crate) fn sync_assigned_pr_threads(
+    db: &Db,
+    assigned_prs: &[github::AssignedPrSummary],
+) -> anyhow::Result<()> {
+    let open_pr_urls: Vec<_> = assigned_prs.iter().map(|pr| pr.pr_url.clone()).collect();
+
+    println!(
+        "🗄️ DB delete threads: source=assigned_pr keep_open_pr_urls={}",
+        open_pr_urls.len()
+    );
+    db.delete_threads_by_source_except_pr_urls("assigned_pr", &open_pr_urls)?;
+
+    for assigned in assigned_prs {
+        let thread_key = format!("assignedpr:{}", assigned.pr_url);
+        let row = db::NewThread {
+            thread_key,
+            github_thread_id: None,
+            source: "assigned_pr".to_string(),
+            repository: assigned.repository.clone(),
+            subject_type: Some("PullRequest".to_string()),
+            subject_title: assigned.title.clone(),
+            subject_url: Some(assigned.pr_url.clone()),
+            issue_state: None,
+            discussion_answered: None,
+            reason: Some("assigned".to_string()),
+            pr_url: Some(assigned.pr_url.clone()),
+            unread: false,
+            done: false,
+            updated_at: assigned.updated_at.clone(),
+            is_draft: assigned.is_draft,
+        };
+        db.upsert_thread(&row)?;
+        print_thread_db_write(&row);
+    }
+
+    Ok(())
+}
+
 pub(super) fn upsert_pr_from_details(db: &Db, details: &github::PrDetails) -> anyhow::Result<()> {
     let row = db::NewPr {
         pr_url: details.pr_url.clone(),
@@ -434,6 +481,20 @@ fn print_fetched_assigned_issues(assigned_issues: &github::AssignedIssuesSearchR
         println!(
             "  • issue_url={} repo={} state={} updated_at={} title={}",
             issue.issue_url, issue.repository, issue.state, issue.updated_at, issue.title
+        );
+    }
+}
+
+fn print_fetched_assigned_prs(assigned_prs: &[github::AssignedPrSummary]) {
+    println!("📥 Assigned PRs fetched: {}", assigned_prs.len());
+    for assigned in assigned_prs {
+        println!(
+            "  • pr_url={} repo={} updated_at={} is_draft={} title={}",
+            assigned.pr_url,
+            assigned.repository,
+            assigned.updated_at,
+            assigned.is_draft,
+            assigned.title
         );
     }
 }
@@ -614,9 +675,10 @@ async fn handle_closed_pr_branch_sync(db: &Db, details: &github::PrDetails) -> a
 
 pub(super) fn print_poll_stats(prefix: &str, stats: &PollStats) {
     println!(
-        "{prefix} notifications={}, my_prs={}, assigned_issues={}, prs={}, reviews={}",
+        "{prefix} notifications={}, my_prs={}, assigned_prs={}, assigned_issues={}, prs={}, reviews={}",
         stats.notifications_fetched,
         stats.authored_prs_fetched,
+        stats.assigned_prs_fetched,
         stats.assigned_issues_fetched,
         stats.prs_seen,
         stats.reviews_run

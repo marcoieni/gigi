@@ -166,6 +166,7 @@ async fn mark_done(
             pr_url: form.pr_url,
             subject_url: form.subject_url,
             mark_authored_pr: form.mark_authored_pr,
+            mark_assigned_pr: form.mark_assigned_pr,
             mark_assigned_issue: form.mark_assigned_issue,
         })
         .await
@@ -287,6 +288,8 @@ struct MarkDoneForm {
     #[serde(default)]
     mark_authored_pr: bool,
     #[serde(default)]
+    mark_assigned_pr: bool,
+    #[serde(default)]
     mark_assigned_issue: bool,
 }
 
@@ -299,6 +302,7 @@ struct MarkReadForm {
 struct DashboardFiltersForm {
     show_notifications: Option<String>,
     show_my_prs: Option<String>,
+    show_assigned_prs: Option<String>,
     show_assigned_issues: Option<String>,
     show_done: Option<String>,
     show_not_done: Option<String>,
@@ -310,6 +314,7 @@ impl DashboardFiltersForm {
         DashboardThreadFilters {
             show_notifications: self.show_notifications.is_some(),
             show_my_prs: self.show_my_prs.is_some(),
+            show_assigned_prs: self.show_assigned_prs.is_some(),
             show_assigned_issues: self.show_assigned_issues.is_some(),
             show_done: self.show_done.is_some(),
             show_not_done: self.show_not_done.is_some(),

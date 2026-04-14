@@ -2,7 +2,7 @@ use super::{
     helpers::{dashboard_browser_url, parse_repository_name},
     poll::{
         apply_startup_review_limits, next_incremental_cursor, should_review_pr,
-        sync_assigned_issue_threads, sync_authored_pr_threads,
+        sync_assigned_issue_threads, sync_assigned_pr_threads, sync_authored_pr_threads,
     },
     time::parse_github_timestamp_to_unix_seconds,
     *,
@@ -319,6 +319,67 @@ fn sync_authored_pr_threads_preserves_done_entries() {
 }
 
 #[test]
+fn sync_assigned_pr_threads_removes_stale_entries() {
+    let db = test_db();
+    let stale_pr_url = "https://github.com/o/r/pull/1".to_string();
+    db.upsert_thread(&db::NewThread {
+        thread_key: format!("assignedpr:{stale_pr_url}"),
+        github_thread_id: None,
+        source: "assigned_pr".to_string(),
+        repository: "o/r".to_string(),
+        subject_type: Some("PullRequest".to_string()),
+        subject_title: "stale".to_string(),
+        subject_url: Some(stale_pr_url),
+        issue_state: None,
+        discussion_answered: None,
+        reason: Some("assigned".to_string()),
+        pr_url: Some("https://github.com/o/r/pull/1".to_string()),
+        unread: false,
+        done: false,
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+        is_draft: false,
+    })
+    .unwrap();
+
+    let current_pr = github::AssignedPrSummary {
+        pr_url: "https://github.com/o/r/pull/2".to_string(),
+        repository: "o/r".to_string(),
+        title: "current".to_string(),
+        updated_at: "2026-01-02T00:00:00Z".to_string(),
+        is_draft: false,
+    };
+
+    sync_assigned_pr_threads(&db, std::slice::from_ref(&current_pr)).unwrap();
+
+    let threads = db.list_dashboard_threads().unwrap();
+    assert_eq!(threads.len(), 1);
+    assert_eq!(
+        threads[0].pr_url.as_deref(),
+        Some(current_pr.pr_url.as_str())
+    );
+    assert_eq!(threads[0].subject_title, "current");
+}
+
+#[test]
+fn sync_assigned_pr_threads_preserves_done_entries() {
+    let db = test_db();
+    let current_pr = github::AssignedPrSummary {
+        pr_url: "https://github.com/o/r/pull/2".to_string(),
+        repository: "o/r".to_string(),
+        title: "current".to_string(),
+        updated_at: "2026-01-02T00:00:00Z".to_string(),
+        is_draft: false,
+    };
+
+    sync_assigned_pr_threads(&db, std::slice::from_ref(&current_pr)).unwrap();
+    assert!(db.mark_assigned_pr_done_local(&current_pr.pr_url).unwrap());
+    sync_assigned_pr_threads(&db, std::slice::from_ref(&current_pr)).unwrap();
+
+    let threads = db.list_dashboard_threads().unwrap();
+    assert!(threads.is_empty());
+}
+
+#[test]
 fn sync_assigned_issue_threads_removes_stale_entries() {
     let db = test_db();
     let stale_issue_url = "https://github.com/o/r/issues/1".to_string();
@@ -412,6 +473,7 @@ fn mark_done_rejects_missing_assigned_issue_row() {
             pr_url: None,
             subject_url: Some("https://github.com/o/r/issues/404".to_string()),
             mark_authored_pr: false,
+            mark_assigned_pr: false,
             mark_assigned_issue: true,
         }))
         .unwrap_err();

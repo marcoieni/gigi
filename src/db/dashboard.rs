@@ -127,6 +127,7 @@ impl Db {
                 SELECT
                     show_notifications,
                     show_my_prs,
+                    show_assigned_prs,
                     show_assigned_issues,
                     show_done,
                     show_not_done,
@@ -139,10 +140,11 @@ impl Db {
                         Ok(DashboardThreadFilters {
                             show_notifications: row.get::<_, i64>(0)? != 0,
                             show_my_prs: row.get::<_, i64>(1)? != 0,
-                            show_assigned_issues: row.get::<_, i64>(2)? != 0,
-                            show_done: row.get::<_, i64>(3)? != 0,
-                            show_not_done: row.get::<_, i64>(4)? != 0,
-                            group_by_repository: row.get::<_, i64>(5)? != 0,
+                            show_assigned_prs: row.get::<_, i64>(2)? != 0,
+                            show_assigned_issues: row.get::<_, i64>(3)? != 0,
+                            show_done: row.get::<_, i64>(4)? != 0,
+                            show_not_done: row.get::<_, i64>(5)? != 0,
+                            group_by_repository: row.get::<_, i64>(6)? != 0,
                             hidden_repositories: Vec::new(),
                         })
                     },
@@ -173,15 +175,17 @@ impl Db {
                     id,
                     show_notifications,
                     show_my_prs,
+                    show_assigned_prs,
                     show_assigned_issues,
                     show_done,
                     show_not_done,
                     group_by_repository,
                     updated_at
-                ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                 ON CONFLICT(id) DO UPDATE SET
                     show_notifications = excluded.show_notifications,
                     show_my_prs = excluded.show_my_prs,
+                    show_assigned_prs = excluded.show_assigned_prs,
                     show_assigned_issues = excluded.show_assigned_issues,
                     show_done = excluded.show_done,
                     show_not_done = excluded.show_not_done,
@@ -191,6 +195,7 @@ impl Db {
                 params![
                     bool_to_int(filters.show_notifications),
                     bool_to_int(filters.show_my_prs),
+                    bool_to_int(filters.show_assigned_prs),
                     bool_to_int(filters.show_assigned_issues),
                     bool_to_int(filters.show_done),
                     bool_to_int(filters.show_not_done),
@@ -326,6 +331,7 @@ impl DashboardThreadFilters {
         sources.iter().any(|source| match source.as_str() {
             "notification" => self.show_notifications,
             "my_pr" => self.show_my_prs,
+            "assigned_pr" => self.show_assigned_prs,
             "my_issue" => self.show_assigned_issues,
             _ => false,
         })
@@ -407,9 +413,9 @@ fn dashboard_thread_priority(thread: &DashboardThread) -> usize {
     match (thread.github_thread_id.is_some(), thread.sources.as_slice()) {
         (true, _) => 2,
         (false, sources)
-            if sources
-                .iter()
-                .any(|source| source == "my_pr" || source == "my_issue") =>
+            if sources.iter().any(|source| {
+                source == "my_pr" || source == "assigned_pr" || source == "my_issue"
+            }) =>
         {
             1
         }
@@ -427,8 +433,9 @@ fn merge_sources(left: &[String], right: &[String]) -> Vec<String> {
     sources.sort_by_key(|source| match source.as_str() {
         "notification" => 0,
         "my_pr" => 1,
-        "my_issue" => 2,
-        _ => 3,
+        "assigned_pr" => 2,
+        "my_issue" => 3,
+        _ => 4,
     });
     sources
 }

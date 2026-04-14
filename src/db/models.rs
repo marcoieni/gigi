@@ -117,6 +117,7 @@ pub struct DashboardThread {
 pub struct DashboardThreadFilters {
     pub show_notifications: bool,
     pub show_my_prs: bool,
+    pub show_assigned_prs: bool,
     pub show_assigned_issues: bool,
     pub show_done: bool,
     pub show_not_done: bool,
@@ -129,6 +130,7 @@ impl Default for DashboardThreadFilters {
         Self {
             show_notifications: true,
             show_my_prs: true,
+            show_assigned_prs: true,
             show_assigned_issues: true,
             show_done: false,
             show_not_done: true,

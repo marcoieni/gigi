@@ -84,6 +84,7 @@ pub(super) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
             id INTEGER PRIMARY KEY CHECK (id = 1),
             show_notifications INTEGER NOT NULL,
             show_my_prs INTEGER NOT NULL DEFAULT 1,
+            show_assigned_prs INTEGER NOT NULL DEFAULT 1,
             show_assigned_issues INTEGER NOT NULL DEFAULT 1,
             show_done INTEGER NOT NULL,
             show_not_done INTEGER NOT NULL,
@@ -123,6 +124,12 @@ pub(super) fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         conn,
         "dashboard_preferences",
         "show_my_prs",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
+    add_column_if_missing(
+        conn,
+        "dashboard_preferences",
+        "show_assigned_prs",
         "INTEGER NOT NULL DEFAULT 1",
     )?;
     add_column_if_missing(
