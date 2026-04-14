@@ -107,6 +107,51 @@ impl Db {
         })
     }
 
+    pub fn delete_threads_by_source_except_pr_urls(
+        &self,
+        source: &str,
+        pr_urls: &[String],
+    ) -> anyhow::Result<()> {
+        self.with_conn(|conn| {
+            if pr_urls.is_empty() {
+                conn.execute("DELETE FROM threads WHERE source = ?1", [source])?;
+                return Ok(());
+            }
+
+            conn.execute_batch(
+                r#"
+                CREATE TEMP TABLE IF NOT EXISTS keep_pr_urls (
+                    url TEXT PRIMARY KEY
+                );
+                DELETE FROM keep_pr_urls;
+                "#,
+            )?;
+
+            let mut insert_stmt =
+                conn.prepare("INSERT OR IGNORE INTO keep_pr_urls (url) VALUES (?1)")?;
+            for pr_url in pr_urls {
+                insert_stmt.execute([pr_url])?;
+            }
+
+            conn.execute(
+                r#"
+                DELETE FROM threads
+                WHERE source = ?1
+                  AND (
+                      pr_url IS NULL
+                      OR NOT EXISTS (
+                          SELECT 1
+                          FROM keep_pr_urls
+                          WHERE keep_pr_urls.url = threads.pr_url
+                      )
+                  )
+                "#,
+                [source],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn delete_threads_by_source_except_subject_urls(
         &self,
         source: &str,
@@ -342,6 +387,16 @@ impl Db {
                 [pr_url],
             )?;
             Ok(())
+        })
+    }
+
+    pub fn mark_assigned_pr_done_local(&self, pr_url: &str) -> anyhow::Result<bool> {
+        self.with_conn(|conn| {
+            let changed = conn.execute(
+                "UPDATE threads SET done = 1, unread = 0 WHERE source = 'assigned_pr' AND pr_url = ?1",
+                [pr_url],
+            )?;
+            Ok(changed > 0)
         })
     }
 

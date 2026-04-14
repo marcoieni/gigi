@@ -513,6 +513,7 @@ fn dashboard_can_show_done_items_when_requested() {
         .list_dashboard_threads_with_filters(&DashboardThreadFilters {
             show_notifications: true,
             show_my_prs: true,
+            show_assigned_prs: true,
             show_assigned_issues: true,
             show_done: true,
             show_not_done: false,
@@ -530,7 +531,8 @@ fn dashboard_filters_by_source_type() {
     let db = test_db();
     let notification_pr_url = "https://github.com/a/b/pull/1".to_string();
     let authored_pr_url = "https://github.com/a/b/pull/2".to_string();
-    let assigned_issue_url = "https://github.com/a/b/issues/3".to_string();
+    let assigned_pr_url = "https://github.com/a/b/pull/3".to_string();
+    let assigned_issue_url = "https://github.com/a/b/issues/4".to_string();
 
     db.upsert_thread(&NewThread {
         is_draft: false,
@@ -572,6 +574,25 @@ fn dashboard_filters_by_source_type() {
 
     db.upsert_thread(&NewThread {
         is_draft: false,
+        thread_key: format!("assignedpr:{assigned_pr_url}"),
+        github_thread_id: None,
+        source: "assigned_pr".to_string(),
+        repository: "a/b".to_string(),
+        subject_type: Some("PullRequest".to_string()),
+        subject_title: "assigned pr".to_string(),
+        subject_url: Some(assigned_pr_url.clone()),
+        issue_state: None,
+        discussion_answered: None,
+        reason: Some("assigned".to_string()),
+        pr_url: Some(assigned_pr_url),
+        unread: false,
+        done: false,
+        updated_at: "2026-01-03T00:00:00Z".to_string(),
+    })
+    .unwrap();
+
+    db.upsert_thread(&NewThread {
+        is_draft: false,
         thread_key: format!("myissue:{assigned_issue_url}"),
         github_thread_id: None,
         source: "my_issue".to_string(),
@@ -585,7 +606,7 @@ fn dashboard_filters_by_source_type() {
         pr_url: None,
         unread: false,
         done: false,
-        updated_at: "2026-01-03T00:00:00Z".to_string(),
+        updated_at: "2026-01-04T00:00:00Z".to_string(),
     })
     .unwrap();
 
@@ -593,6 +614,7 @@ fn dashboard_filters_by_source_type() {
         .list_dashboard_threads_with_filters(&DashboardThreadFilters {
             show_notifications: false,
             show_my_prs: true,
+            show_assigned_prs: true,
             show_assigned_issues: true,
             show_done: false,
             show_not_done: true,
@@ -601,11 +623,13 @@ fn dashboard_filters_by_source_type() {
         })
         .unwrap();
 
-    assert_eq!(threads.len(), 2);
+    assert_eq!(threads.len(), 3);
     assert_eq!(threads[0].sources, vec!["my_issue"]);
     assert_eq!(threads[0].subject_title, "assigned");
-    assert_eq!(threads[1].sources, vec!["my_pr"]);
-    assert_eq!(threads[1].subject_title, "authored");
+    assert_eq!(threads[1].sources, vec!["assigned_pr"]);
+    assert_eq!(threads[1].subject_title, "assigned pr");
+    assert_eq!(threads[2].sources, vec!["my_pr"]);
+    assert_eq!(threads[2].subject_title, "authored");
 }
 
 #[test]
@@ -624,6 +648,7 @@ fn dashboard_filter_preferences_roundtrip() {
     let filters = DashboardThreadFilters {
         show_notifications: false,
         show_my_prs: true,
+        show_assigned_prs: true,
         show_assigned_issues: false,
         show_done: true,
         show_not_done: false,
@@ -706,6 +731,77 @@ fn dashboard_threads_deduplicate_notification_and_my_pr() {
     assert_eq!(threads[0].subject_title, "Notification title");
     assert_eq!(threads[0].updated_at, "2026-01-02T00:00:00Z");
     assert_eq!(threads[0].pr_state.as_deref(), Some("MERGED"));
+    assert!(threads[0].unread);
+}
+
+#[test]
+fn dashboard_threads_deduplicate_notification_and_assigned_pr() {
+    let db = test_db();
+    let pr_url = "https://github.com/a/b/pull/1".to_string();
+
+    db.upsert_pr(&NewPr {
+        pr_url: pr_url.clone(),
+        owner: "a".to_string(),
+        repo: "b".to_string(),
+        number: 1,
+        state: "OPEN".to_string(),
+        merge_queue_state: None,
+        title: "Title".to_string(),
+        head_ref: "feat".to_string(),
+        base_ref: "main".to_string(),
+        head_sha: "sha1".to_string(),
+        updated_at: "2026-01-02T00:00:00Z".to_string(),
+        is_archived: false,
+        is_draft: false,
+    })
+    .unwrap();
+
+    db.upsert_thread(&NewThread {
+        is_draft: false,
+        thread_key: format!("assignedpr:{pr_url}"),
+        github_thread_id: None,
+        source: "assigned_pr".to_string(),
+        repository: "a/b".to_string(),
+        subject_type: Some("PullRequest".to_string()),
+        subject_title: "Assigned title".to_string(),
+        subject_url: Some(pr_url.clone()),
+        issue_state: None,
+        discussion_answered: None,
+        reason: Some("assigned".to_string()),
+        pr_url: Some(pr_url.clone()),
+        unread: false,
+        done: false,
+        updated_at: "2026-01-02T00:00:00Z".to_string(),
+    })
+    .unwrap();
+
+    db.upsert_thread(&NewThread {
+        is_draft: false,
+        thread_key: "notif:123".to_string(),
+        github_thread_id: Some("123".to_string()),
+        source: "notification".to_string(),
+        repository: "a/b".to_string(),
+        subject_type: Some("PullRequest".to_string()),
+        subject_title: "Notification title".to_string(),
+        subject_url: Some(pr_url.clone()),
+        issue_state: None,
+        discussion_answered: None,
+        reason: Some("review_requested".to_string()),
+        pr_url: Some(pr_url.clone()),
+        unread: true,
+        done: false,
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    })
+    .unwrap();
+
+    let threads = db.list_dashboard_threads().unwrap();
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].github_thread_id.as_deref(), Some("123"));
+    assert_eq!(threads[0].thread_key, "notif:123");
+    assert_eq!(threads[0].sources, vec!["notification", "assigned_pr"]);
+    assert_eq!(threads[0].subject_title, "Notification title");
+    assert_eq!(threads[0].updated_at, "2026-01-02T00:00:00Z");
+    assert_eq!(threads[0].pr_state.as_deref(), Some("OPEN"));
     assert!(threads[0].unread);
 }
 
@@ -1031,6 +1127,7 @@ fn assigned_issue_cards_remain_visible_when_notifications_are_hidden() {
         .list_dashboard_threads_with_filters(&DashboardThreadFilters {
             show_notifications: false,
             show_my_prs: false,
+            show_assigned_prs: false,
             show_assigned_issues: true,
             show_done: false,
             show_not_done: true,

@@ -38,6 +38,7 @@ pub struct DashboardUpdate {
 pub struct PollStats {
     pub notifications_fetched: usize,
     pub authored_prs_fetched: usize,
+    pub assigned_prs_fetched: usize,
     pub assigned_issues_fetched: usize,
     pub prs_seen: usize,
     pub reviews_run: usize,
@@ -70,5 +71,6 @@ pub struct MarkDoneRequest {
     pub pr_url: Option<String>,
     pub subject_url: Option<String>,
     pub mark_authored_pr: bool,
+    pub mark_assigned_pr: bool,
     pub mark_assigned_issue: bool,
 }
