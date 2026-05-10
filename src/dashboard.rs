@@ -7,7 +7,8 @@ use crate::{
     icons::{
         CHECKMARK_ICON, DISCUSSION_ANSWERED_ICON, DISCUSSION_OPEN_ICON, ISSUE_CLOSED_ICON,
         ISSUE_OPEN_ICON, MAIL_ICON, MY_PR_ICON, NOTIFICATION_ICON, PR_CLOSED_ICON, PR_DRAFT_ICON,
-        PR_MERGED_ICON, PR_OPEN_ICON, PR_QUEUED_ICON, REFRESH_ICON, TERMINAL_ICON, VSCODE_ICON,
+        PR_MERGED_ICON, PR_OPEN_ICON, PR_QUEUED_ICON, REFRESH_ICON, TAG_ICON, TERMINAL_ICON,
+        VSCODE_ICON,
     },
 };
 
@@ -471,6 +472,7 @@ fn thread_state_data(
 
     match state {
         Some("MERGED") => ("title-state-icon merged", PR_MERGED_ICON, "Merged"),
+        _ if subject_type == Some("Release") => ("title-state-icon open", TAG_ICON, "Release"),
         Some("CLOSED") if subject_type == Some("Issue") => {
             ("title-state-icon closed", ISSUE_CLOSED_ICON, "Closed issue")
         }
@@ -634,6 +636,14 @@ mod tests {
         );
 
         assert_eq!(label, "Queued");
+    }
+
+    #[test]
+    fn thread_state_data_marks_releases_with_tag_icon() {
+        let (_, icon, label) = thread_state_data(Some("Release"), None, None, false, false);
+
+        assert_eq!(icon, TAG_ICON);
+        assert_eq!(label, "Release");
     }
 
     #[test]
