@@ -224,15 +224,15 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
         .or_else(|| thread.pr_url.clone())
         .unwrap_or_else(|| format!("https://github.com/{}", thread.repository));
     let review_content = thread.latest_review_content_md.clone();
-    let review_tone = match thread.latest_requires_code_changes {
-        Some(true) => "unsafe",
-        Some(false) => "safe",
-        None => "pending",
+    let review_tone = if thread.latest_requires_code_changes == Some(true) {
+        "unsafe"
+    } else {
+        "safe"
     };
-    let review_label = match thread.latest_requires_code_changes {
-        Some(true) => "Fixes needed",
-        Some(false) => "Safe",
-        None => "No review",
+    let review_label = if thread.latest_requires_code_changes == Some(true) {
+        "Fixes needed"
+    } else {
+        "Safe"
     };
     let can_review =
         thread.pr_owner.is_some() && thread.pr_repo.is_some() && thread.pr_number.is_some();
@@ -333,7 +333,7 @@ fn ThreadCard(thread: DashboardThread) -> impl IntoView {
                         </button>
                     }.into_any()
                 } else {
-                    view! { <button class=format!("pill {review_tone}") type="button" disabled>{review_label}</button> }.into_any()
+                    ().into_any()
                 }}
                 {if can_review {
                     view! {
