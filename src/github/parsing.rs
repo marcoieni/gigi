@@ -104,10 +104,8 @@ pub fn parse_github_name_with_owner(url: &str) -> Option<String> {
         path
     } else if let Some(path) = trimmed.strip_prefix("http://github.com/") {
         path
-    } else if let Some(path) = trimmed.strip_prefix("git://github.com/") {
-        path
     } else {
-        return None;
+        trimmed.strip_prefix("git://github.com/")?
     };
 
     let normalized = path.strip_suffix(".git").unwrap_or(path).trim_matches('/');

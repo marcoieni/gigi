@@ -12,6 +12,7 @@ pub const PR_QUEUED_ICON: &str = r#"<path d="M16 6H5" /><path d="M16 12H5" /><pa
 pub const PR_DRAFT_ICON: &str = r#"<circle cx="18" cy="18" r="3" fill="none" stroke-dasharray="2.5 2.5" /><circle cx="6" cy="6" r="3" /><path d="M13 6h3a2 2 0 0 1 2 2v7" /><line x1="6" x2="6" y1="9" y2="21" />"#;
 pub const PR_MERGED_ICON: &str = r#"<circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M6 21V9a9 9 0 0 0 9 9" />"#;
 pub const PR_CLOSED_ICON: &str = r#"<circle cx="6" cy="6" r="3" /><path d="M6 9v12" /><path d="m21 3-6 6" /><path d="m21 9-6-6" /><path d="M18 11.5V15" /><circle cx="18" cy="18" r="3" />"#;
+pub const TAG_ICON: &str = r#"<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" /><circle cx="7.5" cy="7.5" r=".5" fill="currentColor" />"#;
 pub const ISSUE_OPEN_ICON: &str = r#"<circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" />"#;
 pub const ISSUE_CLOSED_ICON: &str =
     r#"<circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" />"#;
