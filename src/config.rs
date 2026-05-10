@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-pub const DEFAULT_KIRO_MODEL: &str = "claude-opus-4.6";
+pub const DEFAULT_KIRO_MODEL: &str = "claude-opus-4.7";
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
@@ -94,7 +94,7 @@ initial_review_max_prs = 10
 [ai]
 provider = "copilot" # or "gemini" or "kiro"
 # model = "gpt-5.3-codex"
-# when provider = "kiro", the default model is "claude-opus-4.6"
+# when provider = "kiro", the default model is "claude-opus-4.7"
 
 [dashboard]
 host = "127.0.0.1"
