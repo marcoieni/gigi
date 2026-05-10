@@ -1,6 +1,55 @@
 const dashboardRoot = document.getElementById("dashboard-root");
 let refreshPromise = null;
 
+function captureOpenReviewModal() {
+  const modal = document.getElementById("review-modal");
+  const content = document.getElementById("review-content");
+  const fixForm = document.getElementById("fix-form");
+
+  if (
+    !(modal instanceof HTMLDialogElement) ||
+    !modal.open ||
+    !(content instanceof HTMLElement)
+  ) {
+    return null;
+  }
+
+  return {
+    content: content.textContent || "",
+    fixAction: fixForm instanceof HTMLFormElement ? fixForm.getAttribute("action") || "" : "",
+    fixVisible: fixForm instanceof HTMLFormElement && fixForm.style.display !== "none",
+  };
+}
+
+function restoreReviewModal(snapshot) {
+  if (!snapshot) {
+    return;
+  }
+
+  const modal = document.getElementById("review-modal");
+  const content = document.getElementById("review-content");
+  const fixForm = document.getElementById("fix-form");
+
+  if (!(modal instanceof HTMLDialogElement) || !(content instanceof HTMLElement)) {
+    return;
+  }
+
+  content.textContent = snapshot.content;
+
+  if (typeof hljs !== "undefined") {
+    content.classList.add("language-markdown");
+    delete content.dataset.highlighted;
+    hljs.highlightElement(content);
+  }
+
+  if (fixForm instanceof HTMLFormElement) {
+    fixForm.action = snapshot.fixAction;
+    fixForm.style.display = snapshot.fixVisible ? "" : "none";
+  }
+
+  modal.showModal();
+}
+
 async function refreshDashboard() {
   if (refreshPromise) {
     return refreshPromise;
@@ -17,6 +66,7 @@ async function refreshDashboard() {
 
     const dropdown = document.querySelector("details.repo-dropdown");
     const wasOpen = dropdown && dropdown.hasAttribute("open");
+    const openReviewModal = captureOpenReviewModal();
     dashboardRoot.innerHTML = await response.text();
     if (wasOpen) {
       const restored = document.querySelector("details.repo-dropdown");
@@ -24,6 +74,7 @@ async function refreshDashboard() {
         restored.setAttribute("open", "");
       }
     }
+    restoreReviewModal(openReviewModal);
   })();
 
   try {
