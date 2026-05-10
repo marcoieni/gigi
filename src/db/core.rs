@@ -1,4 +1,4 @@
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::{
     github::Participant,
@@ -113,42 +113,7 @@ impl Db {
         pr_urls: &[String],
     ) -> anyhow::Result<()> {
         self.with_conn(|conn| {
-            if pr_urls.is_empty() {
-                conn.execute("DELETE FROM threads WHERE source = ?1", [source])?;
-                return Ok(());
-            }
-
-            conn.execute_batch(
-                r#"
-                CREATE TEMP TABLE IF NOT EXISTS keep_pr_urls (
-                    url TEXT PRIMARY KEY
-                );
-                DELETE FROM keep_pr_urls;
-                "#,
-            )?;
-
-            let mut insert_stmt =
-                conn.prepare("INSERT OR IGNORE INTO keep_pr_urls (url) VALUES (?1)")?;
-            for pr_url in pr_urls {
-                insert_stmt.execute([pr_url])?;
-            }
-
-            conn.execute(
-                r#"
-                DELETE FROM threads
-                WHERE source = ?1
-                  AND (
-                      pr_url IS NULL
-                      OR NOT EXISTS (
-                          SELECT 1
-                          FROM keep_pr_urls
-                          WHERE keep_pr_urls.url = threads.pr_url
-                      )
-                  )
-                "#,
-                [source],
-            )?;
-            Ok(())
+            delete_threads_by_source_except_urls(conn, source, RetainedUrlColumn::PrUrl, pr_urls)
         })
     }
 
@@ -158,42 +123,12 @@ impl Db {
         subject_urls: &[String],
     ) -> anyhow::Result<()> {
         self.with_conn(|conn| {
-            if subject_urls.is_empty() {
-                conn.execute("DELETE FROM threads WHERE source = ?1", [source])?;
-                return Ok(());
-            }
-
-            conn.execute_batch(
-                r#"
-                CREATE TEMP TABLE IF NOT EXISTS keep_subject_urls (
-                    url TEXT PRIMARY KEY
-                );
-                DELETE FROM keep_subject_urls;
-                "#,
-            )?;
-
-            let mut insert_stmt =
-                conn.prepare("INSERT OR IGNORE INTO keep_subject_urls (url) VALUES (?1)")?;
-            for subject_url in subject_urls {
-                insert_stmt.execute([subject_url])?;
-            }
-
-            conn.execute(
-                r#"
-                DELETE FROM threads
-                WHERE source = ?1
-                  AND (
-                      subject_url IS NULL
-                      OR NOT EXISTS (
-                          SELECT 1
-                          FROM keep_subject_urls
-                          WHERE keep_subject_urls.url = threads.subject_url
-                      )
-                  )
-                "#,
-                [source],
-            )?;
-            Ok(())
+            delete_threads_by_source_except_urls(
+                conn,
+                source,
+                RetainedUrlColumn::SubjectUrl,
+                subject_urls,
+            )
         })
     }
 
@@ -521,4 +456,72 @@ impl Db {
             Ok(())
         })
     }
+}
+
+#[derive(Clone, Copy)]
+enum RetainedUrlColumn {
+    PrUrl,
+    SubjectUrl,
+}
+
+impl RetainedUrlColumn {
+    fn thread_column(self) -> &'static str {
+        match self {
+            Self::PrUrl => "pr_url",
+            Self::SubjectUrl => "subject_url",
+        }
+    }
+
+    fn temp_table(self) -> &'static str {
+        match self {
+            Self::PrUrl => "keep_pr_urls",
+            Self::SubjectUrl => "keep_subject_urls",
+        }
+    }
+}
+
+fn delete_threads_by_source_except_urls(
+    conn: &Connection,
+    source: &str,
+    retained_column: RetainedUrlColumn,
+    urls: &[String],
+) -> anyhow::Result<()> {
+    if urls.is_empty() {
+        conn.execute("DELETE FROM threads WHERE source = ?1", [source])?;
+        return Ok(());
+    }
+
+    let temp_table = retained_column.temp_table();
+    conn.execute(
+        &format!("CREATE TEMP TABLE IF NOT EXISTS {temp_table} (url TEXT PRIMARY KEY)"),
+        [],
+    )?;
+    conn.execute(&format!("DELETE FROM {temp_table}"), [])?;
+
+    let mut insert_stmt = conn.prepare(&format!(
+        "INSERT OR IGNORE INTO {temp_table} (url) VALUES (?1)"
+    ))?;
+    for url in urls {
+        insert_stmt.execute([url])?;
+    }
+
+    let thread_column = retained_column.thread_column();
+    conn.execute(
+        &format!(
+            r#"
+            DELETE FROM threads
+            WHERE source = ?1
+              AND (
+                  {thread_column} IS NULL
+                  OR NOT EXISTS (
+                      SELECT 1
+                      FROM {temp_table}
+                      WHERE {temp_table}.url = threads.{thread_column}
+                  )
+              )
+            "#
+        ),
+        [source],
+    )?;
+    Ok(())
 }
