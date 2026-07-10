@@ -2,17 +2,19 @@ use camino::Utf8Path;
 use git_cmd::Repo;
 use serde::Deserialize;
 
-use crate::{authors, cmd::Cmd};
+use crate::{authors, checkout::parse_github_pr_url, cmd::Cmd, github};
 
 use super::repo::{
-    PushLease, commit, current_branch, default_branch, ensure_not_on_default_branch,
-    view_pr_in_browser,
+    PushLease, commit, current_branch, ensure_not_on_default_branch, view_pr_in_browser,
 };
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PullRequest {
     number: u64,
     title: String,
+    base_ref_name: String,
+    url: String,
 }
 
 async fn current_pull_request(
@@ -27,7 +29,7 @@ async fn current_pull_request(
             "--head",
             current_branch,
             "--json",
-            "number,title",
+            "number,title,baseRefName,url",
             "--limit",
             "1",
         ],
@@ -43,33 +45,102 @@ async fn current_pull_request(
         .ok_or_else(|| anyhow::anyhow!("❌ No open PR found for branch '{current_branch}'"))
 }
 
-async fn sync_feature_branch_with_default(
+async fn fetch_and_merge_base_from(
     repo_root: &Utf8Path,
-    default_branch: &str,
-) -> anyhow::Result<()> {
-    let fetch_output = Cmd::new("git", ["fetch", "origin", default_branch])
-        .with_current_dir(repo_root)
-        .run()
-        .await?;
-    fetch_output.ensure_success("git fetch failed")?;
+    base_repo_url: &str,
+    base_branch: &str,
+) -> anyhow::Result<String> {
+    let base_branch_ref = format!("refs/heads/{base_branch}");
+    let fetch_output = Cmd::new(
+        "git",
+        ["fetch", "--no-tags", base_repo_url, &base_branch_ref],
+    )
+    .with_current_dir(repo_root)
+    .run()
+    .await?;
+    fetch_output.ensure_success(format!(
+        "❌ Failed to fetch PR base branch '{base_branch}' from {base_repo_url}"
+    ))?;
 
-    let merge_ref = format!("origin/{default_branch}");
-    let merge_output = Cmd::new("git", ["merge", "--no-edit", &merge_ref])
+    let base_commit_output = Cmd::new("git", ["rev-parse", "--verify", "FETCH_HEAD"])
         .with_current_dir(repo_root)
         .run()
         .await?;
-    merge_output.ensure_success("git merge failed")?;
-    Ok(())
+    base_commit_output.ensure_success("❌ Failed to resolve the fetched PR base branch")?;
+    let base_commit = base_commit_output.stdout().to_string();
+
+    let merge_output = Cmd::new("git", ["merge", "--no-edit", &base_commit])
+        .with_current_dir(repo_root)
+        .run()
+        .await?;
+    merge_output.ensure_success("❌ Failed to merge the PR base branch")?;
+    Ok(base_commit)
 }
 
-async fn compute_merge_base(repo_root: &Utf8Path, default_branch: &str) -> anyhow::Result<String> {
-    let merge_ref = format!("origin/{default_branch}");
-    let merge_base = Cmd::new("git", ["merge-base", "HEAD", &merge_ref])
+async fn fetch_and_merge_pull_request_base(
+    repo_root: &Utf8Path,
+    pull_request: &PullRequest,
+) -> anyhow::Result<String> {
+    let base_repo = parse_github_pr_url(&pull_request.url)?;
+    let base_name_with_owner = format!("{}/{}", base_repo.owner, base_repo.repo);
+    let base_source =
+        if let Some(remote) = configured_remote_for_repo(repo_root, &base_name_with_owner).await? {
+            remote
+        } else {
+            github_clone_url(repo_root, &base_repo.owner, &base_repo.repo).await?
+        };
+    fetch_and_merge_base_from(repo_root, &base_source, &pull_request.base_ref_name).await
+}
+
+async fn configured_remote_for_repo(
+    repo_root: &Utf8Path,
+    name_with_owner: &str,
+) -> anyhow::Result<Option<String>> {
+    let remotes_output = Cmd::new("git", ["remote"])
         .with_current_dir(repo_root)
         .run()
         .await?;
-    merge_base.ensure_success("❌ Failed to find merge base")?;
-    Ok(merge_base.stdout().to_string())
+    remotes_output.ensure_success("❌ Failed to list git remotes")?;
+
+    for remote in remotes_output.stdout().lines() {
+        let url_output = Cmd::new("git", ["remote", "get-url", remote])
+            .with_current_dir(repo_root)
+            .run()
+            .await?;
+        url_output.ensure_success(format!("❌ Failed to resolve remote '{remote}'"))?;
+        if github::parse_github_name_with_owner(url_output.stdout()).as_deref()
+            == Some(name_with_owner)
+        {
+            return Ok(Some(remote.to_string()));
+        }
+    }
+
+    Ok(None)
+}
+
+async fn github_clone_url(repo_root: &Utf8Path, owner: &str, repo: &str) -> anyhow::Result<String> {
+    let protocol_output = Cmd::new(
+        "gh",
+        ["config", "get", "git_protocol", "--host", "github.com"],
+    )
+    .with_current_dir(repo_root)
+    .run()
+    .await?;
+    protocol_output.ensure_success("❌ Failed to detect the configured GitHub git protocol")?;
+
+    github_clone_url_for_protocol(protocol_output.stdout(), owner, repo)
+}
+
+fn github_clone_url_for_protocol(
+    protocol: &str,
+    owner: &str,
+    repo: &str,
+) -> anyhow::Result<String> {
+    match protocol {
+        "ssh" => Ok(format!("git@github.com:{owner}/{repo}.git")),
+        "https" => Ok(format!("https://github.com/{owner}/{repo}.git")),
+        protocol => anyhow::bail!("❌ Unsupported GitHub git protocol '{protocol}'"),
+    }
 }
 
 fn print_dry_run_summary(
@@ -151,16 +222,14 @@ pub async fn squash(
 ) -> anyhow::Result<()> {
     anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
     let feature_branch = current_branch(repo_root).await?;
-    let default_branch = default_branch(repo_root).await?;
     let pull_request = current_pull_request(repo_root, &feature_branch).await?;
     anyhow::ensure!(
-        feature_branch != default_branch,
-        "❌ You are on the main branch. Switch to a feature branch to squash"
+        feature_branch != pull_request.base_ref_name,
+        "❌ You are on the PR base branch. Switch to the PR feature branch to squash"
     );
 
     let push_lease = PushLease::prepare(repo_root, &feature_branch).await?;
-    sync_feature_branch_with_default(repo_root, &default_branch).await?;
-    let merge_base = compute_merge_base(repo_root, &default_branch).await?;
+    let base_commit = fetch_and_merge_pull_request_base(repo_root, &pull_request).await?;
 
     let pull_request_commits =
         authors::get_pull_request_commits(repo_root, pull_request.number).await?;
@@ -195,13 +264,222 @@ pub async fn squash(
     let commit_message = format!("{}{co_authors_text}", pull_request.title);
     perform_squash_and_push(
         repo_root,
-        &merge_base,
+        &base_commit,
         &commit_message,
-        &default_branch,
+        &pull_request.base_ref_name,
         push_lease,
     )
     .await?;
     view_pr_in_browser(repo_root).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        process::{Command, Output},
+        sync::atomic::{AtomicU64, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use camino::{Utf8Path, Utf8PathBuf};
+
+    use super::{
+        configured_remote_for_repo, fetch_and_merge_base_from, github_clone_url_for_protocol,
+    };
+
+    static NEXT_TEMP_DIR_ID: AtomicU64 = AtomicU64::new(1);
+
+    struct TestDir {
+        path: Utf8PathBuf,
+    }
+
+    impl TestDir {
+        fn new(name: &str) -> Self {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let id = NEXT_TEMP_DIR_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "gigi-squash-{name}-{}-{timestamp}-{id}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self {
+                path: Utf8PathBuf::from_path_buf(path).unwrap(),
+            }
+        }
+
+        fn path(&self) -> &Utf8Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            drop(fs::remove_dir_all(&self.path));
+        }
+    }
+
+    fn git_output(repo: &Utf8Path, args: &[&str]) -> Output {
+        Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .env("LC_ALL", "C")
+            .output()
+            .unwrap()
+    }
+
+    fn command_output(output: &Output) -> String {
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    }
+
+    fn git_success(repo: &Utf8Path, args: &[&str]) -> String {
+        let output = git_output(repo, args);
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            command_output(&output)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    }
+
+    #[tokio::test]
+    async fn uses_matching_configured_remote_for_pr_base() {
+        let fixture = TestDir::new("configured-base-remote");
+        let repo = fixture.path().join("repo");
+        git_success(fixture.path(), &["init", "--quiet", repo.as_str()]);
+        git_success(
+            &repo,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:contributor/project.git",
+            ],
+        );
+        git_success(
+            &repo,
+            &[
+                "remote",
+                "add",
+                "upstream",
+                "git@github.com:organization/project.git",
+            ],
+        );
+
+        assert_eq!(
+            configured_remote_for_repo(&repo, "organization/project")
+                .await
+                .unwrap(),
+            Some("upstream".to_string())
+        );
+    }
+
+    #[test]
+    fn base_repo_fallback_uses_configured_git_protocol() {
+        assert_eq!(
+            github_clone_url_for_protocol("ssh", "organization", "project").unwrap(),
+            "git@github.com:organization/project.git"
+        );
+        assert_eq!(
+            github_clone_url_for_protocol("https", "organization", "project").unwrap(),
+            "https://github.com/organization/project.git"
+        );
+    }
+
+    #[tokio::test]
+    async fn uses_pr_base_repo_when_origin_default_branch_is_stale() {
+        let fixture = TestDir::new("stale-origin");
+        let upstream = fixture.path().join("upstream.git");
+        let fork = fixture.path().join("fork.git");
+        let upstream_work = fixture.path().join("upstream-work");
+        let local = fixture.path().join("local");
+
+        git_success(
+            fixture.path(),
+            &["init", "--bare", "--quiet", upstream.as_str()],
+        );
+        git_success(
+            fixture.path(),
+            &["init", "--bare", "--quiet", fork.as_str()],
+        );
+        git_success(
+            fixture.path(),
+            &[
+                "init",
+                "--quiet",
+                "--initial-branch",
+                "main",
+                upstream_work.as_str(),
+            ],
+        );
+        git_success(&upstream_work, &["config", "user.name", "Test User"]);
+        git_success(
+            &upstream_work,
+            &["config", "user.email", "test@example.com"],
+        );
+        fs::write(upstream_work.join("base.txt"), "base\n").unwrap();
+        git_success(&upstream_work, &["add", "base.txt"]);
+        git_success(&upstream_work, &["commit", "--quiet", "-m", "base"]);
+        let stale_base = git_success(&upstream_work, &["rev-parse", "HEAD"]);
+        git_success(
+            &upstream_work,
+            &["push", "--quiet", upstream.as_str(), "main"],
+        );
+        git_success(&upstream_work, &["push", "--quiet", fork.as_str(), "main"]);
+
+        git_success(fixture.path(), &["init", "--quiet", local.as_str()]);
+        git_success(&local, &["config", "user.name", "Test User"]);
+        git_success(&local, &["config", "user.email", "test@example.com"]);
+        git_success(&local, &["remote", "add", "origin", fork.as_str()]);
+        git_success(&local, &["fetch", "--quiet", "origin", "main"]);
+        git_success(&local, &["switch", "--quiet", "-C", "main", "FETCH_HEAD"]);
+        git_success(
+            &local,
+            &["fetch", "--quiet", upstream.as_str(), "refs/heads/main"],
+        );
+        git_success(
+            &local,
+            &["switch", "--quiet", "-c", "feature", "FETCH_HEAD"],
+        );
+        fs::write(local.join("feature.txt"), "feature work\n").unwrap();
+        git_success(&local, &["add", "feature.txt"]);
+        git_success(&local, &["commit", "--quiet", "-m", "feature"]);
+
+        fs::write(upstream_work.join("upstream.txt"), "new upstream work\n").unwrap();
+        git_success(&upstream_work, &["add", "upstream.txt"]);
+        git_success(
+            &upstream_work,
+            &["commit", "--quiet", "-m", "upstream update"],
+        );
+        let current_base = git_success(&upstream_work, &["rev-parse", "HEAD"]);
+        git_success(
+            &upstream_work,
+            &["push", "--quiet", upstream.as_str(), "main"],
+        );
+
+        assert_eq!(
+            git_success(&local, &["merge-base", "HEAD", "origin/main"]),
+            stale_base
+        );
+
+        let fetched_base = fetch_and_merge_base_from(&local, upstream.as_str(), "main")
+            .await
+            .unwrap();
+        assert_eq!(fetched_base, current_base);
+
+        git_success(&local, &["reset", "--soft", &fetched_base]);
+        assert_eq!(
+            git_success(&local, &["diff", "--cached", "--name-only"]),
+            "feature.txt"
+        );
+    }
 }

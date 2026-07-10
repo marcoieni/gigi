@@ -41,8 +41,9 @@ Examples:
 
 ### Squash
 
-The squash subcommand squashes all the commits of the PR into one, rebasing
-the default branch and setting the PR title as the commit message.
+The squash subcommand squashes all the commits of the PR into one, first
+incorporating the latest PR base branch and then setting the PR title as the
+commit message.
 
 The authors of the original commits are set as co-authors in the new commit
 message.
