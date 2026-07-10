@@ -23,6 +23,122 @@ pub(crate) async fn ensure_clean_repo(repo_root: &Utf8Path) -> anyhow::Result<()
     Ok(())
 }
 
+#[derive(Debug)]
+pub(crate) struct PushLease {
+    remote: String,
+    branch_ref: String,
+    expected_remote_head: String,
+}
+
+impl PushLease {
+    pub(crate) async fn prepare(
+        repo_root: &Utf8Path,
+        feature_branch: &str,
+    ) -> anyhow::Result<Self> {
+        let remote = resolve_push_remote(repo_root, feature_branch).await?;
+        let branch_ref = format!("refs/heads/{feature_branch}");
+
+        // Capture the expected SHA directly from the push destination so the lease
+        // does not depend on Git being able to associate it with a tracking ref.
+        let fetch_output = Cmd::new("git", ["fetch", "--no-tags", &remote, &branch_ref])
+            .with_current_dir(repo_root)
+            .run()
+            .await?;
+        fetch_output.ensure_success(format!(
+            "❌ Failed to fetch remote feature branch '{feature_branch}'"
+        ))?;
+
+        let remote_head_output = Cmd::new("git", ["rev-parse", "--verify", "FETCH_HEAD"])
+            .with_current_dir(repo_root)
+            .run()
+            .await?;
+        remote_head_output.ensure_success(format!(
+            "❌ Failed to resolve remote feature branch '{feature_branch}'"
+        ))?;
+        let expected_remote_head = remote_head_output.stdout().to_string();
+
+        let ancestor_output = Cmd::new(
+            "git",
+            ["merge-base", "--is-ancestor", &expected_remote_head, "HEAD"],
+        )
+        .with_current_dir(repo_root)
+        .run()
+        .await?;
+        if ancestor_output.status().code() == Some(1) {
+            anyhow::bail!(
+                "❌ Local branch '{feature_branch}' does not contain the current remote branch. Update or re-check out the branch before rewriting it."
+            );
+        }
+        ancestor_output.ensure_success(format!(
+            "❌ Failed to compare local and remote feature branch '{feature_branch}'"
+        ))?;
+
+        Ok(Self {
+            remote,
+            branch_ref,
+            expected_remote_head,
+        })
+    }
+
+    pub(crate) async fn force_push_head(self, repo_root: &Utf8Path) -> anyhow::Result<()> {
+        let lease = format!(
+            "--force-with-lease={}:{}",
+            self.branch_ref, self.expected_remote_head
+        );
+        let refspec = format!("HEAD:{}", self.branch_ref);
+        Cmd::new("git", ["push", &self.remote, &lease, &refspec])
+            .with_current_dir(repo_root)
+            .run()
+            .await?
+            .ensure_success("❌ git push --force-with-lease failed")?;
+        Ok(())
+    }
+}
+
+async fn git_config_value(repo_root: &Utf8Path, key: &str) -> anyhow::Result<Option<String>> {
+    let output = Cmd::new("git", ["config", "--get", key])
+        .with_current_dir(repo_root)
+        .run()
+        .await?;
+    if output.status().success() {
+        return Ok((!output.stdout().is_empty()).then(|| output.stdout().to_string()));
+    }
+    if output.status().code() == Some(1) {
+        return Ok(None);
+    }
+    output.ensure_success(format!("❌ Failed to read git config '{key}'"))?;
+    unreachable!("a successful git config lookup returned above")
+}
+
+async fn resolve_push_remote(repo_root: &Utf8Path, feature_branch: &str) -> anyhow::Result<String> {
+    // Match Git's push-remote precedence. `gh pr checkout` may set `pushRemote`
+    // to a URL instead of the name of the remote that owns the tracking ref.
+    let keys = [
+        format!("branch.{feature_branch}.pushRemote"),
+        "remote.pushDefault".to_string(),
+        format!("branch.{feature_branch}.remote"),
+    ];
+    for key in keys {
+        if let Some(value) = git_config_value(repo_root, &key).await? {
+            return Ok(value);
+        }
+    }
+
+    // With no configured push remote, Git uses the only remote when exactly
+    // one exists before falling back to `origin`.
+    let remotes_output = Cmd::new("git", ["remote"])
+        .with_current_dir(repo_root)
+        .run()
+        .await?;
+    remotes_output.ensure_success("❌ Failed to list git remotes")?;
+    let mut remotes = remotes_output.stdout().lines();
+    if let (Some(remote), None) = (remotes.next(), remotes.next()) {
+        return Ok(remote.to_string());
+    }
+
+    Ok("origin".to_string())
+}
+
 struct RepoInfo {
     is_fork: bool,
     default_branch: String,
@@ -347,9 +463,78 @@ pub(crate) async fn repo_root() -> anyhow::Result<Utf8PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        process::{Command, Output},
+        sync::atomic::{AtomicU64, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use camino::{Utf8Path, Utf8PathBuf};
     use serde_json::json;
 
-    use super::parent_name_with_owner_from_json;
+    use super::{PushLease, parent_name_with_owner_from_json, resolve_push_remote};
+
+    static NEXT_TEMP_DIR_ID: AtomicU64 = AtomicU64::new(1);
+
+    struct TestDir {
+        path: Utf8PathBuf,
+    }
+
+    impl TestDir {
+        fn new(name: &str) -> Self {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let id = NEXT_TEMP_DIR_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "gigi-{name}-{}-{timestamp}-{id}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self {
+                path: Utf8PathBuf::from_path_buf(path).unwrap(),
+            }
+        }
+
+        fn path(&self) -> &Utf8Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            drop(fs::remove_dir_all(&self.path));
+        }
+    }
+
+    fn git_output(repo: &Utf8Path, args: &[&str]) -> Output {
+        Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .env("LC_ALL", "C")
+            .output()
+            .unwrap()
+    }
+
+    fn command_output(output: &Output) -> String {
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    }
+
+    fn git_success(repo: &Utf8Path, args: &[&str]) -> String {
+        let output = git_output(repo, args);
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            command_output(&output)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    }
 
     #[test]
     fn test_parent_name_with_owner_from_json_name_with_owner_field() {
@@ -369,6 +554,113 @@ mod tests {
         assert_eq!(
             parent_name_with_owner_from_json(Some(&parent)),
             Some("rust-lang/rust-forge".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_push_remote_uses_git_precedence() {
+        let fixture = TestDir::new("push-remote-precedence");
+        let repo = fixture.path().join("repo");
+        git_success(fixture.path(), &["init", repo.as_str()]);
+        git_success(&repo, &["config", "branch.feature.remote", "branch-remote"]);
+        git_success(&repo, &["config", "remote.pushDefault", "default-remote"]);
+        git_success(
+            &repo,
+            &["config", "branch.feature.pushRemote", "branch-push-remote"],
+        );
+
+        assert_eq!(
+            resolve_push_remote(&repo, "feature").await.unwrap(),
+            "branch-push-remote"
+        );
+
+        git_success(&repo, &["config", "--unset", "branch.feature.pushRemote"]);
+        assert_eq!(
+            resolve_push_remote(&repo, "feature").await.unwrap(),
+            "default-remote"
+        );
+
+        git_success(&repo, &["config", "--unset", "remote.pushDefault"]);
+        assert_eq!(
+            resolve_push_remote(&repo, "feature").await.unwrap(),
+            "branch-remote"
+        );
+
+        git_success(&repo, &["config", "--unset", "branch.feature.remote"]);
+
+        git_success(&repo, &["remote", "add", "only", "."]);
+        assert_eq!(resolve_push_remote(&repo, "feature").await.unwrap(), "only");
+
+        git_success(&repo, &["remote", "add", "second", "."]);
+        assert_eq!(
+            resolve_push_remote(&repo, "feature").await.unwrap(),
+            "origin"
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_lease_supports_url_valued_push_remote() {
+        let fixture = TestDir::new("url-push-remote");
+        let remote = fixture.path().join("remote.git");
+        let remote_url = format!("file://{remote}");
+        let repo = fixture.path().join("repo");
+        let branch = "u/infra-2026-q2-recap";
+        let branch_ref = format!("refs/heads/{branch}");
+
+        git_success(
+            fixture.path(),
+            &["init", "--bare", "--quiet", remote.as_str()],
+        );
+        git_success(fixture.path(), &["init", "--quiet", repo.as_str()]);
+        git_success(&repo, &["config", "user.name", "Test User"]);
+        git_success(&repo, &["config", "user.email", "test@example.com"]);
+        git_success(&repo, &["commit", "--allow-empty", "-m", "base"]);
+        git_success(&repo, &["switch", "-c", branch]);
+        git_success(&repo, &["commit", "--allow-empty", "-m", "original"]);
+        git_success(&repo, &["remote", "add", "origin", remote.as_str()]);
+        git_success(&repo, &["push", "--set-upstream", "origin", branch]);
+        git_success(
+            &repo,
+            &[
+                "config",
+                &format!("branch.{branch}.pushRemote"),
+                &remote_url,
+            ],
+        );
+
+        let lease = PushLease::prepare(&repo, branch).await.unwrap();
+        git_success(
+            &repo,
+            &["commit", "--amend", "--allow-empty", "-m", "squashed"],
+        );
+
+        let implicit_push = git_output(&repo, &["push", "--force-with-lease"]);
+        assert!(!implicit_push.status.success());
+        assert!(command_output(&implicit_push).contains("stale info"));
+
+        lease.force_push_head(&repo).await.unwrap();
+
+        let local_head = git_success(&repo, &["rev-parse", "HEAD"]);
+        let remote_head = git_success(&remote, &["rev-parse", &branch_ref]);
+        assert_eq!(local_head, remote_head);
+
+        let stale_lease = PushLease::prepare(&repo, branch).await.unwrap();
+        git_success(&repo, &["commit", "--allow-empty", "-m", "remote update"]);
+        git_success(
+            &repo,
+            &["push", remote.as_str(), &format!("HEAD:{branch_ref}")],
+        );
+        let updated_remote_head = git_success(&remote, &["rev-parse", &branch_ref]);
+        git_success(
+            &repo,
+            &["commit", "--amend", "--allow-empty", "-m", "local rewrite"],
+        );
+
+        let stale_error = stale_lease.force_push_head(&repo).await.unwrap_err();
+        assert!(format!("{stale_error:#}").contains("stale info"));
+        assert_eq!(
+            git_success(&remote, &["rev-parse", &branch_ref]),
+            updated_remote_head
         );
     }
 }

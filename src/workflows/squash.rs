@@ -5,7 +5,8 @@ use serde::Deserialize;
 use crate::{authors, cmd::Cmd};
 
 use super::repo::{
-    commit, current_branch, default_branch, ensure_not_on_default_branch, view_pr_in_browser,
+    PushLease, commit, current_branch, default_branch, ensure_not_on_default_branch,
+    view_pr_in_browser,
 };
 
 #[derive(Debug, Deserialize)]
@@ -14,15 +15,17 @@ struct PullRequest {
     title: String,
 }
 
-async fn current_pull_request(repo_root: &Utf8Path) -> anyhow::Result<PullRequest> {
-    let current_branch = current_branch(repo_root).await?;
+async fn current_pull_request(
+    repo_root: &Utf8Path,
+    current_branch: &str,
+) -> anyhow::Result<PullRequest> {
     let output = Cmd::new(
         "gh",
         [
             "pr",
             "list",
             "--head",
-            &current_branch,
+            current_branch,
             "--json",
             "number,title",
             "--limit",
@@ -119,6 +122,7 @@ async fn perform_squash_and_push(
     merge_base: &str,
     commit_message: &str,
     default_branch: &str,
+    push_lease: PushLease,
 ) -> anyhow::Result<()> {
     let reset_output = Cmd::new("git", ["reset", "--soft", merge_base])
         .with_current_dir(repo_root)
@@ -135,11 +139,7 @@ async fn perform_squash_and_push(
     commit(repo_root, commit_message).await?;
 
     ensure_not_on_default_branch(repo_root, default_branch).await?;
-    let push_output = Cmd::new("git", ["push", "--force-with-lease"])
-        .with_current_dir(repo_root)
-        .run()
-        .await?;
-    push_output.ensure_success("❌ git push --force-with-lease failed")?;
+    push_lease.force_push_head(repo_root).await?;
     Ok(())
 }
 
@@ -150,14 +150,15 @@ pub async fn squash(
     add_co_author: bool,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
-    let feature_branch = repo.original_branch();
+    let feature_branch = current_branch(repo_root).await?;
     let default_branch = default_branch(repo_root).await?;
-    let pull_request = current_pull_request(repo_root).await?;
+    let pull_request = current_pull_request(repo_root, &feature_branch).await?;
     anyhow::ensure!(
         feature_branch != default_branch,
         "❌ You are on the main branch. Switch to a feature branch to squash"
     );
 
+    let push_lease = PushLease::prepare(repo_root, &feature_branch).await?;
     sync_feature_branch_with_default(repo_root, &default_branch).await?;
     let merge_base = compute_merge_base(repo_root, &default_branch).await?;
 
@@ -192,7 +193,14 @@ pub async fn squash(
     }
 
     let commit_message = format!("{}{co_authors_text}", pull_request.title);
-    perform_squash_and_push(repo_root, &merge_base, &commit_message, &default_branch).await?;
+    perform_squash_and_push(
+        repo_root,
+        &merge_base,
+        &commit_message,
+        &default_branch,
+        push_lease,
+    )
+    .await?;
     view_pr_in_browser(repo_root).await?;
 
     Ok(())
