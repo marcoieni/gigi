@@ -1,5 +1,6 @@
 use camino::Utf8Path;
 use git_cmd::Repo;
+use serde::Deserialize;
 
 use crate::{authors, cmd::Cmd};
 
@@ -7,7 +8,13 @@ use super::repo::{
     commit, current_branch, default_branch, ensure_not_on_default_branch, view_pr_in_browser,
 };
 
-async fn pr_title(repo_root: &Utf8Path) -> anyhow::Result<String> {
+#[derive(Debug, Deserialize)]
+struct PullRequest {
+    number: u64,
+    title: String,
+}
+
+async fn current_pull_request(repo_root: &Utf8Path) -> anyhow::Result<PullRequest> {
     let current_branch = current_branch(repo_root).await?;
     let output = Cmd::new(
         "gh",
@@ -17,20 +24,20 @@ async fn pr_title(repo_root: &Utf8Path) -> anyhow::Result<String> {
             "--head",
             &current_branch,
             "--json",
-            "title",
-            "-q",
-            ".[0].title",
+            "number,title",
+            "--limit",
+            "1",
         ],
     )
     .with_current_dir(repo_root)
     .run()
     .await?;
-    output.ensure_success("❌ Failed to get PR title")?;
-    anyhow::ensure!(
-        !output.stdout().is_empty(),
-        "❌ Failed to get PR title: command returned empty output"
-    );
-    Ok(output.stdout().to_string())
+    output.ensure_success("❌ Failed to get current PR")?;
+    let pull_requests: Vec<PullRequest> = serde_json::from_str(output.stdout())?;
+    pull_requests
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("❌ No open PR found for branch '{current_branch}'"))
 }
 
 async fn sync_feature_branch_with_default(
@@ -62,18 +69,17 @@ async fn compute_merge_base(repo_root: &Utf8Path, default_branch: &str) -> anyho
     Ok(merge_base.stdout().to_string())
 }
 
-async fn print_dry_run_summary(
-    repo_root: &Utf8Path,
-    merge_base: &str,
+fn print_dry_run_summary(
+    commits_to_squash: &[authors::PullRequestCommit],
     pr_title: &str,
     detected_co_authors: &[String],
     additional_co_authors: &[String],
     co_authors_text: &str,
-) -> anyhow::Result<()> {
+) {
     println!("\n🔍 DRY RUN: The following commits would be squashed:");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    let commits_to_squash = authors::get_commits_to_squash(repo_root, merge_base).await?;
+    let commits_to_squash = authors::get_commits_to_squash(commits_to_squash);
     if commits_to_squash.is_empty() {
         println!("⚠️  No commits to squash (already at merge base)");
     } else {
@@ -106,7 +112,6 @@ async fn print_dry_run_summary(
     }
 
     println!("\n💡 To perform the actual squash, run without --dry-run");
-    Ok(())
 }
 
 async fn perform_squash_and_push(
@@ -147,7 +152,7 @@ pub async fn squash(
     anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
     let feature_branch = repo.original_branch();
     let default_branch = default_branch(repo_root).await?;
-    let pr_title = pr_title(repo_root).await?;
+    let pull_request = current_pull_request(repo_root).await?;
     anyhow::ensure!(
         feature_branch != default_branch,
         "❌ You are on the main branch. Switch to a feature branch to squash"
@@ -156,7 +161,9 @@ pub async fn squash(
     sync_feature_branch_with_default(repo_root, &default_branch).await?;
     let merge_base = compute_merge_base(repo_root, &default_branch).await?;
 
-    let detected_co_authors = authors::get_co_authors(repo_root, &merge_base).await?;
+    let pull_request_commits =
+        authors::get_pull_request_commits(repo_root, pull_request.number).await?;
+    let detected_co_authors = authors::get_co_authors(repo_root, &pull_request_commits).await?;
     let additional_co_authors = if add_co_author {
         let selectable_co_authors =
             authors::get_selectable_co_authors(repo_root, &detected_co_authors).await?;
@@ -174,18 +181,17 @@ pub async fn squash(
     let co_authors_text = authors::format_co_authors(&co_authors);
 
     if dry_run {
-        return print_dry_run_summary(
-            repo_root,
-            &merge_base,
-            &pr_title,
+        print_dry_run_summary(
+            &pull_request_commits,
+            &pull_request.title,
             &detected_co_authors,
             &additional_co_authors,
             &co_authors_text,
-        )
-        .await;
+        );
+        return Ok(());
     }
 
-    let commit_message = format!("{pr_title}{co_authors_text}");
+    let commit_message = format!("{}{co_authors_text}", pull_request.title);
     perform_squash_and_push(repo_root, &merge_base, &commit_message, &default_branch).await?;
     view_pr_in_browser(repo_root).await?;
 
