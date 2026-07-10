@@ -52,39 +52,27 @@ impl PushLease {
         let remote = resolve_push_remote(repo_root, feature_branch).await?;
         let push_destination = resolve_push_destination(repo_root, &remote).await?;
         let branch_ref = format!("refs/heads/{feature_branch}");
-
-        // Capture the expected SHA directly from the push destination so the lease
-        // does not depend on Git being able to associate it with a tracking ref.
-        let fetch_output = Cmd::new(
-            "git",
-            ["fetch", "--no-tags", &push_destination, &branch_ref],
-        )
-        .with_current_dir(repo_root)
-        .run()
-        .await?;
-        fetch_output.ensure_success(format!(
-            "❌ Failed to fetch remote feature branch '{feature_branch}'"
-        ))?;
-
-        let remote_head_output = Cmd::new("git", ["rev-parse", "--verify", "FETCH_HEAD"])
-            .with_current_dir(repo_root)
-            .run()
-            .await?;
-        remote_head_output.ensure_success(format!(
-            "❌ Failed to resolve remote feature branch '{feature_branch}'"
-        ))?;
-        let expected_remote_head = remote_head_output.stdout().to_string();
-
-        let retry_state = SquashRetryState {
+        // Read the expected SHA from the push destination rather than relying on
+        // Git to associate it with a local tracking ref.
+        let expected_remote_head =
+            fetch_branch_head(repo_root, &push_destination, feature_branch).await?;
+        let lease = Self {
+            remote,
+            push_destination,
+            branch_ref,
+            expected_remote_head,
             feature_branch: feature_branch.to_string(),
-            push_destination: push_destination.clone(),
-            expected_remote_head: expected_remote_head.clone(),
-            result_head: head(repo_root).await?,
         };
+        let retry_state = lease.retry_state(repo_root).await?;
 
         let ancestor_output = Cmd::new(
             "git",
-            ["merge-base", "--is-ancestor", &expected_remote_head, "HEAD"],
+            [
+                "merge-base",
+                "--is-ancestor",
+                &lease.expected_remote_head,
+                "HEAD",
+            ],
         )
         .with_current_dir(repo_root)
         .run()
@@ -101,22 +89,11 @@ impl PushLease {
             clear_squash_retry_state(repo_root).await?;
         }
 
-        Ok(Self {
-            remote,
-            push_destination,
-            branch_ref,
-            expected_remote_head,
-            feature_branch: feature_branch.to_string(),
-        })
+        Ok(lease)
     }
 
     pub(crate) async fn force_push_head(&self, repo_root: &Utf8Path) -> anyhow::Result<()> {
-        let retry_state = SquashRetryState {
-            feature_branch: self.feature_branch.clone(),
-            push_destination: self.push_destination.clone(),
-            expected_remote_head: self.expected_remote_head.clone(),
-            result_head: head(repo_root).await?,
-        };
+        let retry_state = self.retry_state(repo_root).await?;
         set_squash_retry_state(repo_root, &retry_state).await?;
 
         let lease = format!(
@@ -132,34 +109,50 @@ impl PushLease {
         clear_squash_retry_state(repo_root).await?;
         Ok(())
     }
+
+    async fn retry_state(&self, repo_root: &Utf8Path) -> anyhow::Result<SquashRetryState> {
+        Ok(SquashRetryState {
+            feature_branch: self.feature_branch.clone(),
+            push_destination: self.push_destination.clone(),
+            expected_remote_head: self.expected_remote_head.clone(),
+            result_head: resolve_revision(repo_root, "HEAD").await?,
+        })
+    }
 }
 
-async fn head(repo_root: &Utf8Path) -> anyhow::Result<String> {
-    let output = Cmd::new("git", ["rev-parse", "--verify", "HEAD"])
+async fn resolve_revision(repo_root: &Utf8Path, revision: &str) -> anyhow::Result<String> {
+    let output = Cmd::new("git", ["rev-parse", "--verify", revision])
         .with_current_dir(repo_root)
         .run()
         .await?;
-    output.ensure_success("❌ Failed to resolve the current commit")?;
+    output.ensure_success(format!("❌ Failed to resolve git revision '{revision}'"))?;
     Ok(output.stdout().to_string())
 }
 
-async fn local_git_config_value(repo_root: &Utf8Path, key: &str) -> anyhow::Result<Option<String>> {
-    let output = Cmd::new("git", ["config", "--local", "--get", key])
+pub(crate) async fn fetch_branch_head(
+    repo_root: &Utf8Path,
+    source: &str,
+    branch: &str,
+) -> anyhow::Result<String> {
+    let branch_ref = format!("refs/heads/{branch}");
+    let output = Cmd::new("git", ["fetch", "--no-tags", source, &branch_ref])
         .with_current_dir(repo_root)
         .run()
         .await?;
-    if output.status().success() {
-        return Ok((!output.stdout().is_empty()).then(|| output.stdout().to_string()));
-    }
-    if output.status().code() == Some(1) {
-        return Ok(None);
-    }
-    output.ensure_success(format!("❌ Failed to read local git config '{key}'"))?;
-    unreachable!("a successful git config lookup returned above")
+    output.ensure_success(format!(
+        "❌ Failed to fetch branch '{branch}' from '{source}'"
+    ))?;
+    resolve_revision(repo_root, "FETCH_HEAD").await
+}
+
+#[derive(Clone, Copy)]
+enum GitConfigScope {
+    Local,
+    Effective,
 }
 
 async fn squash_retry_state(repo_root: &Utf8Path) -> anyhow::Result<Option<SquashRetryState>> {
-    local_git_config_value(repo_root, SQUASH_RETRY_CONFIG_KEY)
+    git_config_value(repo_root, SQUASH_RETRY_CONFIG_KEY, GitConfigScope::Local)
         .await?
         .map(|value| serde_json::from_str(&value))
         .transpose()
@@ -189,7 +182,7 @@ async fn set_squash_retry_state(
 }
 
 async fn clear_squash_retry_state(repo_root: &Utf8Path) -> anyhow::Result<()> {
-    if local_git_config_value(repo_root, SQUASH_RETRY_CONFIG_KEY)
+    if git_config_value(repo_root, SQUASH_RETRY_CONFIG_KEY, GitConfigScope::Local)
         .await?
         .is_none()
     {
@@ -207,8 +200,18 @@ async fn clear_squash_retry_state(repo_root: &Utf8Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn git_config_value(repo_root: &Utf8Path, key: &str) -> anyhow::Result<Option<String>> {
-    let output = Cmd::new("git", ["config", "--get", key])
+async fn git_config_value(
+    repo_root: &Utf8Path,
+    key: &str,
+    scope: GitConfigScope,
+) -> anyhow::Result<Option<String>> {
+    let mut args = vec!["config"];
+    if matches!(scope, GitConfigScope::Local) {
+        args.push("--local");
+    }
+    args.extend(["--get", key]);
+
+    let output = Cmd::new("git", args)
         .with_current_dir(repo_root)
         .run()
         .await?;
@@ -218,8 +221,21 @@ async fn git_config_value(repo_root: &Utf8Path, key: &str) -> anyhow::Result<Opt
     if output.status().code() == Some(1) {
         return Ok(None);
     }
-    output.ensure_success(format!("❌ Failed to read git config '{key}'"))?;
+    let scope = match scope {
+        GitConfigScope::Local => "local ",
+        GitConfigScope::Effective => "",
+    };
+    output.ensure_success(format!("❌ Failed to read {scope}git config '{key}'"))?;
     unreachable!("a successful git config lookup returned above")
+}
+
+pub(crate) async fn remote_names(repo_root: &Utf8Path) -> anyhow::Result<Vec<String>> {
+    let output = Cmd::new("git", ["remote"])
+        .with_current_dir(repo_root)
+        .run()
+        .await?;
+    output.ensure_success("❌ Failed to list git remotes")?;
+    Ok(output.stdout().lines().map(str::to_string).collect())
 }
 
 async fn resolve_push_remote(repo_root: &Utf8Path, feature_branch: &str) -> anyhow::Result<String> {
@@ -231,21 +247,16 @@ async fn resolve_push_remote(repo_root: &Utf8Path, feature_branch: &str) -> anyh
         format!("branch.{feature_branch}.remote"),
     ];
     for key in keys {
-        if let Some(value) = git_config_value(repo_root, &key).await? {
+        if let Some(value) = git_config_value(repo_root, &key, GitConfigScope::Effective).await? {
             return Ok(value);
         }
     }
 
     // With no configured push remote, Git uses the only remote when exactly
     // one exists before falling back to `origin`.
-    let remotes_output = Cmd::new("git", ["remote"])
-        .with_current_dir(repo_root)
-        .run()
-        .await?;
-    remotes_output.ensure_success("❌ Failed to list git remotes")?;
-    let mut remotes = remotes_output.stdout().lines();
-    if let (Some(remote), None) = (remotes.next(), remotes.next()) {
-        return Ok(remote.to_string());
+    let remotes = remote_names(repo_root).await?;
+    if let [remote] = remotes.as_slice() {
+        return Ok(remote.clone());
     }
 
     Ok("origin".to_string())
@@ -255,15 +266,9 @@ async fn resolve_push_destination(
     repo_root: &Utf8Path,
     push_remote: &str,
 ) -> anyhow::Result<String> {
-    let remotes_output = Cmd::new("git", ["remote"])
-        .with_current_dir(repo_root)
-        .run()
-        .await?;
-    remotes_output.ensure_success("❌ Failed to list git remotes")?;
-
-    if !remotes_output
-        .stdout()
-        .lines()
+    if !remote_names(repo_root)
+        .await?
+        .iter()
         .any(|remote| remote == push_remote)
     {
         return Ok(push_remote.to_string());
@@ -609,80 +614,33 @@ pub(crate) async fn repo_root() -> anyhow::Result<Utf8PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        process::{Command, Output},
-        sync::atomic::{AtomicU64, Ordering},
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::fs;
 
-    use camino::{Utf8Path, Utf8PathBuf};
+    use camino::Utf8Path;
     use serde_json::json;
+
+    use crate::workflows::test_support::{
+        TestDir, command_output, configure_test_user, git_output, git_success, init_bare_repo,
+    };
 
     use super::{
         PushLease, SQUASH_RETRY_CONFIG_KEY, parent_name_with_owner_from_json,
         resolve_push_destination, resolve_push_remote,
     };
 
-    static NEXT_TEMP_DIR_ID: AtomicU64 = AtomicU64::new(1);
-
-    struct TestDir {
-        path: Utf8PathBuf,
-    }
-
-    impl TestDir {
-        fn new(name: &str) -> Self {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let id = NEXT_TEMP_DIR_ID.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "gigi-{name}-{}-{timestamp}-{id}",
-                std::process::id()
-            ));
-            fs::create_dir_all(&path).unwrap();
-            Self {
-                path: Utf8PathBuf::from_path_buf(path).unwrap(),
-            }
-        }
-
-        fn path(&self) -> &Utf8Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            drop(fs::remove_dir_all(&self.path));
-        }
-    }
-
-    fn git_output(repo: &Utf8Path, args: &[&str]) -> Output {
-        Command::new("git")
-            .args(args)
-            .current_dir(repo)
-            .env("LC_ALL", "C")
-            .output()
-            .unwrap()
-    }
-
-    fn command_output(output: &Output) -> String {
-        format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )
-    }
-
-    fn git_success(repo: &Utf8Path, args: &[&str]) -> String {
-        let output = git_output(repo, args);
-        assert!(
-            output.status.success(),
-            "git {args:?} failed: {}",
-            command_output(&output)
-        );
-        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    fn init_feature_repo(
+        fixture_root: &Utf8Path,
+        repo: &Utf8Path,
+        remote: &Utf8Path,
+        branch: &str,
+    ) {
+        init_bare_repo(fixture_root, remote);
+        git_success(fixture_root, &["init", "--quiet", repo.as_str()]);
+        configure_test_user(repo);
+        git_success(repo, &["commit", "--allow-empty", "-m", "base"]);
+        git_success(repo, &["switch", "-c", branch]);
+        git_success(repo, &["commit", "--allow-empty", "-m", "original"]);
+        git_success(repo, &["remote", "add", "origin", remote.as_str()]);
     }
 
     #[test]
@@ -756,21 +714,8 @@ mod tests {
         let branch = "feature";
         let branch_ref = format!("refs/heads/{branch}");
 
-        git_success(
-            fixture.path(),
-            &["init", "--bare", "--quiet", fetch_remote.as_str()],
-        );
-        git_success(
-            fixture.path(),
-            &["init", "--bare", "--quiet", push_remote.as_str()],
-        );
-        git_success(fixture.path(), &["init", "--quiet", repo.as_str()]);
-        git_success(&repo, &["config", "user.name", "Test User"]);
-        git_success(&repo, &["config", "user.email", "test@example.com"]);
-        git_success(&repo, &["commit", "--allow-empty", "-m", "base"]);
-        git_success(&repo, &["switch", "-c", branch]);
-        git_success(&repo, &["commit", "--allow-empty", "-m", "original"]);
-        git_success(&repo, &["remote", "add", "origin", fetch_remote.as_str()]);
+        init_feature_repo(fixture.path(), &repo, &fetch_remote, branch);
+        init_bare_repo(fixture.path(), &push_remote);
         git_success(
             &repo,
             &[
@@ -817,17 +762,7 @@ mod tests {
         let branch = "feature";
         let branch_ref = format!("refs/heads/{branch}");
 
-        git_success(
-            fixture.path(),
-            &["init", "--bare", "--quiet", remote.as_str()],
-        );
-        git_success(fixture.path(), &["init", "--quiet", repo.as_str()]);
-        git_success(&repo, &["config", "user.name", "Test User"]);
-        git_success(&repo, &["config", "user.email", "test@example.com"]);
-        git_success(&repo, &["commit", "--allow-empty", "-m", "base"]);
-        git_success(&repo, &["switch", "-c", branch]);
-        git_success(&repo, &["commit", "--allow-empty", "-m", "original"]);
-        git_success(&repo, &["remote", "add", "origin", remote.as_str()]);
+        init_feature_repo(fixture.path(), &repo, &remote, branch);
         git_success(&repo, &["push", "origin", branch]);
         git_success(
             &repo,
@@ -867,17 +802,7 @@ mod tests {
         let branch = "u/infra-2026-q2-recap";
         let branch_ref = format!("refs/heads/{branch}");
 
-        git_success(
-            fixture.path(),
-            &["init", "--bare", "--quiet", remote.as_str()],
-        );
-        git_success(fixture.path(), &["init", "--quiet", repo.as_str()]);
-        git_success(&repo, &["config", "user.name", "Test User"]);
-        git_success(&repo, &["config", "user.email", "test@example.com"]);
-        git_success(&repo, &["commit", "--allow-empty", "-m", "base"]);
-        git_success(&repo, &["switch", "-c", branch]);
-        git_success(&repo, &["commit", "--allow-empty", "-m", "original"]);
-        git_success(&repo, &["remote", "add", "origin", remote.as_str()]);
+        init_feature_repo(fixture.path(), &repo, &remote, branch);
         git_success(&repo, &["push", "--set-upstream", "origin", branch]);
         git_success(
             &repo,

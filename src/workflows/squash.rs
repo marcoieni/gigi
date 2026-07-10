@@ -5,7 +5,8 @@ use serde::Deserialize;
 use crate::{authors, checkout::parse_github_pr_url, cmd::Cmd, github};
 
 use super::repo::{
-    PushLease, commit, current_branch, ensure_not_on_default_branch, view_pr_in_browser,
+    PushLease, commit, current_branch, ensure_not_on_default_branch, fetch_branch_head,
+    remote_names, view_pr_in_browser,
 };
 
 #[derive(Debug, Deserialize)]
@@ -50,24 +51,7 @@ async fn fetch_and_merge_base_from(
     base_repo_url: &str,
     base_branch: &str,
 ) -> anyhow::Result<String> {
-    let base_branch_ref = format!("refs/heads/{base_branch}");
-    let fetch_output = Cmd::new(
-        "git",
-        ["fetch", "--no-tags", base_repo_url, &base_branch_ref],
-    )
-    .with_current_dir(repo_root)
-    .run()
-    .await?;
-    fetch_output.ensure_success(format!(
-        "❌ Failed to fetch PR base branch '{base_branch}' from {base_repo_url}"
-    ))?;
-
-    let base_commit_output = Cmd::new("git", ["rev-parse", "--verify", "FETCH_HEAD"])
-        .with_current_dir(repo_root)
-        .run()
-        .await?;
-    base_commit_output.ensure_success("❌ Failed to resolve the fetched PR base branch")?;
-    let base_commit = base_commit_output.stdout().to_string();
+    let base_commit = fetch_branch_head(repo_root, base_repo_url, base_branch).await?;
 
     let merge_output = Cmd::new("git", ["merge", "--no-edit", &base_commit])
         .with_current_dir(repo_root)
@@ -96,14 +80,8 @@ async fn configured_remote_for_repo(
     repo_root: &Utf8Path,
     name_with_owner: &str,
 ) -> anyhow::Result<Option<String>> {
-    let remotes_output = Cmd::new("git", ["remote"])
-        .with_current_dir(repo_root)
-        .run()
-        .await?;
-    remotes_output.ensure_success("❌ Failed to list git remotes")?;
-
-    for remote in remotes_output.stdout().lines() {
-        let url_output = Cmd::new("git", ["remote", "get-url", remote])
+    for remote in remote_names(repo_root).await? {
+        let url_output = Cmd::new("git", ["remote", "get-url", &remote])
             .with_current_dir(repo_root)
             .run()
             .await?;
@@ -111,7 +89,7 @@ async fn configured_remote_for_repo(
         if github::parse_github_name_with_owner(url_output.stdout()).as_deref()
             == Some(name_with_owner)
         {
-            return Ok(Some(remote.to_string()));
+            return Ok(Some(remote));
         }
     }
 
@@ -277,79 +255,15 @@ pub async fn squash(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        process::{Command, Output},
-        sync::atomic::{AtomicU64, Ordering},
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::fs;
 
-    use camino::{Utf8Path, Utf8PathBuf};
+    use crate::workflows::test_support::{
+        TestDir, configure_test_user, git_success, init_bare_repo,
+    };
 
     use super::{
         configured_remote_for_repo, fetch_and_merge_base_from, github_clone_url_for_protocol,
     };
-
-    static NEXT_TEMP_DIR_ID: AtomicU64 = AtomicU64::new(1);
-
-    struct TestDir {
-        path: Utf8PathBuf,
-    }
-
-    impl TestDir {
-        fn new(name: &str) -> Self {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let id = NEXT_TEMP_DIR_ID.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "gigi-squash-{name}-{}-{timestamp}-{id}",
-                std::process::id()
-            ));
-            fs::create_dir_all(&path).unwrap();
-            Self {
-                path: Utf8PathBuf::from_path_buf(path).unwrap(),
-            }
-        }
-
-        fn path(&self) -> &Utf8Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            drop(fs::remove_dir_all(&self.path));
-        }
-    }
-
-    fn git_output(repo: &Utf8Path, args: &[&str]) -> Output {
-        Command::new("git")
-            .args(args)
-            .current_dir(repo)
-            .env("LC_ALL", "C")
-            .output()
-            .unwrap()
-    }
-
-    fn command_output(output: &Output) -> String {
-        format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )
-    }
-
-    fn git_success(repo: &Utf8Path, args: &[&str]) -> String {
-        let output = git_output(repo, args);
-        assert!(
-            output.status.success(),
-            "git {args:?} failed: {}",
-            command_output(&output)
-        );
-        String::from_utf8(output.stdout).unwrap().trim().to_string()
-    }
 
     #[tokio::test]
     async fn uses_matching_configured_remote_for_pr_base() {
@@ -403,14 +317,8 @@ mod tests {
         let upstream_work = fixture.path().join("upstream-work");
         let local = fixture.path().join("local");
 
-        git_success(
-            fixture.path(),
-            &["init", "--bare", "--quiet", upstream.as_str()],
-        );
-        git_success(
-            fixture.path(),
-            &["init", "--bare", "--quiet", fork.as_str()],
-        );
+        init_bare_repo(fixture.path(), &upstream);
+        init_bare_repo(fixture.path(), &fork);
         git_success(
             fixture.path(),
             &[
@@ -421,11 +329,7 @@ mod tests {
                 upstream_work.as_str(),
             ],
         );
-        git_success(&upstream_work, &["config", "user.name", "Test User"]);
-        git_success(
-            &upstream_work,
-            &["config", "user.email", "test@example.com"],
-        );
+        configure_test_user(&upstream_work);
         fs::write(upstream_work.join("base.txt"), "base\n").unwrap();
         git_success(&upstream_work, &["add", "base.txt"]);
         git_success(&upstream_work, &["commit", "--quiet", "-m", "base"]);
@@ -437,8 +341,7 @@ mod tests {
         git_success(&upstream_work, &["push", "--quiet", fork.as_str(), "main"]);
 
         git_success(fixture.path(), &["init", "--quiet", local.as_str()]);
-        git_success(&local, &["config", "user.name", "Test User"]);
-        git_success(&local, &["config", "user.email", "test@example.com"]);
+        configure_test_user(&local);
         git_success(&local, &["remote", "add", "origin", fork.as_str()]);
         git_success(&local, &["fetch", "--quiet", "origin", "main"]);
         git_success(&local, &["switch", "--quiet", "-C", "main", "FETCH_HEAD"]);
