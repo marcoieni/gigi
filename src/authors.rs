@@ -3,9 +3,11 @@ use std::{
     fmt,
 };
 
+use anyhow::Context as _;
 use camino::Utf8Path;
 use chrono::{DateTime, Local, Utc};
 use inquire::MultiSelect;
+use serde::Deserialize;
 
 use crate::cmd::Cmd;
 
@@ -20,29 +22,48 @@ fn extract_email(author: &str) -> Option<String> {
     None
 }
 
-/// Get all authors from commits in the range
-async fn get_commit_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<String> {
-    let output = Cmd::new(
-        "git",
-        ["log", "--format=%an <%ae>", &format!("{merge_base}..HEAD")],
-    )
-    .with_current_dir(repo_root)
-    .run()
-    .await?;
-    output.ensure_success("Failed to get commit authors")?;
-    Ok(output.stdout().to_string())
+#[derive(Debug, Deserialize)]
+pub struct PullRequestCommit {
+    sha: String,
+    commit: GitCommit,
 }
 
-async fn get_commit_messages(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<String> {
-    let output = Cmd::new(
-        "git",
-        ["log", "--format=%B", &format!("{merge_base}..HEAD")],
-    )
-    .with_current_dir(repo_root)
-    .run()
-    .await?;
-    output.ensure_success("Failed to get commit messages")?;
-    Ok(output.stdout().to_string())
+#[derive(Debug, Deserialize)]
+struct GitCommit {
+    author: GitCommitAuthor,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitCommitAuthor {
+    name: String,
+    email: String,
+}
+
+fn parse_pull_request_commits(output: &str) -> anyhow::Result<Vec<PullRequestCommit>> {
+    let pages: Vec<Vec<PullRequestCommit>> =
+        serde_json::from_str(output).context("Invalid pull request commits JSON")?;
+    Ok(pages.into_iter().flatten().collect())
+}
+
+/// Fetch the commits GitHub currently considers part of the pull request.
+///
+/// Do not derive this list from a local `merge-base..HEAD` range. Git ranges describe
+/// commit reachability in the local graph, which can contain merges from syncing the
+/// default branch or local commits that have not been pushed. That does not necessarily
+/// match the commits in the current PR, so GitHub's PR commit list is the source of truth.
+pub async fn get_pull_request_commits(
+    repo_root: &Utf8Path,
+    pull_request_number: u64,
+) -> anyhow::Result<Vec<PullRequestCommit>> {
+    let endpoint =
+        format!("repos/{{owner}}/{{repo}}/pulls/{pull_request_number}/commits?per_page=100");
+    let output = Cmd::new("gh", ["api", "--paginate", "--slurp", &endpoint])
+        .with_current_dir(repo_root)
+        .run()
+        .await?;
+    output.ensure_success("Failed to get pull request commits")?;
+    parse_pull_request_commits(output.stdout())
 }
 
 async fn get_current_user_email(repo_root: &Utf8Path) -> anyhow::Result<String> {
@@ -54,16 +75,19 @@ async fn get_current_user_email(repo_root: &Utf8Path) -> anyhow::Result<String> 
     Ok(output.stdout().trim().to_string())
 }
 
-fn collect_authors_from_log(authors_output: &str, current_user_email: &str) -> HashSet<String> {
+fn collect_authors_from_commits(
+    commits: &[PullRequestCommit],
+    current_user_email: &str,
+) -> HashSet<String> {
     let mut authors = HashSet::new();
-    for line in authors_output.lines() {
-        let author = line.trim();
-        if !author.is_empty()
-            && let Some(email) = extract_email(author)
-            && !email.eq_ignore_ascii_case(current_user_email)
-        {
-            authors.insert(author.to_string());
+    for commit in commits {
+        let author = &commit.commit.author;
+        if !author.email.eq_ignore_ascii_case(current_user_email) {
+            let author = format!("{} <{}>", author.name, author.email);
+            authors.insert(author);
         }
+
+        parse_co_authors_from_messages(&commit.commit.message, current_user_email, &mut authors);
     }
     authors
 }
@@ -119,14 +143,13 @@ impl fmt::Display for SelectableCoAuthor {
     }
 }
 
-pub async fn get_co_authors(repo_root: &Utf8Path, merge_base: &str) -> anyhow::Result<Vec<String>> {
-    let authors_output = get_commit_authors(repo_root, merge_base).await?;
-    let commit_messages = get_commit_messages(repo_root, merge_base).await?;
+pub async fn get_co_authors(
+    repo_root: &Utf8Path,
+    commits: &[PullRequestCommit],
+) -> anyhow::Result<Vec<String>> {
     let current_user_email = get_current_user_email(repo_root).await?;
 
-    let mut authors = collect_authors_from_log(&authors_output, &current_user_email);
-    parse_co_authors_from_messages(&commit_messages, &current_user_email, &mut authors);
-
+    let authors = collect_authors_from_commits(commits, &current_user_email);
     let mut authors: Vec<_> = authors.into_iter().collect();
     sort_authors(&mut authors);
     Ok(authors)
@@ -254,50 +277,42 @@ pub struct CommitInfo {
     pub author: String,
 }
 
-pub async fn get_commits_to_squash(
-    repo_root: &Utf8Path,
-    merge_base: &str,
-) -> anyhow::Result<Vec<CommitInfo>> {
-    // Get commits with hash, subject, and author
-    let commits_output = Cmd::new(
-        "git",
-        [
-            "log",
-            "--format=%H|%s|%an <%ae>",
-            &format!("{merge_base}..HEAD"),
-        ],
-    )
-    .with_current_dir(repo_root)
-    .run()
-    .await?;
-
-    commits_output.ensure_success("Failed to get commits")?;
-
-    let mut commits = Vec::new();
-    for line in commits_output.stdout().lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        let parts: Vec<&str> = line.splitn(3, '|').collect();
-        if parts.len() == 3 {
-            commits.push(CommitInfo {
-                hash: parts[0][..8].to_string(), // Abbreviated hash
-                message: parts[1].to_string(),
-                author: parts[2].to_string(),
-            });
-        }
-    }
-
-    // Reverse to show commits in chronological order
-    commits.reverse();
-    Ok(commits)
+pub fn get_commits_to_squash(commits: &[PullRequestCommit]) -> Vec<CommitInfo> {
+    commits
+        .iter()
+        .map(|commit| CommitInfo {
+            hash: commit.sha.chars().take(8).collect(),
+            message: commit
+                .commit
+                .message
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_string(),
+            author: format!(
+                "{} <{}>",
+                commit.commit.author.name, commit.commit.author.email
+            ),
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pull_request_commit(sha: &str, name: &str, email: &str, message: &str) -> PullRequestCommit {
+        PullRequestCommit {
+            sha: sha.to_string(),
+            commit: GitCommit {
+                author: GitCommitAuthor {
+                    name: name.to_string(),
+                    email: email.to_string(),
+                },
+                message: message.to_string(),
+            },
+        }
+    }
 
     #[test]
     fn test_extract_email_valid() {
@@ -331,25 +346,76 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_authors_from_log_filters_current_user() {
-        let log = "Alice <alice@example.com>\nBob <bob@example.com>\nAlice <alice@example.com>";
-        let authors = collect_authors_from_log(log, "alice@example.com");
-        assert_eq!(authors.len(), 1);
+    fn test_collect_authors_from_pr_commits_filters_current_user() {
+        let commits = vec![
+            pull_request_commit("11111111", "Alice", "alice@example.com", "First commit"),
+            pull_request_commit(
+                "22222222",
+                "Bob",
+                "bob@example.com",
+                "Second commit\n\nCo-authored-by: Carol <carol@example.com>",
+            ),
+        ];
+
+        let authors = collect_authors_from_commits(&commits, "alice@example.com");
+
+        assert_eq!(authors.len(), 2);
         assert!(authors.contains("Bob <bob@example.com>"));
+        assert!(authors.contains("Carol <carol@example.com>"));
     }
 
     #[test]
-    fn test_collect_authors_from_log_case_insensitive_email() {
-        let log = "Alice <ALICE@EXAMPLE.COM>";
-        let authors = collect_authors_from_log(log, "alice@example.com");
+    fn test_collect_authors_from_pr_commits_case_insensitive_email() {
+        let commits = vec![pull_request_commit(
+            "11111111",
+            "Alice",
+            "ALICE@EXAMPLE.COM",
+            "Commit",
+        )];
+
+        let authors = collect_authors_from_commits(&commits, "alice@example.com");
+
         assert!(authors.is_empty());
     }
 
     #[test]
-    fn test_collect_authors_from_log_skips_empty_lines() {
-        let log = "\n\nAlice <alice@example.com>\n\n";
-        let authors = collect_authors_from_log(log, "bob@example.com");
+    fn test_collect_authors_uses_only_supplied_pr_commits() {
+        let pull_request_commits = vec![pull_request_commit(
+            "11111111",
+            "Bob",
+            "bob@example.com",
+            "PR commit",
+        )];
+        let main_branch_commit = pull_request_commit(
+            "22222222",
+            "Carol",
+            "carol@example.com",
+            "Commit added to main while the PR was open",
+        );
+
+        let authors = collect_authors_from_commits(&pull_request_commits, "alice@example.com");
+
         assert_eq!(authors.len(), 1);
+        assert!(authors.contains("Bob <bob@example.com>"));
+        assert!(!authors.contains(&format!(
+            "{} <{}>",
+            main_branch_commit.commit.author.name, main_branch_commit.commit.author.email
+        )));
+    }
+
+    #[test]
+    fn test_parse_pull_request_commits_flattens_paginated_response() {
+        let output = r#"[
+            [{"sha":"11111111","commit":{"author":{"name":"Alice","email":"alice@example.com"},"message":"First"}}],
+            [{"sha":"22222222","commit":{"author":{"name":"Bob","email":"bob@example.com"},"message":"Second"}}]
+        ]"#;
+
+        let commits = parse_pull_request_commits(output).unwrap();
+        let commit_info = get_commits_to_squash(&commits);
+
+        assert_eq!(commit_info.len(), 2);
+        assert_eq!(commit_info[0].hash, "11111111");
+        assert_eq!(commit_info[1].hash, "22222222");
     }
 
     #[test]
