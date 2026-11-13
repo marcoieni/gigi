@@ -1,12 +1,11 @@
 use camino::Utf8Path;
-use git_cmd::Repo;
 use serde::Deserialize;
 
 use crate::{authors, checkout::parse_github_pr_url, cmd::Cmd, github};
 
 use super::repo::{
-    PushLease, commit, current_branch, ensure_not_on_default_branch, fetch_branch_head,
-    remote_names, view_pr_in_browser,
+    PushLease, commit, current_branch, ensure_clean_repo, ensure_not_on_default_branch,
+    fetch_branch_head, remote_names, view_pr_in_browser,
 };
 
 #[derive(Debug, Deserialize)]
@@ -194,11 +193,10 @@ async fn perform_squash_and_push(
 
 pub async fn squash(
     repo_root: &Utf8Path,
-    repo: &Repo,
     dry_run: bool,
     add_co_author: bool,
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(repo.is_clean().is_ok(), "❌ Repository is not clean");
+    ensure_clean_repo(repo_root).await?;
     let feature_branch = current_branch(repo_root).await?;
     let pull_request = current_pull_request(repo_root, &feature_branch).await?;
     anyhow::ensure!(

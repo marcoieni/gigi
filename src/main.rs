@@ -16,10 +16,8 @@ mod terminal;
 mod web;
 mod workflows;
 
-use anyhow::Context;
 use args::CliArgs;
 use clap::Parser as _;
-use git_cmd::Repo;
 use review::review_pr;
 
 use crate::{
@@ -58,9 +56,7 @@ async fn main() -> anyhow::Result<()> {
             add_co_author,
         } => {
             let repo_root = ensure_default_repo_and_root().await?;
-            let repo = Repo::new(repo_root.clone())
-                .context("❌ Failed to open git repository for squash")?;
-            squash(&repo_root, &repo, dry_run, add_co_author).await
+            squash(&repo_root, dry_run, add_co_author).await
         }
 
         args::Command::Sync => {
